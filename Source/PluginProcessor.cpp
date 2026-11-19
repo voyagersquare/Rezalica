@@ -18,24 +18,6 @@ RezalicaProcessor::RezalicaProcessor()
     pendingSeqOff.fill (-1.0);
 
     pMaster = apvts.getRawParameterValue ("master");
-    pFilterOn = apvts.getRawParameterValue ("filterOn");
-    pCutoff = apvts.getRawParameterValue ("cutoff");
-    pReso = apvts.getRawParameterValue ("resonance");
-    pDrive = apvts.getRawParameterValue ("drive");
-    pLofiOn = apvts.getRawParameterValue ("lofiOn");
-    pBits = apvts.getRawParameterValue ("bits");
-    pRate = apvts.getRawParameterValue ("rate");
-    pNoise = apvts.getRawParameterValue ("noise");
-    pDelayOn = apvts.getRawParameterValue ("delayOn");
-    pDelayDiv = apvts.getRawParameterValue ("delayDiv");
-    pDelayTime = apvts.getRawParameterValue ("delayTime");
-    pFeedback = apvts.getRawParameterValue ("feedback");
-    pDelayMix = apvts.getRawParameterValue ("delayMix");
-    pReverbOn = apvts.getRawParameterValue ("reverbOn");
-    pReverbSize = apvts.getRawParameterValue ("reverbSize");
-    pReverbDamp = apvts.getRawParameterValue ("reverbDamp");
-    pReverbWidth = apvts.getRawParameterValue ("reverbWidth");
-    pReverbMix = apvts.getRawParameterValue ("reverbMix");
 
     startTimer (1000);
 }
@@ -50,33 +32,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout RezalicaProcessor::createLay
     using namespace juce;
     AudioProcessorValueTreeState::ParameterLayout layout;
 
-    auto hz = AudioParameterFloatAttributes().withLabel ("Hz");
-    auto ms = AudioParameterFloatAttributes().withLabel ("ms");
     auto db = AudioParameterFloatAttributes().withLabel ("dB");
 
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "master", 1 }, "Master", NormalisableRange<float> (-60.0f, 6.0f, 0.1f, 2.0f), 0.0f, db));
 
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "filterOn", 1 }, "Filter On", false));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "cutoff", 1 }, "Cutoff", NormalisableRange<float> (20.0f, 20000.0f, 1.0f, 0.25f), 20000.0f, hz));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "resonance", 1 }, "Resonance", NormalisableRange<float> (0.0f, 1.0f), 0.1f));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "drive", 1 }, "Drive", NormalisableRange<float> (0.0f, 1.0f), 0.0f));
-
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "lofiOn", 1 }, "Lo-Fi On", false));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "bits", 1 }, "Bits", NormalisableRange<float> (2.0f, 16.0f, 0.1f), 10.0f));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "rate", 1 }, "Rate Divide", NormalisableRange<float> (1.0f, 32.0f, 0.1f, 0.5f), 3.0f));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "noise", 1 }, "Vinyl Noise", NormalisableRange<float> (0.0f, 1.0f), 0.2f));
-
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "delayOn", 1 }, "Delay On", false));
-    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "delayDiv", 1 }, "Delay Sync", delayDivisions, 2));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "delayTime", 1 }, "Delay Time", NormalisableRange<float> (10.0f, 2000.0f, 1.0f, 0.5f), 375.0f, ms));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "feedback", 1 }, "Feedback", NormalisableRange<float> (0.0f, 0.95f), 0.35f));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "delayMix", 1 }, "Delay Mix", NormalisableRange<float> (0.0f, 1.0f), 0.3f));
-
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "reverbOn", 1 }, "Reverb On", false));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "reverbSize", 1 }, "Reverb Size", NormalisableRange<float> (0.0f, 1.0f), 0.6f));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "reverbDamp", 1 }, "Reverb Damping", NormalisableRange<float> (0.0f, 1.0f), 0.4f));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "reverbWidth", 1 }, "Reverb Width", NormalisableRange<float> (0.0f, 1.0f), 1.0f));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "reverbMix", 1 }, "Reverb Mix", NormalisableRange<float> (0.0f, 1.0f), 0.3f));
 
     return layout;
 }
@@ -91,9 +50,14 @@ void RezalicaProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
     engine.prepare (sampleRate);
     sequencer.prepare (sampleRate);
-    fx.prepare (sampleRate, samplesPerBlock);
     dryBuffer.setSize (2, juce::jmax (1, samplesPerBlock));
-    fxBuffer.setSize (2, juce::jmax (1, samplesPerBlock));
+    for (int i = 0; i < rz::numPads; ++i)
+    {
+        padFx[(size_t) i].prepare (sampleRate, samplesPerBlock);
+        padBuses[(size_t) i].setSize (2, juce::jmax (1, samplesPerBlock));
+        padFxIdleSamples[(size_t) i] = 1.0e12;
+        padFxWasRunning[(size_t) i] = false;
+    }
     pendingSeqOff.fill (-1.0);
 }
 
@@ -104,31 +68,38 @@ void RezalicaProcessor::addEvent (int offset, int type, int pad, float velocity)
         events[(size_t) numEvents++] = { offset, type, pad, velocity };
 }
 
-rz::FxChain::Params RezalicaProcessor::readFxParams() const
+const juce::StringArray& RezalicaProcessor::getDelayDivisionNames()
 {
-    rz::FxChain::Params p;
-    p.filterOn = pFilterOn->load() > 0.5f;
-    p.cutoff = pCutoff->load();
-    p.resonance = pReso->load();
-    p.drive = pDrive->load();
-    p.lofiOn = pLofiOn->load() > 0.5f;
-    p.bits = pBits->load();
-    p.rateDivide = pRate->load();
-    p.noise = pNoise->load();
-    p.delayOn = pDelayOn->load() > 0.5f;
-    p.feedback = pFeedback->load();
-    p.mix = pDelayMix->load();
-    p.reverbOn = pReverbOn->load() > 0.5f;
-    p.reverbSize = pReverbSize->load();
-    p.reverbDamping = pReverbDamp->load();
-    p.reverbWidth = pReverbWidth->load();
-    p.reverbMix = pReverbMix->load();
+    return delayDivisions;
+}
 
-    const int div = juce::jlimit (0, delayDivisions.size() - 1, (int) pDelayDiv->load());
+rz::FxChain::Params RezalicaProcessor::readFxParams (int pad, bool padSounding) const
+{
+    const auto& f = engine.getPad (pad).effects;
+    rz::FxChain::Params p;
+    p.filterOn = f.filterOn.load();
+    p.cutoff = f.cutoff.load();
+    p.resonance = f.resonance.load();
+    p.drive = f.drive.load();
+    p.lofiOn = f.lofiOn.load();
+    p.bits = f.bits.load();
+    p.rateDivide = f.rate.load();
+    p.noise = padSounding ? f.noise.load() : 0.0f; // vinyl noise only while the pad plays
+    p.delayOn = f.delayOn.load();
+    p.feedback = f.feedback.load();
+    p.mix = f.delayMix.load();
+    p.reverbOn = f.reverbOn.load();
+    p.reverbSize = f.reverbSize.load();
+    p.reverbDamping = f.reverbDamp.load();
+    p.reverbWidth = f.reverbWidth.load();
+    p.reverbMix = f.reverbMix.load();
+
+    const int div = juce::jlimit (0, delayDivisions.size() - 1, f.delayDiv.load());
     if (div == 0)
-        p.delaySamples = pDelayTime->load() * 0.001f * (float) currentSampleRate;
+        p.delaySamples = f.delayTime.load() * 0.001f * (float) currentSampleRate;
     else
         p.delaySamples = (float) (delayDivisionBeats[div] * 60.0 / juce::jmax (20.0f, sequencer.effectiveBpm.load()) * currentSampleRate);
+    p.delaySamples = juce::jmin (p.delaySamples, (float) (currentSampleRate * 2.0));
 
     return p;
 }
@@ -142,10 +113,12 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     if (dryBuffer.getNumSamples() < numSamples)
     {
         dryBuffer.setSize (2, numSamples, false, false, true);
-        fxBuffer.setSize (2, numSamples, false, false, true);
+        for (auto& b : padBuses)
+            b.setSize (2, numSamples, false, false, true);
     }
     dryBuffer.clear();
-    fxBuffer.clear();
+    for (auto& b : padBuses)
+        b.clear (0, numSamples);
 
     engine.syncSamples();
     numEvents = 0;
@@ -233,7 +206,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     for (int i = 0; i < numEvents; ++i)
     {
         const auto& e = events[(size_t) i];
-        engine.render (dryBuffer, fxBuffer, cursor, e.offset - cursor);
+        engine.render (dryBuffer, padBuses, cursor, e.offset - cursor);
         cursor = e.offset;
 
         switch (e.type)
@@ -260,19 +233,50 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             default: break;
         }
     }
-    engine.render (dryBuffer, fxBuffer, cursor, numSamples - cursor);
+    engine.render (dryBuffer, padBuses, cursor, numSamples - cursor);
     engine.updatePlayPositions();
 
     if (lazyActive.load() && ! engine.isPreviewBusy())
         lazyActive = false; // preview reached the end of the sample
 
-    fx.process (fxBuffer, numSamples, readFxParams());
-
     const float master = juce::Decibels::decibelsToGain (pMaster->load(), -59.9f);
-    for (int ch = 0; ch < juce::jmin (2, buffer.getNumChannels()); ++ch)
-    {
+    const int outChannels = juce::jmin (2, buffer.getNumChannels());
+    for (int ch = 0; ch < outChannels; ++ch)
         buffer.addFrom (ch, 0, dryBuffer, ch, 0, numSamples, master);
-        buffer.addFrom (ch, 0, fxBuffer, ch, 0, numSamples, master);
+
+    // per-pad effect chains: only pads that have effects switched on, and only while
+    // they play or their delay / reverb tail is still ringing
+    for (int i = 0; i < rz::numPads; ++i)
+    {
+        const auto& f = engine.getPad (i).effects;
+        auto& chain = padFx[(size_t) i];
+
+        if (! f.anyOn())
+        {
+            if (padFxWasRunning[(size_t) i]) { chain.reset(); padFxWasRunning[(size_t) i] = false; }
+            padFxIdleSamples[(size_t) i] = 1.0e12;
+            continue;
+        }
+
+        const bool sounding = engine.isPadSounding (i);
+        auto& idle = padFxIdleSamples[(size_t) i];
+        idle = sounding ? 0.0 : idle + numSamples;
+        const double tail = f.hasTail() ? currentSampleRate * 2.5 : currentSampleRate * 0.05;
+        if (idle > tail)
+        {
+            if (padFxWasRunning[(size_t) i]) { chain.reset(); padFxWasRunning[(size_t) i] = false; }
+            continue;
+        }
+
+        auto& bus = padBuses[(size_t) i];
+        chain.process (bus, numSamples, readFxParams (i, sounding));
+        padFxWasRunning[(size_t) i] = true;
+
+        if (bus.getMagnitude (0, numSamples) > 1.0e-4f)
+            idle = juce::jmin (idle, 0.0); // long feedback delays keep the chain alive
+
+        for (int ch = 0; ch < outChannels; ++ch)
+            buffer.addFrom (ch, 0, bus, ch, 0, numSamples, master);
     }
 }
 
@@ -571,9 +575,10 @@ void RezalicaProcessor::addSlicePoint (float n)
 
 void RezalicaProcessor::removeSlicePoint (int index)
 {
-    prepareManualSource();
-    if (index < 0 || index >= (int) slicePoints.size() || slicePoints.size() <= 1)
+    // works on any markers (transient, equal or manual): the others stay, mode becomes Manual
+    if (chopSource == nullptr || index < 0 || index >= (int) slicePoints.size() || slicePoints.size() <= 1)
         return;
+    chopMode = chopManual;
     slicePoints.erase (slicePoints.begin() + index);
     applySlices();
 }
@@ -737,7 +742,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         p.setProperty ("loop", ps.loop.load(), nullptr);
         p.setProperty ("reverse", ps.reverse.load(), nullptr);
         p.setProperty ("gate", ps.gate.load(), nullptr);
-        p.setProperty ("fx", ps.fx.load(), nullptr);
+        p.appendChild (ps.effects.toValueTree(), nullptr);
         p.setProperty ("mute", ps.mute.load(), nullptr);
         pads.appendChild (p, nullptr);
     }
@@ -808,7 +813,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         ps.loop = (bool) p.getProperty ("loop", false);
         ps.reverse = (bool) p.getProperty ("reverse", false);
         ps.gate = (bool) p.getProperty ("gate", false);
-        ps.fx = (bool) p.getProperty ("fx", true);
+        ps.effects.fromValueTree (p.getChildWithName ("FX"));
         ps.mute = (bool) p.getProperty ("mute", false);
 
         const juce::String path = p.getProperty ("file").toString();

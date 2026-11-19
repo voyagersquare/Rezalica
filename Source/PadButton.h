@@ -25,6 +25,7 @@ public:
     int getIndex() const noexcept            { return index; }
     void setSelected (bool s)                { if (s != selected) { selected = s; repaint(); } }
     void setSampleName (const juce::String& n) { if (n != name) { name = n; repaint(); } }
+    void setHasFx (bool f)                   { if (f != hasFx) { hasFx = f; repaint(); } }
     void flash()                             { flashLevel = 1.0f; repaint(); }
 
     void decay()
@@ -57,6 +58,17 @@ public:
         g.setFont (juce::FontOptions (11.0f));
         g.setColour (flashLevel > 0.5f ? juce::Colours::black : dim);
         g.drawText (key.toUpperCase(), b.reduced (8.0f, 6.0f), juce::Justification::topRight);
+
+        if (hasFx)
+        {
+            auto badge = b.reduced (8.0f, 6.0f).removeFromBottom (14.0f).removeFromRight (22.0f);
+            g.setColour (accent2);
+            g.fillRoundedRectangle (badge, 3.0f);
+            g.setColour (juce::Colours::black);
+            g.setFont (juce::FontOptions (9.0f, juce::Font::bold));
+            g.drawText ("FX", badge, juce::Justification::centred);
+            inner.removeFromRight (24.0f);
+        }
 
         g.setColour (flashLevel > 0.5f ? juce::Colours::black : (name.isEmpty() ? dim : text));
         g.setFont (juce::FontOptions (12.0f));
@@ -136,7 +148,7 @@ private:
     const juce::String key;
     juce::String name;
     int heldIndex = 0;
-    bool selected = false, held = false, dragOver = false;
+    bool selected = false, held = false, dragOver = false, hasFx = false;
     float flashLevel = 0.0f;
 };
 } // namespace rz

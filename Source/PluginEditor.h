@@ -33,6 +33,7 @@ private:
     void setBank (int bank);
     void refreshChopControls();
     void refreshPadControls();
+    void refreshFxControls();
     void refreshPadNames();
     void choosePadFile (int pad);
     void chooseChopFile();
@@ -58,7 +59,7 @@ private:
     rz::Knob gainKnob { "GAIN" }, panKnob { "PAN" }, pitchKnob { "PITCH" }, attackKnob { "ATTACK" },
              releaseKnob { "RELEASE" }, startKnob { "START" }, endKnob { "END" };
     juce::TextButton loopButton { "LOOP" }, reverseButton { "REVERSE" }, gateButton { "GATE" },
-                     fxButton { "FX" }, muteButton { "MUTE" }, loadPadButton { "LOAD" }, clearPadButton { "CLEAR" };
+                     muteButton { "MUTE" }, loadPadButton { "LOAD" }, clearPadButton { "CLEAR" };
 
     // pads
     std::vector<std::unique_ptr<rz::PadButton>> pads;
@@ -77,7 +78,15 @@ private:
 
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;
-    std::unique_ptr<ComboAttachment> delayDivAttachment;
+
+    // effects of the selected pad
+    struct FxKnobBinding   { rz::Knob* knob; std::atomic<float> rz::PadFx::* member; };
+    struct FxToggleBinding { juce::TextButton* button; std::atomic<bool> rz::PadFx::* member; };
+    std::vector<FxKnobBinding> fxKnobBindings;
+    std::vector<FxToggleBinding> fxToggleBindings;
+    juce::Label fxTitle;
+    juce::TextButton copyFxButton { "COPY FX" }, pasteFxButton { "PASTE FX" }, fxToAllButton { "FX TO BANK" };
+    juce::ValueTree fxClipboard;
 
     std::unique_ptr<rz::SequencerWindow> sequencerWindow;
     std::unique_ptr<juce::FileChooser> fileChooser;

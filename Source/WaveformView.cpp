@@ -345,7 +345,7 @@ void WaveformView::paintOverChildren (juce::Graphics& g)
     }
     else if (isChopSource())
     {
-        g.drawText ("shift+click: add marker   right-click: delete   drag: move   wheel: zoom", footer, juce::Justification::centred);
+        g.drawText ("shift+click: add marker   double-click marker: delete   drag: move   wheel: zoom", footer, juce::Justification::centred);
     }
 
     g.setColour (dim);
@@ -480,11 +480,23 @@ void WaveformView::mouseDrag (const juce::MouseEvent& e)
 
 void WaveformView::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    if (sample == nullptr || e.mods.isPopupMenu() || sliceMarkerNear ((float) e.x) >= 0)
+    if (sample == nullptr || e.mods.isPopupMenu())
         return;
 
-    processor.addSlicePoint (xToNorm ((float) e.x));
+    // double-click on a marker deletes it (also transient markers), elsewhere adds one
+    if (const int m = sliceMarkerNear ((float) e.x); m >= 0)
+    {
+        dragging = DragNone;
+        dragSlice = -1;
+        processor.removeSlicePoint (m);
+    }
+    else
+    {
+        processor.addSlicePoint (xToNorm ((float) e.x));
+    }
+
     if (onRegionChanged) onRegionChanged();
+    repaint();
 }
 
 void WaveformView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)

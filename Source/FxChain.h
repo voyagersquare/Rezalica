@@ -5,7 +5,7 @@
 
 namespace rz
 {
-/** Effect chain for the FX bus: Filter+Drive -> Lo-Fi -> Delay -> Reverb. */
+/** One pad's effect chain: Filter+Drive -> Lo-Fi -> Delay -> Reverb. */
 class FxChain
 {
 public:
@@ -27,7 +27,7 @@ public:
         filter.prepare ({ sampleRate, (juce::uint32) juce::jmax (1, maxBlockSize), 2 });
         filter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
 
-        delayBuffer.setSize (2, (int) (sampleRate * 2.5) + 4);
+        delayBuffer.setSize (2, (int) (sampleRate * 2.05) + 4); // up to 2 s of delay
         delayTime.reset (sampleRate, 0.08);
         reverb.setSampleRate (sampleRate);
         reset();

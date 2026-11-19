@@ -26,12 +26,6 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         k.slider.setNumDecimalPlacesToDisplay (2);
         addAndMakeVisible (k);
     };
-    auto attachButton = [&] (juce::TextButton& b, const juce::String& id)
-    {
-        styleToggle (b);
-        buttonAttachments.push_back (std::make_unique<ButtonAttachment> (apvts, id, b));
-        addAndMakeVisible (b);
-    };
 
     // ---- header ----
     for (auto* b : { &loadChopButton, &lazyButton, &seqButton, &stopButton })
@@ -155,11 +149,9 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     setupPadToggle (loopButton, [] (rz::PadSettings& s, bool v) { s.loop = v; }, rz::colours::accent);
     setupPadToggle (reverseButton, [] (rz::PadSettings& s, bool v) { s.reverse = v; }, rz::colours::accent);
     setupPadToggle (gateButton, [] (rz::PadSettings& s, bool v) { s.gate = v; }, rz::colours::accent);
-    setupPadToggle (fxButton, [] (rz::PadSettings& s, bool v) { s.fx = v; }, rz::colours::accent2);
     setupPadToggle (muteButton, [] (rz::PadSettings& s, bool v) { s.mute = v; }, juce::Colour (0xffe0413a));
     loopButton.setTooltip ("Loop the region. Without GATE, hit the pad again to stop it.");
     gateButton.setTooltip ("Play only while the pad / key / MIDI note is held");
-    fxButton.setTooltip ("Send this pad through the effects");
 
     for (auto* b : { &loadPadButton, &clearPadButton })
     {
@@ -184,43 +176,106 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     for (int i = 0; i < rz::numPads; ++i)
         lastHits[(size_t) i] = processor.getEngine().hitCounter[(size_t) i].load();
 
-    // ---- effects ----
-    attachButton (filterOnButton, "filterOn");
-    attachSlider (cutoffKnob, "cutoff");
-    attachSlider (resoKnob, "resonance");
-    attachSlider (driveKnob, "drive");
-    attachButton (lofiOnButton, "lofiOn");
-    attachSlider (bitsKnob, "bits");
-    attachSlider (rateKnob, "rate");
-    attachSlider (noiseKnob, "noise");
-    attachButton (delayOnButton, "delayOn");
-    attachSlider (timeKnob, "delayTime");
-    timeKnob.slider.setNumDecimalPlacesToDisplay (0);
-    timeKnob.slider.setTextValueSuffix (" ms");
-    cutoffKnob.slider.setNumDecimalPlacesToDisplay (0);
-    cutoffKnob.slider.setTextValueSuffix (" Hz");
-    attachSlider (feedbackKnob, "feedback");
-    attachSlider (mixKnob, "delayMix");
-    attachButton (reverbOnButton, "reverbOn");
-    attachSlider (reverbSizeKnob, "reverbSize");
-    attachSlider (reverbDampKnob, "reverbDamp");
-    attachSlider (reverbWidthKnob, "reverbWidth");
-    attachSlider (reverbMixKnob, "reverbMix");
+    // ---- effects (per pad: they always edit the selected pad) ----
+    auto fxKnob = [this] (rz::Knob& k, double lo, double hi, double def, double skewMid, int decimals,
+                          const juce::String& suffix, std::atomic<float> rz::PadFx::* member)
+    {
+        k.slider.setRange (lo, hi, 0.0);
+        if (skewMid > 0.0) k.slider.setSkewFactorFromMidPoint (skewMid);
+        k.slider.setDoubleClickReturnValue (true, def);
+        k.slider.setNumDecimalPlacesToDisplay (decimals);
+        k.slider.setTextValueSuffix (suffix);
+        k.slider.onValueChange = [this, &k, member]
+        {
+            processor.getEngine().getPad (processor.selectedPad.load()).effects.*member = (float) k.slider.getValue();
+        };
+        fxKnobBindings.push_back ({ &k, member });
+        addAndMakeVisible (k);
+    };
+    auto fxToggle = [this] (juce::TextButton& b, std::atomic<bool> rz::PadFx::* member)
+    {
+        styleToggle (b);
+        b.onClick = [this, &b, member]
+        {
+            processor.getEngine().getPad (processor.selectedPad.load()).effects.*member = b.getToggleState();
+            refreshPadNames(); // FX badge on the pad
+        };
+        fxToggleBindings.push_back ({ &b, member });
+        addAndMakeVisible (b);
+    };
 
-    delayDivBox.addItemList (processor.getApvts().getParameter ("delayDiv")->getAllValueStrings(), 1);
+    fxToggle (filterOnButton, &rz::PadFx::filterOn);
+    fxKnob (cutoffKnob, 20.0, 20000.0, 20000.0, 1000.0, 0, " Hz", &rz::PadFx::cutoff);
+    fxKnob (resoKnob, 0.0, 1.0, 0.1, 0.0, 2, "", &rz::PadFx::resonance);
+    fxKnob (driveKnob, 0.0, 1.0, 0.0, 0.0, 2, "", &rz::PadFx::drive);
+    fxToggle (lofiOnButton, &rz::PadFx::lofiOn);
+    fxKnob (bitsKnob, 2.0, 16.0, 10.0, 0.0, 1, "", &rz::PadFx::bits);
+    fxKnob (rateKnob, 1.0, 32.0, 3.0, 6.0, 1, "", &rz::PadFx::rate);
+    fxKnob (noiseKnob, 0.0, 1.0, 0.2, 0.0, 2, "", &rz::PadFx::noise);
+    fxToggle (delayOnButton, &rz::PadFx::delayOn);
+    fxKnob (timeKnob, 10.0, 2000.0, 375.0, 400.0, 0, " ms", &rz::PadFx::delayTime);
+    fxKnob (feedbackKnob, 0.0, 0.95, 0.35, 0.0, 2, "", &rz::PadFx::feedback);
+    fxKnob (mixKnob, 0.0, 1.0, 0.3, 0.0, 2, "", &rz::PadFx::delayMix);
+    fxToggle (reverbOnButton, &rz::PadFx::reverbOn);
+    fxKnob (reverbSizeKnob, 0.0, 1.0, 0.6, 0.0, 2, "", &rz::PadFx::reverbSize);
+    fxKnob (reverbDampKnob, 0.0, 1.0, 0.4, 0.0, 2, "", &rz::PadFx::reverbDamp);
+    fxKnob (reverbWidthKnob, 0.0, 1.0, 1.0, 0.0, 2, "", &rz::PadFx::reverbWidth);
+    fxKnob (reverbMixKnob, 0.0, 1.0, 0.3, 0.0, 2, "", &rz::PadFx::reverbMix);
+
+    delayDivBox.addItemList (RezalicaProcessor::getDelayDivisionNames(), 1);
     delayDivBox.setWantsKeyboardFocus (false);
-    delayDivAttachment = std::make_unique<ComboAttachment> (apvts, "delayDiv", delayDivBox);
+    delayDivBox.onChange = [this]
+    {
+        processor.getEngine().getPad (processor.selectedPad.load()).effects.delayDiv = delayDivBox.getSelectedId() - 1;
+        timeKnob.setEnabled (delayDivBox.getSelectedId() == 1);
+    };
     addAndMakeVisible (delayDivBox);
     delayDivLabel.setText ("SYNC", juce::dontSendNotification);
     delayDivLabel.setJustificationType (juce::Justification::centred);
     delayDivLabel.setColour (juce::Label::textColourId, rz::colours::dim);
     addAndMakeVisible (delayDivLabel);
 
+    fxTitle.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    fxTitle.setColour (juce::Label::textColourId, rz::colours::accent);
+    addAndMakeVisible (fxTitle);
+
+    for (auto* b : { &copyFxButton, &pasteFxButton, &fxToAllButton })
+    {
+        b->setWantsKeyboardFocus (false);
+        addAndMakeVisible (*b);
+    }
+    copyFxButton.setTooltip ("Copy the selected pad's effects");
+    pasteFxButton.setTooltip ("Paste copied effects onto the selected pad");
+    fxToAllButton.setTooltip ("Copy the selected pad's effects to every pad of the current bank");
+    copyFxButton.onClick = [this]
+    {
+        fxClipboard = processor.getEngine().getPad (processor.selectedPad.load()).effects.toValueTree();
+        pasteFxButton.setEnabled (true);
+    };
+    pasteFxButton.setEnabled (false);
+    pasteFxButton.onClick = [this]
+    {
+        if (fxClipboard.isValid())
+        {
+            processor.getEngine().getPad (processor.selectedPad.load()).effects.fromValueTree (fxClipboard);
+            refreshFxControls();
+            refreshPadNames();
+        }
+    };
+    fxToAllButton.onClick = [this]
+    {
+        const auto fx = processor.getEngine().getPad (processor.selectedPad.load()).effects.toValueTree();
+        const int first = processor.currentBank.load() * rz::padsPerBank;
+        for (int i = first; i < first + rz::padsPerBank; ++i)
+            processor.getEngine().getPad (i).effects.fromValueTree (fx);
+        refreshPadNames();
+    };
+
     processor.padsChanged.addChangeListener (this);
 
     lastPlayedCounter = processor.getEngine().playedCounter.load();
 
-    setSize (1180, 720);
+    setSize (1180, 748);
     setBank (startBank);
     selectPad (juce::jlimit (0, rz::numPads - 1, processor.selectedPad.load()));
     refreshPadNames();
@@ -260,6 +315,7 @@ void RezalicaEditor::selectPad (int pad, bool grabFocus)
         p->setSelected (p->getIndex() == pad);
     waveform.setPad (pad);
     refreshPadControls();
+    refreshFxControls();
     if (grabFocus)
         grabKeyboardFocus();
 }
@@ -312,14 +368,29 @@ void RezalicaEditor::refreshPadControls()
     loopButton.setToggleState (s.loop.load(), juce::dontSendNotification);
     reverseButton.setToggleState (s.reverse.load(), juce::dontSendNotification);
     gateButton.setToggleState (s.gate.load(), juce::dontSendNotification);
-    fxButton.setToggleState (s.fx.load(), juce::dontSendNotification);
     muteButton.setToggleState (s.mute.load(), juce::dontSendNotification);
+}
+
+void RezalicaEditor::refreshFxControls()
+{
+    const int pad = processor.selectedPad.load();
+    const auto& fx = processor.getEngine().getPad (pad).effects;
+    for (auto& b : fxKnobBindings)
+        b.knob->slider.setValue ((fx.*(b.member)).load(), juce::dontSendNotification);
+    for (auto& b : fxToggleBindings)
+        b.button->setToggleState ((fx.*(b.member)).load(), juce::dontSendNotification);
+    delayDivBox.setSelectedId (fx.delayDiv.load() + 1, juce::dontSendNotification);
+    timeKnob.setEnabled (fx.delayDiv.load() == 0);
+    fxTitle.setText ("EFFECTS FOR PAD " + rz::padLabel (pad) + "  (only this pad)", juce::dontSendNotification);
 }
 
 void RezalicaEditor::refreshPadNames()
 {
     for (auto& p : pads)
+    {
         p->setSampleName (processor.getPadName (p->getIndex()));
+        p->setHasFx (processor.getEngine().getPad (p->getIndex()).effects.anyOn());
+    }
 
     for (int b = 0; b < rz::numBanks; ++b)
     {
@@ -337,6 +408,7 @@ void RezalicaEditor::changeListenerCallback (juce::ChangeBroadcaster*)
     refreshChopControls();
     waveform.refresh();
     refreshPadControls();
+    refreshFxControls();
     if (processor.currentBank.load() != pads[0]->getIndex() / rz::padsPerBank)
         setBank (processor.currentBank.load());
     for (auto& p : pads)
@@ -556,7 +628,7 @@ void RezalicaEditor::resized()
     }
     b.removeFromTop (10);
 
-    fxArea = b.removeFromBottom (150);
+    fxArea = b.removeFromBottom (176);
     b.removeFromBottom (10);
 
     padArea = b.removeFromRight (420);
@@ -582,8 +654,8 @@ void RezalicaEditor::resized()
 
         s.removeFromTop (8);
         auto toggles = s.removeFromTop (30);
-        const int tw = toggles.getWidth() / 5;
-        for (auto* t : { &loopButton, &reverseButton, &gateButton, &fxButton, &muteButton })
+        const int tw = toggles.getWidth() / 4;
+        for (auto* t : { &loopButton, &reverseButton, &gateButton, &muteButton })
             t->setBounds (toggles.removeFromLeft (tw).reduced (3, 0));
     }
 
@@ -605,6 +677,14 @@ void RezalicaEditor::resized()
     // ---- effects ----
     {
         auto f = fxArea;
+        auto titleRow = f.removeFromTop (22);
+        fxToAllButton.setBounds (titleRow.removeFromRight (130));
+        titleRow.removeFromRight (6);
+        pasteFxButton.setBounds (titleRow.removeFromRight (90));
+        titleRow.removeFromRight (6);
+        copyFxButton.setBounds (titleRow.removeFromRight (90));
+        fxTitle.setBounds (titleRow);
+        f.removeFromTop (4);
         const int w = (f.getWidth() - 30) / 4;
         filterArea = f.removeFromLeft (w); f.removeFromLeft (10);
         lofiArea = f.removeFromLeft (w);   f.removeFromLeft (10);

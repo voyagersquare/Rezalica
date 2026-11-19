@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_data_structures/juce_data_structures.h>
 #include <array>
 #include <atomic>
 
@@ -28,6 +29,68 @@ struct SampleData : public juce::ReferenceCountedObject
     juce::File file;
 };
 
+/** Per-pad effect settings (each pad has its own effect chain). */
+struct PadFx
+{
+    std::atomic<bool> filterOn { false }, lofiOn { false }, delayOn { false }, reverbOn { false };
+    std::atomic<float> cutoff { 20000.0f }, resonance { 0.1f }, drive { 0.0f };
+    std::atomic<float> bits { 10.0f }, rate { 3.0f }, noise { 0.2f };
+    std::atomic<int> delayDiv { 2 };          // index into the delay sync divisions, 0 = free (ms)
+    std::atomic<float> delayTime { 375.0f }, feedback { 0.35f }, delayMix { 0.3f };
+    std::atomic<float> reverbSize { 0.6f }, reverbDamp { 0.4f }, reverbWidth { 1.0f }, reverbMix { 0.3f };
+
+    bool anyOn() const noexcept { return filterOn.load() || lofiOn.load() || delayOn.load() || reverbOn.load(); }
+    bool hasTail() const noexcept { return delayOn.load() || reverbOn.load(); }
+
+    juce::ValueTree toValueTree() const
+    {
+        juce::ValueTree t ("FX");
+        t.setProperty ("filterOn", filterOn.load(), nullptr);
+        t.setProperty ("cutoff", cutoff.load(), nullptr);
+        t.setProperty ("resonance", resonance.load(), nullptr);
+        t.setProperty ("drive", drive.load(), nullptr);
+        t.setProperty ("lofiOn", lofiOn.load(), nullptr);
+        t.setProperty ("bits", bits.load(), nullptr);
+        t.setProperty ("rate", rate.load(), nullptr);
+        t.setProperty ("noise", noise.load(), nullptr);
+        t.setProperty ("delayOn", delayOn.load(), nullptr);
+        t.setProperty ("delayDiv", delayDiv.load(), nullptr);
+        t.setProperty ("delayTime", delayTime.load(), nullptr);
+        t.setProperty ("feedback", feedback.load(), nullptr);
+        t.setProperty ("delayMix", delayMix.load(), nullptr);
+        t.setProperty ("reverbOn", reverbOn.load(), nullptr);
+        t.setProperty ("reverbSize", reverbSize.load(), nullptr);
+        t.setProperty ("reverbDamp", reverbDamp.load(), nullptr);
+        t.setProperty ("reverbWidth", reverbWidth.load(), nullptr);
+        t.setProperty ("reverbMix", reverbMix.load(), nullptr);
+        return t;
+    }
+
+    void fromValueTree (const juce::ValueTree& t)
+    {
+        filterOn = (bool) t.getProperty ("filterOn", false);
+        cutoff = (float) t.getProperty ("cutoff", 20000.0f);
+        resonance = (float) t.getProperty ("resonance", 0.1f);
+        drive = (float) t.getProperty ("drive", 0.0f);
+        lofiOn = (bool) t.getProperty ("lofiOn", false);
+        bits = (float) t.getProperty ("bits", 10.0f);
+        rate = (float) t.getProperty ("rate", 3.0f);
+        noise = (float) t.getProperty ("noise", 0.2f);
+        delayOn = (bool) t.getProperty ("delayOn", false);
+        delayDiv = (int) t.getProperty ("delayDiv", 2);
+        delayTime = (float) t.getProperty ("delayTime", 375.0f);
+        feedback = (float) t.getProperty ("feedback", 0.35f);
+        delayMix = (float) t.getProperty ("delayMix", 0.3f);
+        reverbOn = (bool) t.getProperty ("reverbOn", false);
+        reverbSize = (float) t.getProperty ("reverbSize", 0.6f);
+        reverbDamp = (float) t.getProperty ("reverbDamp", 0.4f);
+        reverbWidth = (float) t.getProperty ("reverbWidth", 1.0f);
+        reverbMix = (float) t.getProperty ("reverbMix", 0.3f);
+    }
+
+    void reset() { fromValueTree (juce::ValueTree ("FX")); }
+};
+
 /** Per-pad settings. Written by the UI, read by the audio thread. */
 struct PadSettings
 {
@@ -41,13 +104,14 @@ struct PadSettings
     std::atomic<bool> loop { false };
     std::atomic<bool> reverse { false };
     std::atomic<bool> gate { false };      // plays only while the pad is held
-    std::atomic<bool> fx { true };         // routed through the effect chain
     std::atomic<bool> mute { false };
+    PadFx effects;                         // this pad's own effect chain settings
 
     void resetPlayback()
     {
         gainDb = 0.0f; pan = 0.0f; pitch = 0.0f; attackMs = 1.0f; releaseMs = 30.0f;
-        loop = false; reverse = false; gate = false; fx = true; mute = false;
+        loop = false; reverse = false; gate = false; mute = false;
+        effects.reset();
     }
 };
 
@@ -57,7 +121,8 @@ public:
     void start (int padIndex, SampleData::Ptr s, const PadSettings& ps, float velocity, double hostRate, juce::uint32 order);
     void release();
     void fastStop();
-    void render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& fx, int startSample, int numSamples);
+    /** Writes into padBus when the pad has effects switched on, else into dry. */
+    void render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& padBus, int startSample, int numSamples);
 
     bool isActive() const noexcept     { return active; }
     bool isReleasing() const noexcept  { return stage == Stage::release; }
@@ -74,7 +139,7 @@ private:
     const PadSettings* settings = nullptr;
     int pad = -1;
     juce::uint32 age = 0;
-    bool active = false, reverse = false, loop = false, toFx = true;
+    bool active = false, reverse = false, loop = false;
     int s0 = 0, s1 = 0;
     double pos = 0.0, baseRatio = 1.0, sr = 44100.0;
     float vel = 1.0f, env = 0.0f, attackInc = 1.0f, releaseDec = 0.001f;
@@ -92,14 +157,16 @@ public:
     void setPadSample (int pad, SampleData::Ptr s);
     SampleData::Ptr getPadSample (int pad) const;
     PadSettings& getPad (int pad) noexcept { return settings[(size_t) pad]; }
+    const PadSettings& getPad (int pad) const noexcept { return settings[(size_t) pad]; }
 
     // ---- audio thread ----
     void syncSamples();
     void noteOn (int pad, float velocity, bool fromSequencer);
     void noteOff (int pad, bool fromSequencer);
     void allNotesOff();
-    void render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& fx, int startSample, int numSamples);
+    void render (juce::AudioBuffer<float>& dry, std::array<juce::AudioBuffer<float>, numPads>& padBuses, int startSample, int numSamples);
     void updatePlayPositions();
+    bool isPadSounding (int pad) const; // any voice (incl. releasing) on this pad
 
     // ---- preview voice (plays a whole sample, used by Lazy Chop) ----
     void setPreviewSample (SampleData::Ptr s);       // message thread

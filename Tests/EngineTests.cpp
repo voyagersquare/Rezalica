@@ -107,6 +107,12 @@ int main (int argc, char** argv)
     p.setChopMode (RezalicaProcessor::chopTransients);
     check (p.getNumSlices() == 8, "switching mode re-chops automatically");
 
+    // Deleting a transient marker keeps the others and switches to Manual
+    p.removeSlicePoint (3);
+    check (p.getChopMode() == RezalicaProcessor::chopManual && p.getNumSlices() == 7, "deleting a transient marker keeps the other 7");
+    p.setChopMode (RezalicaProcessor::chopTransients);
+    check (p.getNumSlices() == 8, "back to transients restores all 8");
+
     // Manual chop markers: adding one leaves transient mode and removes its markers
     p.selectedPad = 0;
     p.addSlicePoint (0.06f);
@@ -168,16 +174,81 @@ int main (int argc, char** argv)
     seq.internalPlay = false;
     renderBlocks (p, 50);
 
+    // Effects are per pad: switching them on for A1 must not change A2
+    auto renderPad = [&] (int padIndex)
+    {
+        p.getEngine().allNotesOff();
+        renderBlocks (p, 60);
+        juce::MidiBuffer m;
+        m.addEvent (juce::MidiMessage::noteOn (1, RezalicaProcessor::midiBaseNote + padIndex, (juce::uint8) 100), 0);
+        juce::AudioBuffer<float> out (2, 512 * 40);
+        juce::AudioBuffer<float> blk (2, 512);
+        for (int b = 0; b < 40; ++b)
+        {
+            juce::MidiBuffer mm;
+            if (b == 0) mm = m;
+            p.processBlock (blk, mm);
+            for (int ch = 0; ch < 2; ++ch) out.copyFrom (ch, b * 512, blk, ch, 0, 512);
+        }
+        return out;
+    };
+    const auto a2Dry = renderPad (1);
+    auto& a1fx = p.getEngine().getPad (0).effects;
+    a1fx.filterOn = true; a1fx.cutoff = 300.0f; a1fx.lofiOn = true; a1fx.delayOn = true; a1fx.reverbOn = true;
+    const auto a2WithA1FxOn = renderPad (1); // A1 has effects but is silent
+    renderPad (0);                           // A1 plays through its effects ...
+    renderBlocks (p, 500);                   // ... and its delay / reverb tail dies away
+    const auto a2WithA1Fx = renderPad (1);
+    float diffSilent = 0.0f;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < a2Dry.getNumSamples(); ++i)
+            diffSilent = juce::jmax (diffSilent, std::abs (a2Dry.getSample (ch, i) - a2WithA1FxOn.getSample (ch, i)));
+    check (diffSilent < 1.0e-6f, "A1's effects are not applied to A2");
+    float maxDiff = 0.0f;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < a2Dry.getNumSamples(); ++i)
+            maxDiff = juce::jmax (maxDiff, std::abs (a2Dry.getSample (ch, i) - a2WithA1Fx.getSample (ch, i)));
+    std::cout << "       A2 difference with effects on A1: " << maxDiff << "\n";
+    check (maxDiff < 1.0e-6f, "effects on A1 do not affect A2 (per-pad effects)");
+    auto& a2fx = p.getEngine().getPad (1).effects;
+    a2fx.filterOn = true; a2fx.cutoff = 200.0f;
+    const auto a2Filtered = renderPad (1);
+    check (a2Filtered.getMagnitude (0, 0, a2Filtered.getNumSamples()) < a2Dry.getMagnitude (0, 0, a2Dry.getNumSamples()) * 0.9f,
+           "A2's own filter changes A2");
+    a2fx.reset();
+
     // Reverse + effects shouldn't blow up
     p.getEngine().getPad (0).reverse = true;
-    *p.getApvts().getRawParameterValue ("filterOn") = 1.0f;
-    *p.getApvts().getRawParameterValue ("lofiOn") = 1.0f;
-    *p.getApvts().getRawParameterValue ("delayOn") = 1.0f;
-    *p.getApvts().getRawParameterValue ("reverbOn") = 1.0f;
     midi.clear();
     midi.addEvent (juce::MidiMessage::noteOn (1, RezalicaProcessor::midiBaseNote, (juce::uint8) 127), 0);
     peak = renderBlocks (p, 100, midi);
     check (peak > 0.01f && peak < 4.0f && std::isfinite (peak), "reverse + all effects produce sane output");
+
+    // CPU check: 16 pads with every effect on, all playing
+    {
+        for (int i = 0; i < 16; ++i)
+        {
+            auto& f = p.getEngine().getPad (i).effects;
+            f.filterOn = true; f.lofiOn = true; f.delayOn = true; f.reverbOn = true;
+        }
+        const int blocks = (int) (48000 * 10.0 / 512);
+        juce::AudioBuffer<float> buf (2, 512);
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        for (int b = 0; b < blocks; ++b)
+        {
+            juce::MidiBuffer m;
+            if (b % 20 == 0)
+                for (int i = 0; i < 16; ++i)
+                    m.addEvent (juce::MidiMessage::noteOn (1, RezalicaProcessor::midiBaseNote + i, (juce::uint8) 100), 0);
+            p.processBlock (buf, m);
+        }
+        const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
+        std::cout << "       10 s of audio, 16 pads x 4 effects: " << ms << " ms (" << (ms / 100.0) << " % of one core)\n";
+        for (int i = 0; i < 16; ++i)
+            p.getEngine().getPad (i).effects.reset();
+        p.getEngine().getPad (0).effects.filterOn = true; p.getEngine().getPad (0).effects.cutoff = 300.0f;
+        p.getEngine().getPad (0).effects.reverbOn = true;
+    }
 
     // State round trip
     juce::MemoryBlock state;
@@ -186,6 +257,8 @@ int main (int argc, char** argv)
     q.setStateInformation (state.getData(), (int) state.getSize());
     check (q.getEngine().getPadSample (5) != nullptr, "state restores samples");
     check (q.getEngine().getPad (0).reverse.load(), "state restores pad settings");
+    check (q.getEngine().getPad (0).effects.reverbOn.load() && std::abs (q.getEngine().getPad (0).effects.cutoff.load() - 300.0f) < 0.1f
+           && ! q.getEngine().getPad (1).effects.anyOn(), "state restores per-pad effects");
     check (q.getSequencer().getStep (0, 0, 4) == 100, "state restores pattern");
 
     if (snapshotDir.isNotEmpty())

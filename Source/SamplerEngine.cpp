@@ -21,7 +21,6 @@ void Voice::start (int padIndex, SampleData::Ptr s, const PadSettings& ps, float
 
     reverse = ps.reverse.load();
     loop = ps.loop.load();
-    toFx = ps.fx.load();
     pos = reverse ? (double) (s1 - 1) : (double) s0;
     baseRatio = sample->sampleRate / hostRate;
 
@@ -64,12 +63,12 @@ float Voice::getNormalisedPosition() const noexcept
     return (float) (pos / (double) juce::jmax (1, sample->buffer.getNumSamples()));
 }
 
-void Voice::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& fx, int startSample, int numSamples)
+void Voice::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& padBus, int startSample, int numSamples)
 {
     if (! active)
         return;
 
-    auto& out = toFx ? fx : dry;
+    auto& out = (pad >= 0 && settings->effects.anyOn()) ? padBus : dry;
     const float* srcL = sample->buffer.getReadPointer (0);
     const float* srcR = sample->buffer.getReadPointer (1);
     const int len = sample->buffer.getNumSamples();
@@ -139,7 +138,6 @@ void Voice::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& fx,
 //==============================================================================
 SamplerEngine::SamplerEngine()
 {
-    previewSettings.fx = false;
     previewSettings.attackMs = 0.5f;
     previewSettings.releaseMs = 15.0f;
     for (auto& h : hitCounter) h = 0;
@@ -283,14 +281,23 @@ void SamplerEngine::allNotesOff()
     previewVoice.fastStop();
 }
 
-void SamplerEngine::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& fx, int startSample, int numSamples)
+void SamplerEngine::render (juce::AudioBuffer<float>& dry, std::array<juce::AudioBuffer<float>, numPads>& padBuses, int startSample, int numSamples)
 {
     if (numSamples <= 0)
         return;
 
     for (auto& v : voices)
-        v.render (dry, fx, startSample, numSamples);
-    previewVoice.render (dry, fx, startSample, numSamples);
+        if (v.isActive())
+            v.render (dry, padBuses[(size_t) v.getPad()], startSample, numSamples);
+    previewVoice.render (dry, dry, startSample, numSamples);
+}
+
+bool SamplerEngine::isPadSounding (int pad) const
+{
+    for (auto& v : voices)
+        if (v.isActive() && v.getPad() == pad)
+            return true;
+    return false;
 }
 
 void SamplerEngine::updatePlayPositions()

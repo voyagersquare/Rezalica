@@ -78,6 +78,7 @@ public:
     rz::Sequencer& getSequencer() noexcept { return sequencer; }
     juce::AudioProcessorValueTreeState& getApvts() noexcept { return apvts; }
     juce::AudioFormatManager& getFormatManager() noexcept { return formatManager; }
+    static const juce::StringArray& getDelayDivisionNames();
 
     std::atomic<int> selectedPad { 0 };
     std::atomic<int> currentBank { 0 }; // bank shown in the UI and played by the computer keyboard
@@ -103,14 +104,17 @@ private:
     void prepareManualSource();
     float snapToZeroCrossing (float normalisedPosition) const;
     void addEvent (int offset, int type, int pad, float velocity);
-    rz::FxChain::Params readFxParams() const;
+    rz::FxChain::Params readFxParams (int pad, bool padSounding) const;
 
     juce::AudioProcessorValueTreeState apvts;
     juce::AudioFormatManager formatManager;
 
     rz::SamplerEngine engine;
     rz::Sequencer sequencer;
-    rz::FxChain fx;
+    std::array<rz::FxChain, rz::numPads> padFx;             // every pad has its own effect chain
+    std::array<juce::AudioBuffer<float>, rz::numPads> padBuses;
+    std::array<double, rz::numPads> padFxIdleSamples {};   // how long a pad's chain has been silent
+    std::array<bool, rz::numPads> padFxWasRunning {};
 
     // chop state (message thread)
     rz::SampleData::Ptr chopSource, previousChopSource;
@@ -136,20 +140,10 @@ private:
     int numEvents = 0;
     std::array<double, rz::numPads> pendingSeqOff {};
 
-    juce::AudioBuffer<float> dryBuffer, fxBuffer;
+    juce::AudioBuffer<float> dryBuffer;
     double currentSampleRate = 44100.0;
 
     std::atomic<float>* pMaster = nullptr;
-    std::atomic<float>* pFilterOn = nullptr; std::atomic<float>* pCutoff = nullptr;
-    std::atomic<float>* pReso = nullptr; std::atomic<float>* pDrive = nullptr;
-    std::atomic<float>* pLofiOn = nullptr; std::atomic<float>* pBits = nullptr;
-    std::atomic<float>* pRate = nullptr; std::atomic<float>* pNoise = nullptr;
-    std::atomic<float>* pDelayOn = nullptr; std::atomic<float>* pDelayDiv = nullptr;
-    std::atomic<float>* pDelayTime = nullptr; std::atomic<float>* pFeedback = nullptr;
-    std::atomic<float>* pDelayMix = nullptr;
-    std::atomic<float>* pReverbOn = nullptr; std::atomic<float>* pReverbSize = nullptr;
-    std::atomic<float>* pReverbDamp = nullptr; std::atomic<float>* pReverbWidth = nullptr;
-    std::atomic<float>* pReverbMix = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RezalicaProcessor)
 };

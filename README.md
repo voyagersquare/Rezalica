@@ -9,7 +9,8 @@
 - **Rezanje (chop)**: tek kad odabereš mod (**2, 4, 8 ili 16 jednakih dijelova**, **Transients** ili **Manual**), sample se izreže, a pri svakoj promjeni moda automatski se ponovno izreže. **Off** vraća cijeli sample na A1.
   - U modu **Transients** kliznik **Sens** određuje osjetljivost: što je veća, to je više isječaka (do **64**).
   - Isječci 1–16 idu u banku A, 17–32 u banku B, 33–48 u C i 49–64 u D. Banku biraš gumbima **A B C D** iznad padova.
-  - **Manual**: chop markere postavljaš sam. **Shift+klik** (ili dvoklik) na valni oblik dodaje marker, povlačenjem ga pomičeš, a desni klik ga briše. Markeri se sami poravnaju na najbliži prolaz kroz nulu, da ne bude klikova. Ako je sample prije bio izrezan u drugom modu (npr. Transients), taj se mod poništava, svi njegovi markeri se uklone i prelazi se u Manual. Isto vrijedi kad iz izbornika odabereš Manual.
+  - **Manual**: chop markere postavljaš sam. **Shift+klik** (ili dvoklik) na valni oblik dodaje marker, povlačenjem ga pomičeš, a **dvoklik na marker** (ili desni klik) ga briše. Markeri se sami poravnaju na najbliži prolaz kroz nulu, da ne bude klikova. Ako je sample prije bio izrezan u drugom modu (npr. Transients), taj se mod poništava, svi njegovi markeri se uklone i prelazi se u Manual. Isto vrijedi kad iz izbornika odabereš Manual.
+  - Brisanje dvoklikom radi i na markerima iz moda Transients: ostali markeri ostaju, a mod prelazi u Manual.
   - **LAZY CHOP**: odabrani sample svira od početka. Svaki udarac pada, tipke ili MIDI note postavlja rez na mjestu playheada (crvena linija), a isječci redom pune A1, A2, A3… Završava sam kad sample dođe do kraja ili kad ponovno klikneš LAZY CHOP.
 - **Horizontalni zoom** valnog oblika, sve do pojedinačnih uzoraka (16 uzoraka preko cijelog prozora):
   - kotačić miša zumira oko pokazivača, a Shift + kotačić ili traka ispod valnog oblika pomiče prikaz
@@ -18,14 +19,14 @@
 - Kad sviraš MIDI kontrolerom ili tipkovnicom, valni oblik prati pad koji si zadnji udario.
 - **Valni oblik**: vidiš sample, sve isječke i markere početka/kraja. Markere povlačiš mišem (Alt+klik pomiče najbliži start/end marker), a klik na isječak odabire njegov pad.
 - **Postavke po padu**: Gain, Pan, Pitch (±24 polutona), Attack, Release, Start, End.
-- **Modovi pada**: `LOOP`, `REVERSE`, `GATE` (svira samo dok držiš), `FX` (šalje pad kroz efekte), `MUTE`.
+- **Modovi pada**: `LOOP`, `REVERSE`, `GATE` (svira samo dok držiš), `MUTE`.
   - Loop bez Gatea radi kao prekidač: prvi udarac pokreće, drugi zaustavlja.
-- **Efekti** (svi se mogu automatizirati u DAW-u):
+- **Efekti su po padu.** Svaki pad ima svoj lanac efekata sa svojim postavkama. Donji panel uvijek uređuje **odabrani pad** (piše „EFFECTS FOR PAD A3”), pa npr. Reverb na snareu ne utječe na kick. Padovi s uključenim efektom imaju oznaku **FX**.
+  - `COPY FX` / `PASTE FX` kopiraju efekte s jednog pada na drugi, a `FX TO BANK` ih kopira na svih 16 padova trenutne banke.
   - **Filter + Drive**: niskopropusni filtar s rezonancijom i saturacijom
   - **Lo-Fi / Vinyl**: bit-crusher, smanjenje sample ratea i pucketanje ploče
   - **Delay**: slobodno vrijeme u ms ili sinkronizirano s tempom (1/4, 1/8, 1/8 s točkom, 1/16, triole)
   - **Reverb**: Size, Damp, Width, Mix
-  - Efekti djeluju na svaki pad kojem je uključen `FX`.
 - **Sekvencer** (gumb `SEQUENCER` otvara zaseban prozor):
   - 8 patterna, duljina 4–32 koraka (šesnaestinke), swing
   - gumbi A–D prikazuju redove banke koju uređuješ, a pattern svira svih 64 padova
