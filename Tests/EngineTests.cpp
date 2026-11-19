@@ -663,6 +663,75 @@ int main (int argc, char** argv)
         for (auto f : { ws->renderedFile, wc->renderedFile }) { for (int i = 0; i < 40 && ! f.existsAsFile(); ++i) juce::Thread::sleep (50); juce::Thread::sleep (100); f.deleteFile(); }
     }
 
+    // ---- Copies stay untouched when the original is warped / rendered ----
+    {
+        auto& sq = p.getSequencer();
+        sq.syncToHost = false;
+        sq.bpm = 120.0f;
+        renderBlocks (p, 2);
+        p.loadFileToPad (40, file);                 // C9
+        p.copyPad (40);
+        p.pastePad (41);                            // C10: pasted copy
+        p.loadFileToPad (42, file);                 // C11: same file loaded again
+        auto orig41 = p.getEngine().getPadSample (41);
+        auto orig42 = p.getEngine().getPadSample (42);
+        check (orig41 != p.getEngine().getPadSample (40) && orig42 != p.getEngine().getPadSample (40), "copies get their own sample");
+
+        rz::WarpSettings w; w.enabled = true; w.lengthIndex = 3; w.wholeSample = true;
+        p.selectedPad = 40;
+        p.setWarp (40, w);
+        check (p.getEngine().getPadSample (40)->isWarped() && p.getEngine().getPadSample (41) == orig41 && p.getEngine().getPadSample (42) == orig42
+               && ! orig41->isWarped(), "warping one pad leaves its copies untouched");
+        auto warped40 = p.getEngine().getPadSample (40);
+        p.consolidatePad (40);
+        check (p.getEngine().getPadSample (41) == orig41 && p.getEngine().getPadSample (42) == orig42, "rendering one pad leaves its copies untouched");
+        auto rendered40 = p.getEngine().getPadSample (40);
+
+        // ---- Undo / redo ----
+        p.getEngine().getPad (42).start = 0.25f; p.getEngine().getPad (42).end = 0.5f;
+        p.pushUndo ("Trim");
+        p.trimPad (42);
+        auto trimmed = p.getEngine().getPadSample (42);
+        check (p.canUndo() && p.getUndoName() == "Trim", "undo step recorded");
+        p.undo();
+        check (p.getEngine().getPadSample (42) == orig42 && std::abs (p.getEngine().getPad (42).end.load() - 0.5f) < 1.0e-6f, "undo brings the untrimmed sample back");
+        check (p.canRedo(), "redo available after undo");
+        p.redo();
+        check (p.getEngine().getPadSample (42) == trimmed && p.getEngine().getPad (42).start.load() < 1.0e-6f, "redo trims again");
+        p.undo();
+
+        p.pushUndo ("Pad gain");
+        p.getEngine().getPad (41).gainDb = -12.0f;
+        p.pushUndo ("Pad reverse");                // a second, different edit
+        p.getEngine().getPad (41).reverse = true;
+        p.undo();
+        check (! p.getEngine().getPad (41).reverse.load() && std::abs (p.getEngine().getPad (41).gainDb.load() + 12.0f) < 1.0e-4f, "undo goes back one step");
+        p.undo();
+        check (std::abs (p.getEngine().getPad (41).gainDb.load()) < 1.0e-4f, "and another step");
+
+        const int stepsBefore = (int) p.canUndo();
+        p.pushUndo ("Nothing"); // no change since the last step: not a new step
+        p.pushUndo ("Still nothing");
+        juce::ignoreUnused (stepsBefore);
+
+        // ---- the project keeps copies separate, slices of a chop together ----
+        juce::MemoryBlock st;
+        p.getStateInformation (st);
+        RezalicaProcessor r3;
+        r3.setStateInformation (st.getData(), (int) st.getSize());
+        check (r3.getEngine().getPadSample (41) != nullptr && r3.getEngine().getPadSample (41) != r3.getEngine().getPadSample (42),
+               "reopened project: copies stay independent");
+        check (r3.getEngine().getPadSample (0) != nullptr && r3.getEngine().getPadSample (0) == r3.getEngine().getPadSample (5),
+               "reopened project: slices of one chop still share their sample");
+
+        trimmed->file.deleteFile();
+        for (int i = 0; i < 40 && ! warped40->renderedFile.existsAsFile(); ++i) juce::Thread::sleep (50);
+        juce::Thread::sleep (100);
+        warped40->renderedFile.deleteFile();
+        for (int pd : { 40, 41, 42 }) p.clearPad (pd);
+        rendered40->file.deleteFile();
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);
@@ -671,7 +740,8 @@ int main (int argc, char** argv)
         check (p.canPastePad(), "copy pad");
         p.pastePad (20); // B5
         auto& dst = p.getEngine().getPad (20);
-        check (p.getEngine().getPadSample (20) == p.getEngine().getPadSample (2)
+        check (p.getEngine().getPadSample (20) != nullptr && p.getEngine().getPadSample (20) != p.getEngine().getPadSample (2)
+               && p.getEngine().getPadSample (20)->buffer.getNumSamples() == p.getEngine().getPadSample (2)->buffer.getNumSamples()
                && std::abs (dst.start.load() - src.start.load()) < 1.0e-6f && std::abs (dst.end.load() - src.end.load()) < 1.0e-6f
                && std::abs (dst.gainDb.load() + 4.5f) < 1.0e-4f && dst.reverse.load()
                && dst.effects.reverbOn.load() && std::abs (dst.effects.reverbMix.load() - 0.77f) < 1.0e-4f,

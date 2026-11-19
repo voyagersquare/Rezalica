@@ -116,6 +116,7 @@ public:
     {
         dragOver = false;
         flashLevel = 0.0f;
+        processor.pushUndo ("Load sample");
         processor.loadFileToPad (index, juce::File (files[0]));
         if (onSelect) onSelect (index);
     }

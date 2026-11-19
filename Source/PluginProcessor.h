@@ -65,6 +65,15 @@ public:
     double getWarpTempo (const rz::WarpSettings& s) const;
     void updateWarpTempo (bool async = false);           // re-stretches synced samples when the DAW tempo changes
 
+    // ---- undo / redo of pad, chop, warp and effect edits (call pushUndo before an edit) ----
+    void pushUndo (const juce::String& actionName);
+    bool undo();
+    bool redo();
+    bool canUndo() const noexcept { return ! undoStack.empty(); }
+    bool canRedo() const noexcept { return ! redoStack.empty(); }
+    juce::String getUndoName() const { return undoStack.empty() ? juce::String() : undoStack.back().name; }
+    juce::String getRedoName() const { return redoStack.empty() ? juce::String() : redoStack.back().name; }
+
     // copy / paste a whole pad (sample, markers, settings, effects)
     void copyPad (int pad);
     bool canPastePad() const noexcept { return padClipboard.valid; }
@@ -132,7 +141,7 @@ private:
     static std::vector<float> findSlicePoints (const rz::SampleData& s, int mode, float sensitivity);
 
     void timerCallback() override;
-    rz::SampleData::Ptr loadSample (const juce::File& file);
+    rz::SampleData::Ptr loadSample (const juce::File& file, bool shareIfLoaded = false);
     rz::SampleData::Ptr renderWarp (const rz::SampleData::Ptr& source, float regionStart, float regionEnd,
                                     const rz::WarpSettings& settings, double bpm, bool saveInBackground = true,
                                     const juce::AudioBuffer<float>* precomputed = nullptr);
@@ -194,6 +203,21 @@ private:
     rz::WarpSettings lastWarpSettings;
 
     struct PadClipboard { rz::SampleData::Ptr sample; juce::ValueTree settings; bool valid = false; } padClipboard;
+
+    struct UndoState
+    {
+        juce::String name;
+        std::array<rz::SampleData::Ptr, rz::numPads> samples;
+        std::array<juce::ValueTree, rz::numPads> settings;
+        std::array<juce::String, rz::numPads> missing;
+        rz::SampleData::Ptr chopSource;
+        int chopMode = 0;
+        float sensitivity = 0.5f;
+        std::vector<float> slicePoints;
+    };
+    UndoState captureUndoState (const juce::String& name) const;
+    void restoreUndoState (const UndoState& s);
+    std::vector<UndoState> undoStack, redoStack;
 
     std::atomic<int> warpJobs { 0 };
     int warpGeneration = 0;

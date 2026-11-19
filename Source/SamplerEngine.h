@@ -142,6 +142,23 @@ struct SampleData : public juce::ReferenceCountedObject
     juce::File renderedFile;                    // WAV written in the background
 
     bool isWarped() const noexcept { return warpSource != nullptr; }
+
+    /** An independent copy (own object, same audio): edits / warps of one never touch the other. */
+    Ptr clone() const
+    {
+        Ptr c = new SampleData();
+        c->buffer = buffer;
+        c->sampleRate = sampleRate;
+        c->name = name;
+        c->file = file;
+        c->warpSource = warpSource != nullptr ? warpSource->clone() : nullptr;
+        c->regionStart = regionStart;
+        c->regionEnd = regionEnd;
+        c->warp = warp;
+        c->renderedBpm = renderedBpm;
+        c->renderedFile = renderedFile;
+        return c;
+    }
 };
 
 /** Per-pad effect settings (each pad has its own effect chain). */

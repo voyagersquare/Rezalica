@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 #include "TimeStretch.h"
 #include <algorithm>
+#include <map>
 #include <cmath>
 
 namespace
@@ -383,11 +384,14 @@ void RezalicaProcessor::previewNoteFromUi (int pad, float velocity, float transp
     writer.forEach ([&] (int i) { uiEvents[(size_t) i] = { pad, velocity, isNoteOn, true, transpose }; });
 }
 
-rz::SampleData::Ptr RezalicaProcessor::loadSample (const juce::File& file)
+rz::SampleData::Ptr RezalicaProcessor::loadSample (const juce::File& file, bool shareIfLoaded)
 {
-    for (auto* s : samplePool)
-        if (s->file == file && ! s->isWarped())
-            return s;
+    // every load gets its own sample object, so pads with the same file stay independent;
+    // only old projects (without sample ids) share by file
+    if (shareIfLoaded)
+        for (auto* s : samplePool)
+            if (s->file == file && ! s->isWarped())
+                return s;
 
     std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file));
     if (reader == nullptr || reader->lengthInSamples <= 0)
@@ -1077,11 +1081,16 @@ bool RezalicaProcessor::setWarp (int pad, rz::WarpSettings settings, const juce:
     if (current == nullptr)
         return false;
 
+    // the pads that play this very sample object: slices of one chop share it, copies do not
+    std::array<bool, rz::numPads> group {};
+    for (int i = 0; i < rz::numPads; ++i)
+        group[(size_t) i] = engine.getPadSample (i) == current;
+
     // 1. go back to the unwarped sample (pad positions mapped back into the original)
     rz::SampleData::Ptr base = current;
     if (current->isWarped())
     {
-        base = current->warpSource;
+        base = current->warpSource; // (copies made with Paste / Load have their own originals)
         const float ra = current->regionStart, rb = current->regionEnd;
         const auto oldWarp = current->warp;
         auto mapBack = [ra, rb, oldWarp] (float p) { return ra + oldWarp.dstToSrc (p) * (rb - ra); };
@@ -1112,7 +1121,7 @@ bool RezalicaProcessor::setWarp (int pad, rz::WarpSettings settings, const juce:
         {
             // slices follow the audio through the warp markers
             for (int i = 0; i < rz::numPads; ++i)
-                if (engine.getPadSample (i) == base)
+                if (group[(size_t) i] && engine.getPadSample (i) == base)
                 {
                     auto& pp = engine.getPad (i);
                     pp.start = settings.srcToDst (pp.start.load());
@@ -1120,7 +1129,11 @@ bool RezalicaProcessor::setWarp (int pad, rz::WarpSettings settings, const juce:
                 }
             if (chopSource == base)
                 for (auto& sp : slicePoints) sp = settings.srcToDst (sp);
-            replaceSampleOnPads (base, warped);
+            for (int i = 0; i < rz::numPads; ++i)
+                if (group[(size_t) i] && engine.getPadSample (i) == base)
+                    engine.setPadSample (i, warped);
+            if (chopSource == base)
+                chopSource = warped;
         }
         else
         {
@@ -1247,6 +1260,92 @@ void RezalicaProcessor::padFromValueTree (int pad, const juce::ValueTree& t)
     ps.effects.fromValueTree (t.getChildWithName ("FX"));
 }
 
+RezalicaProcessor::UndoState RezalicaProcessor::captureUndoState (const juce::String& name) const
+{
+    UndoState u;
+    u.name = name;
+    for (int i = 0; i < rz::numPads; ++i)
+    {
+        u.samples[(size_t) i] = engine.getPadSample (i);
+        u.settings[(size_t) i] = padToValueTree (i);
+    }
+    {
+        const juce::ScopedLock sl (missingPathLock);
+        u.missing = missingPaths;
+    }
+    u.chopSource = chopSource;
+    u.chopMode = chopMode;
+    u.sensitivity = transientSensitivity;
+    u.slicePoints = slicePoints;
+    return u;
+}
+
+void RezalicaProcessor::restoreUndoState (const UndoState& u)
+{
+    ++warpGeneration; // results of a stretch still running belong to the state we leave
+    for (int i = 0; i < rz::numPads; ++i)
+    {
+        padFromValueTree (i, u.settings[(size_t) i]);
+        engine.setPadSample (i, u.samples[(size_t) i]);
+    }
+    {
+        const juce::ScopedLock sl (missingPathLock);
+        missingPaths = u.missing;
+    }
+    chopSource = u.chopSource;
+    chopMode = u.chopMode;
+    transientSensitivity = u.sensitivity;
+    slicePoints = u.slicePoints;
+    padsChanged.sendChangeMessage();
+}
+
+void RezalicaProcessor::pushUndo (const juce::String& actionName)
+{
+    auto u = captureUndoState (actionName);
+
+    // nothing changed since the last step (e.g. a click without a drag): just rename it
+    if (! undoStack.empty())
+    {
+        const auto& t = undoStack.back();
+        bool same = t.chopSource == u.chopSource && t.chopMode == u.chopMode && t.slicePoints == u.slicePoints
+                 && std::abs (t.sensitivity - u.sensitivity) < 1.0e-6f && t.missing == u.missing;
+        for (int i = 0; i < rz::numPads && same; ++i)
+            same = t.samples[(size_t) i] == u.samples[(size_t) i] && t.settings[(size_t) i].isEquivalentTo (u.settings[(size_t) i]);
+        if (same)
+        {
+            undoStack.back().name = actionName;
+            return;
+        }
+    }
+
+    undoStack.push_back (std::move (u));
+    if (undoStack.size() > 40)
+        undoStack.erase (undoStack.begin());
+    redoStack.clear();
+}
+
+bool RezalicaProcessor::undo()
+{
+    if (undoStack.empty())
+        return false;
+    auto u = undoStack.back();
+    undoStack.pop_back();
+    redoStack.push_back (captureUndoState (u.name));
+    restoreUndoState (u);
+    return true;
+}
+
+bool RezalicaProcessor::redo()
+{
+    if (redoStack.empty())
+        return false;
+    auto r = redoStack.back();
+    redoStack.pop_back();
+    undoStack.push_back (captureUndoState (r.name));
+    restoreUndoState (r);
+    return true;
+}
+
 void RezalicaProcessor::copyPad (int pad)
 {
     padClipboard.sample = engine.getPadSample (pad);
@@ -1259,7 +1358,15 @@ void RezalicaProcessor::pastePad (int pad)
     if (! padClipboard.valid)
         return;
     padFromValueTree (pad, padClipboard.settings);
-    engine.setPadSample (pad, padClipboard.sample);
+    // an independent copy: warping / rendering the original later leaves this pad untouched
+    rz::SampleData::Ptr copy = padClipboard.sample != nullptr ? padClipboard.sample->clone() : nullptr;
+    if (copy != nullptr)
+    {
+        samplePool.add (copy);
+        if (copy->warpSource != nullptr)
+            samplePool.add (copy->warpSource);
+    }
+    engine.setPadSample (pad, copy);
     {
         const juce::ScopedLock sl (missingPathLock);
         missingPaths[(size_t) pad] = {};
@@ -1297,7 +1404,14 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
 
         juce::String path;
         if (auto s = engine.getPadSample (i))
+        {
             path = s->file.getFullPathName();
+            // pads that share one sample object (slices of a chop) get the same id
+            int id = -1;
+            for (int j = 0; j < i && id < 0; ++j)
+                if (engine.getPadSample (j) == s) id = j;
+            p.setProperty ("sampleId", id >= 0 ? id : i, nullptr);
+        }
         else
         {
             const juce::ScopedLock sl (missingPathLock);
@@ -1356,6 +1470,15 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         chop.setProperty ("points", pts.joinIntoString (","), nullptr);
     }
     chop.setProperty ("source", chopSource != nullptr ? chopSource->file.getFullPathName() : juce::String(), nullptr);
+    for (int i = 0; i < rz::numPads; ++i)
+        if (chopSource != nullptr && engine.getPadSample (i) == chopSource)
+        {
+            int id = -1;
+            for (int j = 0; j < i && id < 0; ++j)
+                if (engine.getPadSample (j) == chopSource) id = j;
+            chop.setProperty ("sourceId", id >= 0 ? id : i, nullptr);
+            break;
+        }
     root.appendChild (chop, nullptr);
 
     if (auto xml = root.createXml())
@@ -1381,6 +1504,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
     currentBank = juce::jlimit (0, rz::numBanks - 1, (int) root.getProperty ("bank", 0));
 
     auto pads = root.getChildWithName ("PADS");
+    std::map<int, rz::SampleData::Ptr> restoredById;
     for (auto p : pads)
     {
         const int i = p.getProperty ("index", -1);
@@ -1402,12 +1526,22 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         ps.mute = (bool) p.getProperty ("mute", false);
 
         const juce::String path = p.getProperty ("file").toString();
+        const int sampleId = (int) p.getProperty ("sampleId", -1);
+        if (sampleId >= 0 && restoredById.count (sampleId) > 0)
+        {
+            // same sample object as an earlier pad (slices of one chop)
+            engine.setPadSample (i, restoredById[sampleId]);
+            const juce::ScopedLock sl (missingPathLock);
+            missingPaths[(size_t) i] = {};
+            continue;
+        }
+
         rz::SampleData::Ptr s;
         if (path.isNotEmpty())
         {
             juce::File f (path);
             if (f.existsAsFile())
-                s = loadSample (f);
+                s = loadSample (f, sampleId < 0); // projects without ids share by file, as before
         }
 
         // warped (time-stretched) sample: reuse, load the WAV saved in the background, or re-stretch
@@ -1452,6 +1586,8 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         }
 
         engine.setPadSample (i, s);
+        if (sampleId >= 0 && s != nullptr)
+            restoredById[sampleId] = s;
 
         const juce::ScopedLock sl (missingPathLock);
         missingPaths[(size_t) i] = (s == nullptr) ? path : juce::String();
@@ -1489,9 +1625,24 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         chopMode = (int) chop.getProperty ("mode", (int) chop16);
         transientSensitivity = (float) chop.getProperty ("sensitivity", 0.5f);
         juce::File src (chop.getProperty ("source").toString());
-        if (src.existsAsFile())
+        const int sourceId = (int) chop.getProperty ("sourceId", -1);
+        if (sourceId >= 0 && restoredById.count (sourceId) > 0)
         {
-            chopSource = loadSample (src);
+            chopSource = restoredById[sourceId];
+            if (chopMode == chopManual)
+            {
+                for (auto& t : juce::StringArray::fromTokens (chop.getProperty ("points").toString(), ",", {}))
+                    if (t.isNotEmpty()) slicePoints.push_back (t.getFloatValue());
+                std::sort (slicePoints.begin(), slicePoints.end());
+            }
+            else
+            {
+                slicePoints = findSlicePoints (*chopSource, chopMode, transientSensitivity);
+            }
+        }
+        else if (src.existsAsFile())
+        {
+            chopSource = loadSample (src, true);
             if (chopSource != nullptr) // restore slice list without touching the (possibly edited) pads
             {
                 if (chopMode == chopManual)

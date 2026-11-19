@@ -73,6 +73,11 @@
   - Ako WARP nije uključen, Ctrl+klik ga sam uključi s duljinom koja najbolje odgovara sampleu.
   - Isječci (padovi) prate zvuk. Ctrl + dvoklik ili desni klik uklanja warp marker.
 
+- **UNDO / REDO** (gumbi u gornjoj traci, Ctrl+Z / Ctrl+Y ili Ctrl+Shift+Z):
+  - poništava i vraća zadnje radnje: učitavanje, rezanje, markere, Trim, Warp, warp markere, Render, Clear, Paste pada, kotačiće i gumbe pada te efekte
+  - pamti zadnjih 40 koraka, a uputa na gumbu pokazuje što će se poništiti
+- **Kopije su samostalne**: pad kopiran s Copy/Paste ili isti sample učitan na drugi pad dobiva vlastitu kopiju. Warp, Time Stretch i Render na jednom padu ne diraju njegove kopije. Isječci iz istog reza (Chop) i dalje se obrađuju zajedno.
+
 ## Sviranje
 
 | Banka | MIDI note |

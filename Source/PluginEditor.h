@@ -46,7 +46,8 @@ private:
     rz::RezalicaLookAndFeel lnf;
 
     // header
-    juce::TextButton loadChopButton { "LOAD SAMPLE" }, lazyButton { "LAZY CHOP" }, seqButton { "STEP SEQ" }, pianoRollButton { "PIANO ROLL" }, stopButton { "STOP ALL" };
+    juce::TextButton loadChopButton { "LOAD SAMPLE" }, lazyButton { "LAZY CHOP" }, seqButton { "STEP SEQ" }, pianoRollButton { "PIANO ROLL" }, stopButton { "STOP ALL" },
+                     undoButton { "UNDO" }, redoButton { "REDO" };
     bool lastLazyState = false;
     juce::ComboBox chopModeBox;
     juce::Slider sensitivitySlider;

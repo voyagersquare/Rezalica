@@ -443,6 +443,7 @@ void WaveformView::showMenu (float x)
         auto& proc = safe->processor;
         if ((r == 5 || r == 6) && safe->isWarpView())
         {
+            proc.pushUndo ("Warp markers");
             if (! safe->warpPreview) safe->warpWorking = safe->sample->warp;
             if (r == 5 && wm >= 0 && wm < (int) safe->warpWorking.markers.size())
                 safe->warpWorking.markers.erase (safe->warpWorking.markers.begin() + wm);
@@ -452,6 +453,7 @@ void WaveformView::showMenu (float x)
             safe->applyWarp();
             return;
         }
+        if (r >= 1 && r <= 3) proc.pushUndo ("Chop markers");
         if (r == 1) proc.addSlicePoint (n);
         if (r == 2) proc.removeSlicePoint (marker);
         if (r == 3) proc.clearSlicePoints();
@@ -483,6 +485,7 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
     // chop markers win over the pad's own start/end handles
     if (const int m = sliceMarkerNear (x); m >= 0)
     {
+        processor.pushUndo ("Move marker");
         dragging = DragSlice;
         dragSlice = m;
         repaint();
@@ -495,6 +498,7 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
 
     if (ds < 8.0f || de < 8.0f)
     {
+        processor.pushUndo ("Pad start / end");
         dragging = ds <= de ? DragStart : DragEnd;
         return;
     }
@@ -502,6 +506,7 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
     // Shift+click: add a manual chop marker (leaves any other chop mode)
     if (e.mods.isShiftDown())
     {
+        processor.pushUndo ("Add marker");
         processor.addSlicePoint (xToNorm (x));
         if (onRegionChanged) onRegionChanged();
         return;
@@ -510,6 +515,7 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
     // Alt+click: move the closest start/end handle to the click
     if (e.mods.isAltDown())
     {
+        processor.pushUndo ("Pad start / end");
         dragging = ds <= de ? DragStart : DragEnd;
         mouseDrag (e);
         return;
@@ -624,6 +630,7 @@ int WaveformView::warpMarkerNear (float x) const
 
 void WaveformView::startWarpDrag (float x)
 {
+    processor.pushUndo ("Warp marker");
     // not warped yet: switch WARP on (whole sample, length that fits the current tempo)
     if (! isWarpView())
     {
@@ -720,6 +727,7 @@ void WaveformView::mouseDoubleClick (const juce::MouseEvent& e)
         const int wm = warpMarkerNear ((float) e.x);
         if (wm >= 0)
         {
+            processor.pushUndo ("Remove warp marker");
             if (! warpPreview) warpWorking = sample->warp;
             warpWorking.markers.erase (warpWorking.markers.begin() + wm);
             warpPreview = true;
@@ -734,10 +742,12 @@ void WaveformView::mouseDoubleClick (const juce::MouseEvent& e)
     {
         dragging = DragNone;
         dragSlice = -1;
+        processor.pushUndo ("Delete marker");
         processor.removeSlicePoint (m);
     }
     else
     {
+        processor.pushUndo ("Add marker");
         processor.addSlicePoint (xToNorm ((float) e.x));
     }
 

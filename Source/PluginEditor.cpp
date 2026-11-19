@@ -28,7 +28,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     };
 
     // ---- header ----
-    for (auto* b : { &loadChopButton, &lazyButton, &seqButton, &pianoRollButton, &stopButton })
+    for (auto* b : { &loadChopButton, &lazyButton, &seqButton, &pianoRollButton, &stopButton, &undoButton, &redoButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (*b);
@@ -42,7 +42,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     {
         if (processor.isLazyChopActive())
             processor.stopLazyChop();
-        else if (processor.startLazyChop())
+        else if (processor.pushUndo ("Lazy chop"), processor.startLazyChop())
             selectPad (0);
         lazyButton.setToggleState (processor.isLazyChopActive(), juce::dontSendNotification);
         refreshChopControls();
@@ -64,6 +64,8 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         addAndMakeVisible (bb);
     }
     seqButton.onClick = [this] { toggleSequencerWindow(); };
+    undoButton.onClick = [this] { if (processor.undo()) selectPad (processor.selectedPad.load()); };
+    redoButton.onClick = [this] { if (processor.redo()) selectPad (processor.selectedPad.load()); };
     styleToggle (pianoRollButton, rz::colours::accent2);
     pianoRollButton.setTooltip ("Piano roll: draw notes for melodic samples and drums");
     pianoRollButton.onClick = [this] { togglePianoRoll(); };
@@ -80,7 +82,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     chopModeBox.addItem ("Manual", 6);
     chopModeBox.setWantsKeyboardFocus (false);
     chopModeBox.setTooltip ("Changing this re-chops the selected pad's sample automatically");
-    chopModeBox.onChange = [this] { processor.setChopMode (chopModeFromBox()); refreshChopControls(); };
+    chopModeBox.onChange = [this] { processor.pushUndo ("Chop mode"); processor.setChopMode (chopModeFromBox()); refreshChopControls(); };
     addAndMakeVisible (chopModeBox);
 
     sensitivitySlider.setSliderStyle (juce::Slider::LinearBar);
@@ -89,6 +91,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     sensitivitySlider.setWantsKeyboardFocus (false);
     sensitivitySlider.setColour (juce::Slider::trackColourId, rz::colours::accent2.withAlpha (0.5f));
     sensitivitySlider.setTooltip ("Transient sensitivity: higher finds more slices (up to 64)");
+    sensitivitySlider.onDragStart = [this] { processor.pushUndo ("Transient sensitivity"); };
     sensitivitySlider.onValueChange = [this]
     {
         processor.setTransientSensitivity ((float) sensitivitySlider.getValue() / 100.0f);
@@ -108,6 +111,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     waveform.onRegionChanged = [this] { refreshPadControls(); };
     waveform.onFileDropped = [this] (const juce::File& f)
     {
+        processor.pushUndo ("Load sample");
         if (processor.loadFileForChopping (f))
             selectPad (processor.selectedPad.load());
         refreshChopControls();
@@ -124,6 +128,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         k.slider.setRange (lo, hi, step);
         k.slider.setDoubleClickReturnValue (true, def);
         k.slider.setTextValueSuffix (suffix);
+        k.slider.onDragStart = [this, &k] { processor.pushUndo ("Pad " + k.label.getText().toLowerCase()); };
         k.slider.onValueChange = [this, &k, apply]
         {
             apply (processor.getEngine().getPad (processor.selectedPad.load()), (float) k.slider.getValue());
@@ -148,7 +153,11 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     auto setupPadToggle = [this] (juce::TextButton& b, std::function<void (rz::PadSettings&, bool)> apply, juce::Colour on)
     {
         styleToggle (b, on);
-        b.onClick = [this, &b, apply] { apply (processor.getEngine().getPad (processor.selectedPad.load()), b.getToggleState()); };
+        b.onClick = [this, &b, apply]
+        {
+            processor.pushUndo ("Pad " + b.getButtonText().toLowerCase());
+            apply (processor.getEngine().getPad (processor.selectedPad.load()), b.getToggleState());
+        };
         addAndMakeVisible (b);
     };
     setupPadToggle (loopButton, [] (rz::PadSettings& s, bool v) { s.loop = v; }, rz::colours::accent);
@@ -162,6 +171,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     trimButton.onClick = [this]
     {
         const int pad = processor.selectedPad.load();
+        processor.pushUndo ("Trim");
         if (processor.trimPad (pad))
             selectPad (pad);
     };
@@ -176,7 +186,10 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         if (processor.getEngine().getPadSample (pad) == nullptr)
             warpButton.setToggleState (false, juce::dontSendNotification);
         else
+        {
+            processor.pushUndo (ws.enabled ? "Warp on" : "Warp off");
             processor.requestWarp (pad, ws); // stretches in the background
+        }
     };
     stretchButton.setTooltip ("Open the time stretch / warp window");
     stretchButton.onClick = [this] { showStretchWindow(); };
@@ -190,10 +203,11 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     renderButton.onClick = [this]
     {
         const int pad = processor.selectedPad.load();
+        processor.pushUndo ("Render");
         if (processor.consolidatePad (pad))
             selectPad (pad);
     };
-    clearPadButton.onClick = [this] { processor.clearPad (processor.selectedPad.load()); };
+    clearPadButton.onClick = [this] { processor.pushUndo ("Clear pad"); processor.clearPad (processor.selectedPad.load()); };
 
     // ---- pads ----
     const int startBank = juce::jlimit (0, rz::numBanks - 1, processor.currentBank.load());
@@ -202,10 +216,10 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         auto pad = std::make_unique<rz::PadButton> (processor, startBank * rz::padsPerBank + i, juce::String::charToString ((juce::juce_wchar) padKeys[i]));
         pad->onSelect = [this] (int idx) { selectPad (idx); };
         pad->onLoadRequest = [this] (int idx) { choosePadFile (idx); };
-        pad->onClear = [this] (int idx) { processor.clearPad (idx); };
+        pad->onClear = [this] (int idx) { processor.pushUndo ("Clear pad"); processor.clearPad (idx); };
         pad->onCopy = [this] (int idx) { processor.copyPad (idx); };
-        pad->onPaste = [this] (int idx) { processor.pastePad (idx); selectPad (idx); };
-        pad->onChop = [this] (int idx, int mode) { processor.chopPadSample (idx, mode); selectPad (0); refreshChopControls(); };
+        pad->onPaste = [this] (int idx) { processor.pushUndo ("Paste pad"); processor.pastePad (idx); selectPad (idx); };
+        pad->onChop = [this] (int idx, int mode) { processor.pushUndo ("Chop"); processor.chopPadSample (idx, mode); selectPad (0); refreshChopControls(); };
         addAndMakeVisible (*pad);
         pads.push_back (std::move (pad));
     }
@@ -221,6 +235,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         k.slider.setDoubleClickReturnValue (true, def);
         k.slider.setNumDecimalPlacesToDisplay (decimals);
         k.slider.setTextValueSuffix (suffix);
+        k.slider.onDragStart = [this, &k] { processor.pushUndo ("Effect " + k.label.getText().toLowerCase()); };
         k.slider.onValueChange = [this, &k, member]
         {
             processor.getEngine().getPad (processor.selectedPad.load()).effects.*member = (float) k.slider.getValue();
@@ -233,6 +248,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         styleToggle (b);
         b.onClick = [this, &b, member]
         {
+            processor.pushUndo ("Effect " + b.getButtonText().toLowerCase());
             processor.getEngine().getPad (processor.selectedPad.load()).effects.*member = b.getToggleState();
             refreshPadNames(); // FX badge on the pad
         };
@@ -256,6 +272,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     filterTypeBox.setTooltip ("Analog ladder filter: low-pass, high-pass or band-pass, 12 or 24 dB/oct");
     filterTypeBox.onChange = [this]
     {
+        processor.pushUndo ("Filter type");
         auto& fx = processor.getEngine().getPad (processor.selectedPad.load()).effects;
         const int type = filterTypeBox.getSelectedId() - 1;
         fx.filterType = type;
@@ -285,6 +302,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     delayDivBox.setWantsKeyboardFocus (false);
     delayDivBox.onChange = [this]
     {
+        processor.pushUndo ("Delay sync");
         processor.getEngine().getPad (processor.selectedPad.load()).effects.delayDiv = delayDivBox.getSelectedId() - 1;
         timeKnob.setEnabled (delayDivBox.getSelectedId() == 1);
     };
@@ -316,6 +334,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     {
         if (fxClipboard.isValid())
         {
+            processor.pushUndo ("Paste effects");
             processor.getEngine().getPad (processor.selectedPad.load()).effects.fromValueTree (fxClipboard);
             refreshFxControls();
             refreshPadNames();
@@ -323,6 +342,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     };
     fxToAllButton.onClick = [this]
     {
+        processor.pushUndo ("Effects to bank");
         const auto fx = processor.getEngine().getPad (processor.selectedPad.load()).effects.toValueTree();
         const int first = processor.currentBank.load() * rz::padsPerBank;
         for (int i = first; i < first + rz::padsPerBank; ++i)
@@ -334,7 +354,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     lastPlayedCounter = processor.getEngine().playedCounter.load();
 
-    setSize (1180, 748);
+    setSize (1240, 748);
     setBank (startBank);
     selectPad (juce::jlimit (0, rz::numPads - 1, processor.selectedPad.load()));
     refreshPadNames();
@@ -526,6 +546,10 @@ void RezalicaEditor::timerCallback()
         seqButton.setToggleState (sequencerWindow->isVisible(), juce::dontSendNotification);
 
     warpButton.setButtonText (processor.isWarpBusy() ? "WARP..." : "WARP");
+    undoButton.setEnabled (processor.canUndo());
+    redoButton.setEnabled (processor.canRedo());
+    undoButton.setTooltip (processor.canUndo() ? "Undo: " + processor.getUndoName() + "  (Ctrl+Z)" : "Nothing to undo");
+    redoButton.setTooltip (processor.canRedo() ? "Redo: " + processor.getRedoName() + "  (Ctrl+Y)" : "Nothing to redo");
     renderButton.setEnabled (processor.isPadWarped (processor.selectedPad.load()) && ! processor.isWarpBusy());
 }
 
@@ -551,7 +575,7 @@ void RezalicaEditor::choosePadFile (int pad)
                               [this, pad] (const juce::FileChooser& fc)
     {
         auto f = fc.getResult();
-        if (f.existsAsFile() && processor.loadFileToPad (pad, f))
+        if (f.existsAsFile() && (processor.pushUndo ("Load sample"), processor.loadFileToPad (pad, f)))
             selectPad (pad);
     });
 }
@@ -564,7 +588,7 @@ void RezalicaEditor::chooseChopFile()
                               [this] (const juce::FileChooser& fc)
     {
         auto f = fc.getResult();
-        if (f.existsAsFile() && processor.loadFileForChopping (f))
+        if (f.existsAsFile() && (processor.pushUndo ("Load sample"), processor.loadFileForChopping (f)))
         {
             selectPad (processor.selectedPad.load());
             refreshChopControls();
@@ -612,6 +636,25 @@ void RezalicaEditor::toggleSequencerWindow()
 //==============================================================================
 bool RezalicaEditor::keyPressed (const juce::KeyPress& key)
 {
+    if (key.getModifiers().isCommandDown())
+    {
+        const int code = key.getKeyCode();
+        const auto ch = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
+        if (code == 'Z' || ch == 'z' || ch == 26)
+        {
+            if (key.getModifiers().isShiftDown() ? processor.redo() : processor.undo())
+                selectPad (processor.selectedPad.load());
+            return true;
+        }
+        if (code == 'Y' || ch == 'y' || ch == 25)
+        {
+            if (processor.redo())
+                selectPad (processor.selectedPad.load());
+            return true;
+        }
+        return false;
+    }
+
     const auto c = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
     for (int i = 0; padKeys[i] != 0; ++i)
         if (c == (juce::juce_wchar) padKeys[i])
@@ -634,6 +677,9 @@ bool RezalicaEditor::keyPressed (const juce::KeyPress& key)
 bool RezalicaEditor::keyStateChanged (bool)
 {
     bool used = false;
+    // Ctrl / Cmd shortcuts (Ctrl+Z ...) must not play the pads on those keys
+    if (juce::ModifierKeys::getCurrentModifiers().isCommandDown())
+        return false;
     for (int i = 0; i < rz::padsPerBank; ++i)
     {
         const bool down = juce::KeyPress::isKeyCurrentlyDown ((int) padKeys[i]);
@@ -710,7 +756,9 @@ void RezalicaEditor::resized()
             sensitivitySlider.setBounds (row.removeFromLeft (100));
             row.removeFromLeft (6);
         }
-        lazyButton.setBounds (row.removeFromLeft (96)); row.removeFromLeft (6);
+        lazyButton.setBounds (row.removeFromLeft (96)); row.removeFromLeft (10);
+        undoButton.setBounds (row.removeFromLeft (62)); row.removeFromLeft (4);
+        redoButton.setBounds (row.removeFromLeft (62)); row.removeFromLeft (8);
         stopButton.setBounds (row.removeFromRight (86)); row.removeFromRight (6);
         pianoRollButton.setBounds (row.removeFromRight (100)); row.removeFromRight (6);
         seqButton.setBounds (row.removeFromRight (90)); row.removeFromRight (6);

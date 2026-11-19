@@ -119,12 +119,14 @@ StretchPanel::StretchPanel (RezalicaProcessor& p) : processor (p)
     warpOnButton.onClick = [this]
     {
         ui.enabled = true;
+        processor.pushUndo ("Warp on");
         processor.requestWarp (processor.selectedPad.load(), ui);
         updateInfo();
     };
     warpOffButton.onClick = [this]
     {
         ui.enabled = false;
+        processor.pushUndo ("Warp off");
         processor.requestWarp (processor.selectedPad.load(), ui);
         updateInfo();
     };
@@ -174,6 +176,7 @@ void StretchPanel::settingsChanged (bool reapply)
     if (reapply && processor.isPadWarped (processor.selectedPad.load()))
     {
         ui.enabled = true;
+        processor.pushUndo ("Warp settings");
         processor.requestWarp (processor.selectedPad.load(), ui);
     }
     updateInfo();
