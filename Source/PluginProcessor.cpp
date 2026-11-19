@@ -856,6 +856,54 @@ juce::File RezalicaProcessor::getWarpFolder()
     return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Warped");
 }
 
+juce::File RezalicaProcessor::getRenderFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Rendered");
+}
+
+bool RezalicaProcessor::consolidatePad (int pad)
+{
+    auto warped = engine.getPadSample (pad);
+    if (warped == nullptr || ! warped->isWarped())
+        return false;
+
+    // a plain sample with the stretched audio: from now on it is just a normal file
+    rz::SampleData::Ptr s = new rz::SampleData();
+    s->buffer = warped->buffer;
+    s->sampleRate = warped->sampleRate;
+    s->name = warped->name.replace ("[", "").replace ("]", "") + " render";
+
+    auto folder = getRenderFolder();
+    folder.createDirectory();
+    auto file = folder.getNonexistentChildFile (juce::File::createLegalFileName (s->name), ".wav", false);
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> out (file.createOutputStream());
+        if (out == nullptr)
+            return false;
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (out.get(), s->sampleRate, 2, 24, {}, 0));
+        if (w == nullptr)
+            return false;
+        out.release();
+        w->writeFromAudioSampleBuffer (s->buffer, 0, s->buffer.getNumSamples());
+    }
+    if (! file.existsAsFile())
+        return false;
+    s->file = file;
+    samplePool.add (s);
+
+    ++warpGeneration;                // a pending re-stretch must not bring the old version back
+    replaceSampleOnPads (warped, s); // same audio, so every slice / marker stays where it is
+    for (int i = 0; i < rz::numPads; ++i)
+        if (engine.getPadSample (i) == s)
+        {
+            const juce::ScopedLock sl (missingPathLock);
+            missingPaths[(size_t) i] = {};
+        }
+    padsChanged.sendChangeMessage();
+    return true;
+}
+
 double RezalicaProcessor::getWarpTempo (const rz::WarpSettings& s) const
 {
     return juce::jlimit (20.0, 400.0, (double) (s.syncHost ? sequencer.effectiveBpm.load() : s.bpm));

@@ -71,6 +71,11 @@ public:
     void pastePad (int pad);
     static juce::File getWarpFolder();
 
+    /** RENDER / consolidate: writes the warped (time-stretched) sample of this pad to a new WAV
+        and puts that file in place of the warped sample on every pad that uses it. */
+    bool consolidatePad (int pad);
+    static juce::File getRenderFolder();
+
     // manual chop markers (switch the chop mode to Manual)
     void addSlicePoint (float normalisedPosition);
     void removeSlicePoint (int index);

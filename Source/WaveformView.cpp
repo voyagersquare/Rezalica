@@ -371,27 +371,36 @@ void WaveformView::paintOverChildren (juce::Graphics& g)
         g.drawText ("ZOOM", header, juce::Justification::right);
     }
 
+    // hints go in the top row (left of the zoom info) so they never cover the sample name
+    {
+        auto hint = header.withWidth (juce::jmax (0.0f, header.getWidth() - 290.0f));
+        g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+        if (processor.isLazyChopActive())
+        {
+            g.setColour (juce::Colour (0xffe0413a));
+            g.drawText ("LAZY CHOP: hit pads / keys / MIDI to drop slices", hint, juce::Justification::left, true);
+        }
+        else if (isWarpView())
+        {
+            g.setColour (juce::Colour (0xffffc94a));
+            g.drawText (warpPreview ? "warping..." : "WARP: Ctrl+drag marker to grid   Ctrl+dbl-click: remove",
+                        hint, juce::Justification::left, true);
+        }
+        else if (isChopSource())
+        {
+            g.setColour (dim);
+            g.drawText ("Shift+click: add   dbl-click: delete   Ctrl+drag: warp",
+                        hint, juce::Justification::left, true);
+        }
+    }
+
+    // footer: sample on the left (shortened with ... when long), pad region on the right
     const auto footer = juce::Rectangle<float> (area.getX(), area.getBottom() + 1.0f, area.getWidth(), 16.0f);
-    g.drawText (sample->name + "   " + juce::String (secs, 2) + " s   " + juce::String ((int) sample->sampleRate) + " Hz",
-                footer, juce::Justification::left);
-
-    if (processor.isLazyChopActive())
-    {
-        g.setColour (juce::Colour (0xffe0413a));
-        g.drawText ("LAZY CHOP: hit pads / keys / MIDI to drop slices", footer, juce::Justification::centred);
-    }
-    else if (isWarpView())
-    {
-        g.setColour (juce::Colour (0xffffc94a));
-        g.drawText (warpPreview ? "warping..." : "WARP: Ctrl+drag a marker onto the grid (Alt = no snap)   Ctrl+double-click: remove warp marker",
-                    footer, juce::Justification::centred);
-    }
-    else if (isChopSource())
-    {
-        g.drawText ("shift+click: add marker   double-click marker: delete   drag: move   Ctrl+drag: warp   wheel: zoom", footer, juce::Justification::centred);
-    }
-
     g.setColour (dim);
+    g.setFont (juce::FontOptions (11.0f));
+    const juce::String info = "   " + juce::String (secs, 2) + " s   " + juce::String ((int) sample->sampleRate) + " Hz";
+    auto left = footer.withWidth (footer.getWidth() - 200.0f);
+    g.drawText (sample->name + info, left, juce::Justification::left, true);
     if (padUsesSample)
         g.drawText ("Pad " + padLabel (pad) + "  " + juce::String (st * secs, 3) + " - " + juce::String (en * secs, 3) + " s",
                     footer, juce::Justification::right);

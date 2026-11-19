@@ -180,12 +180,19 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     };
     stretchButton.setTooltip ("Open the time stretch / warp window");
     stretchButton.onClick = [this] { showStretchWindow(); };
-    for (auto* b : { &loadPadButton, &clearPadButton, &trimButton, &warpButton, &stretchButton })
+    for (auto* b : { &renderButton, &clearPadButton, &trimButton, &warpButton, &stretchButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (*b);
     }
-    loadPadButton.onClick = [this] { choosePadFile (processor.selectedPad.load()); };
+    renderButton.setTooltip ("Render / consolidate: saves the warped (time-stretched) sample as a new WAV "
+                             "(Documents/Rezalica/Rendered) and uses it instead of the original");
+    renderButton.onClick = [this]
+    {
+        const int pad = processor.selectedPad.load();
+        if (processor.consolidatePad (pad))
+            selectPad (pad);
+    };
     clearPadButton.onClick = [this] { processor.clearPad (processor.selectedPad.load()); };
 
     // ---- pads ----
@@ -424,6 +431,7 @@ void RezalicaEditor::refreshPadControls()
     gateButton.setToggleState (s.gate.load(), juce::dontSendNotification);
     muteButton.setToggleState (s.mute.load(), juce::dontSendNotification);
     warpButton.setToggleState (processor.isPadWarped (pad), juce::dontSendNotification);
+    renderButton.setEnabled (processor.isPadWarped (pad));
 }
 
 void RezalicaEditor::refreshFxControls()
@@ -518,6 +526,7 @@ void RezalicaEditor::timerCallback()
         seqButton.setToggleState (sequencerWindow->isVisible(), juce::dontSendNotification);
 
     warpButton.setButtonText (processor.isWarpBusy() ? "WARP..." : "WARP");
+    renderButton.setEnabled (processor.isPadWarped (processor.selectedPad.load()) && ! processor.isWarpBusy());
 }
 
 int RezalicaEditor::chopModeFromBox() const
@@ -724,7 +733,7 @@ void RezalicaEditor::resized()
         auto titleRow = s.removeFromTop (24);
         clearPadButton.setBounds (titleRow.removeFromRight (70));
         titleRow.removeFromRight (6);
-        loadPadButton.setBounds (titleRow.removeFromRight (70));
+        renderButton.setBounds (titleRow.removeFromRight (80));
         titleRow.removeFromRight (6);
         trimButton.setBounds (titleRow.removeFromRight (70));
         titleRow.removeFromRight (6);

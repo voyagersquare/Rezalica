@@ -61,7 +61,7 @@ private:
     rz::Knob gainKnob { "GAIN" }, panKnob { "PAN" }, pitchKnob { "PITCH" }, attackKnob { "ATTACK" },
              releaseKnob { "RELEASE" }, startKnob { "START" }, endKnob { "END" };
     juce::TextButton loopButton { "LOOP" }, reverseButton { "REVERSE" }, gateButton { "GATE" },
-                     muteButton { "MUTE" }, loadPadButton { "LOAD" }, clearPadButton { "CLEAR" }, trimButton { "TRIM" },
+                     muteButton { "MUTE" }, renderButton { "RENDER" }, clearPadButton { "CLEAR" }, trimButton { "TRIM" },
                      warpButton { "WARP" }, stretchButton { "STRETCH..." };
 
     // pads

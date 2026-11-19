@@ -638,6 +638,28 @@ int main (int argc, char** argv)
         w.enabled = false;
         p.setWarp (2, w);
         check (std::abs (p.getEngine().getPad (2).start.load() - 0.25f) < 0.002f, "warp off puts the slices back");
+
+        // RENDER: the warped sample becomes a plain WAV that replaces it on every pad
+        w.enabled = true;
+        w.mode = rz::WarpSettings::beats;
+        p.setWarp (2, w);
+        auto beforeRender = p.getEngine().getPadSample (2);
+        const float start2 = p.getEngine().getPad (2).start.load();
+        check (p.consolidatePad (2), "render");
+        auto rendered = p.getEngine().getPadSample (2);
+        check (rendered != beforeRender && ! rendered->isWarped() && rendered->file.existsAsFile()
+               && rendered->buffer.getNumSamples() == beforeRender->buffer.getNumSamples()
+               && p.getEngine().getPadSample (0) == rendered
+               && std::abs (p.getEngine().getPad (2).start.load() - start2) < 1.0e-6f,
+               "rendered WAV replaces the warped sample on all its pads, slices unchanged");
+        std::unique_ptr<juce::AudioFormatReader> rr (p.getFormatManager().createReaderFor (rendered->file));
+        check (rr != nullptr && (int) rr->lengthInSamples == rendered->buffer.getNumSamples(), "rendered WAV file is complete");
+        rr.reset();
+        for (int i = 0; i < 40 && ! beforeRender->renderedFile.existsAsFile(); ++i) juce::Thread::sleep (50);
+        juce::Thread::sleep (100);
+        beforeRender->renderedFile.deleteFile();
+        p.chopFileToPads (file, RezalicaProcessor::chop8); // back to the original for the tests below
+        rendered->file.deleteFile();
         for (auto f : { ws->renderedFile, wc->renderedFile }) { for (int i = 0; i < 40 && ! f.existsAsFile(); ++i) juce::Thread::sleep (50); juce::Thread::sleep (100); f.deleteFile(); }
     }
 
