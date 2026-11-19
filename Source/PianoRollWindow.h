@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "LookAndFeel.h"
+#include "DragExport.h"
 #include <set>
 
 namespace rz
@@ -146,6 +147,7 @@ private:
     juce::TextButton quantizeButton { "QUANTIZE" }, undoButton { "UNDO" }, redoButton { "REDO" }, clearButton { "CLEAR" };
     juce::Slider velocitySlider;
     juce::Label infoLabel;
+    DragExportButton dragMidiButton, dragWavButton;
 };
 
 class PianoRollWindow : public juce::DocumentWindow
@@ -158,7 +160,7 @@ public:
         setUsingNativeTitleBar (true);
         setContentOwned (new PianoRollPanel (p), true);
         setResizable (true, false);
-        setResizeLimits (760, 460, 2600, 1600);
+        setResizeLimits (900, 480, 2600, 1600);
         setAlwaysOnTop (true);
         centreWithSize (getWidth(), getHeight());
     }

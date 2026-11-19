@@ -52,6 +52,10 @@
   - Shift+klik = puna jačina, desni klik ili povlačenje briše
 - Sve se sprema s projektom u DAW-u: padovi, postavke i patterni. Za samplove se pamti putanja do datoteke.
 
+- **DRAG MIDI / DRAG WAV** (u step sekvenceru i u piano rollu): povuci gumb mišem u Ableton (ili drugi DAW / Explorer).
+  - **DRAG MIDI** daje MIDI clip patterna: padovi su note C1 i dalje (kao što ih Rezalica svira), a melodijske note su na svojoj visini. Sadrži i tempo.
+  - **DRAG WAV** renderira pattern u audio (točno jedan loop, s repovima efekata iz prethodnog prolaza, pa se savršeno ponavlja).
+  - Step sekvencer izvozi korake, a piano roll svoje note. Običan klik pokazuje datoteku u mapi `Dokumenti/Rezalica/Export`.
 - **Piano Roll** (gumb `PIANO ROLL` otvara zaseban prozor), za melodijske samplove i za bubnjeve:
   - Usklađen je sa step sekvencerom: ista reprodukcija, tempo, pattern i duljina. Oba sviraju zajedno.
   - **DRUMS**: redovi su 64 pada. **MELODIC**: redovi su tonovi, a odabrani pad svira kromatski (C3 = originalna visina, s akordima).

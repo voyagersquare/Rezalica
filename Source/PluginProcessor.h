@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <limits>
 #include "SamplerEngine.h"
 #include "Sequencer.h"
 #include "FxChain.h"
@@ -28,7 +29,9 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 5.0; }
+    // "infinite" tail: the host must keep calling us even when we are silent and get no MIDI,
+    // otherwise the built-in sequencer could not start on the DAW's play / space bar
+    double getTailLengthSeconds() const override { return std::numeric_limits<double>::infinity(); }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -93,6 +96,12 @@ public:
         and puts that file in place of the warped sample on every pad that uses it. */
     bool consolidatePad (int pad);
     static juce::File getRenderFolder();
+
+    // ---- export a pattern for dragging into the DAW ----
+    static juce::File getExportFolder();
+    /** stepPart / pianoPart: which part of the pattern to export. */
+    juce::File exportPatternMidi (int pattern, bool stepPart, bool pianoPart);
+    juce::File exportPatternWav (int pattern, bool stepPart, bool pianoPart);
 
     // manual chop markers (switch the chop mode to Manual)
     void addSlicePoint (float normalisedPosition);

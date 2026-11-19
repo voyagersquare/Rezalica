@@ -823,6 +823,76 @@ int main (int argc, char** argv)
         for (int i = 32; i < 48; ++i) p.clearPad (i);
     }
 
+    // ---- Export a pattern as MIDI / WAV (drag into the DAW) ----
+    {
+        RezalicaProcessor ex;                 // a fresh instance, independent of the tests above
+        ex.prepareToPlay (48000.0, 512);
+        auto& sq = ex.getSequencer();
+        sq.syncToHost = false;
+        sq.bpm = 120.0f;
+        renderBlocks (ex, 2);
+        ex.chopFileToPads (file, RezalicaProcessor::chop8);
+        sq.currentPattern = 5;
+        sq.length[5] = 16;
+        sq.clearPattern (5);
+        sq.setStep (5, 0, 0, 127);
+        sq.setStep (5, 2, 8, 64);
+        rz::NoteClip::Ptr c = new rz::NoteClip();
+        rz::PianoNote n; n.id = sq.newNoteId(); n.kind = rz::NoteClip::melodic; n.row = 64; n.start = 4; n.length = 2; n.velocity = 90;
+        c->notes = { n };
+        sq.setClip (5, c);
+
+        auto mid = ex.exportPatternMidi (5, true, true);
+        juce::MidiFile mf;
+        juce::FileInputStream in (mid);
+        const bool readOk = in.openedOk() && mf.readFrom (in);
+        int notes = 0; bool found36 = false, found38 = false, found64 = false;
+        if (readOk && mf.getNumTracks() > 0)
+            for (auto* ev : *mf.getTrack (0))
+                if (ev->message.isNoteOn())
+                {
+                    ++notes;
+                    const int nn = ev->message.getNoteNumber();
+                    const double t = ev->message.getTimeStamp();
+                    found36 = found36 || (nn == 36 && t < 1.0 && ev->message.getVelocity() == 127);
+                    found38 = found38 || (nn == 38 && std::abs (t - 8 * 240.0) < 1.0);
+                    found64 = found64 || (nn == 64 && std::abs (t - 4 * 240.0) < 1.0);
+                }
+        check (readOk && notes == 3 && found36 && found38 && found64, "MIDI export: steps (pad notes) and piano roll notes at the right times");
+
+        auto wav = ex.exportPatternWav (5, true, false);
+        std::unique_ptr<juce::AudioFormatReader> r (ex.getFormatManager().createReaderFor (wav));
+        const int expected = (int) std::llround (16 * 0.25 * 60.0 / 120.0 * 48000.0); // 2 s at 48 kHz
+        bool hitAtStart = false;
+        if (r != nullptr)
+        {
+            juce::AudioBuffer<float> b (2, (int) r->lengthInSamples);
+            r->read (&b, 0, (int) r->lengthInSamples, 0, true, true);
+            hitAtStart = b.getMagnitude (0, 0, 2000) > 0.1f && b.getMagnitude (0, 48000, 2000) > 0.05f   // A1 at the start, A3 at step 9 (1 s)
+                      && b.getMagnitude (0, 30000, 15000) < 0.05f;
+        }
+        if (r != nullptr)
+        {
+            juce::AudioBuffer<float> b (2, (int) r->lengthInSamples);
+            r->read (&b, 0, (int) r->lengthInSamples, 0, true, true);
+            std::cout << "       wav: " << r->lengthInSamples << " samples (expected " << expected << "), sr " << r->sampleRate
+                      << ", start peak " << b.getMagnitude (0, 0, 2000) << ", peak at 1 s " << b.getMagnitude (0, 26000, 20000)
+                      << ", overall " << b.getMagnitude (0, 0, b.getNumSamples()) << "\n";
+            std::cout << "       envelope (0.1 s):";
+            for (int w = 0; w < b.getNumSamples(); w += 4800) std::cout << " " << juce::String (b.getMagnitude (0, w, 4800), 2);
+            std::cout << "\n";
+        }
+        check (r != nullptr && (int) r->lengthInSamples == expected && hitAtStart, "WAV export: one loop of the pattern, rendered");
+        std::cout << "       exported: " << mid.getFileName() << ", " << wav.getFileName() << "\n";
+        r.reset();
+        mid.deleteFile();
+        wav.deleteFile();
+        sq.clearPattern (5);
+        sq.setClip (5, new rz::NoteClip());
+        sq.currentPattern = 0;
+    }
+    check (std::isinf (p.getTailLengthSeconds()), "infinite tail: the DAW keeps the plugin running for the sequencer");
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);

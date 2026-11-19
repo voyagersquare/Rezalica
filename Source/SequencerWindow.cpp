@@ -266,8 +266,16 @@ void SequencerGrid::mouseUp (const juce::MouseEvent&)
 }
 
 //==============================================================================
-SequencerPanel::SequencerPanel (RezalicaProcessor& p) : processor (p), grid (p)
+SequencerPanel::SequencerPanel (RezalicaProcessor& p)
+    : processor (p),
+      dragMidiButton ("DRAG MIDI", [this] { return processor.exportPatternMidi (processor.getSequencer().currentPattern.load(), true, false); }),
+      dragWavButton ("DRAG WAV", [this] { return processor.exportPatternWav (processor.getSequencer().currentPattern.load(), true, false); }),
+      grid (p)
 {
+    dragMidiButton.setTooltip ("Drag the pattern's steps into your DAW as a MIDI clip (click: show the file)");
+    dragWavButton.setTooltip ("Drag the pattern's steps into your DAW as audio (rendered loop, click: show the file)");
+    addAndMakeVisible (dragMidiButton);
+    addAndMakeVisible (dragWavButton);
     auto& seq = processor.getSequencer();
 
     for (auto* b : { &playButton, &recButton, &syncButton })
@@ -381,7 +389,7 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p) : processor (p), grid (p)
     addAndMakeVisible (grid);
 
     syncControls();
-    setSize (1000, 640);
+    setSize (1120, 660);
     startTimerHz (30);
 }
 
@@ -454,6 +462,10 @@ void SequencerPanel::resized()
         bb.setBounds (bankRow.removeFromLeft (40));
         bankRow.removeFromLeft (4);
     }
+    bankRow.removeFromLeft (16);
+    dragMidiButton.setBounds (bankRow.removeFromLeft (110));
+    bankRow.removeFromLeft (6);
+    dragWavButton.setBounds (bankRow.removeFromLeft (110));
     followButton.setBounds (bankRow.removeFromRight (80));
     bankRow.removeFromRight (8);
     for (int i = (int) pageButtons.size(); --i >= 0;)

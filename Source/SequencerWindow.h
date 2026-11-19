@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "LookAndFeel.h"
+#include "DragExport.h"
 
 namespace rz
 {
@@ -56,6 +57,7 @@ private:
     std::array<juce::TextButton, numBanks> bankButtons;
     std::array<juce::TextButton, Sequencer::maxSteps / SequencerGrid::stepsPerPage> pageButtons;
     juce::TextButton followButton { "FOLLOW" };
+    DragExportButton dragMidiButton, dragWavButton;
     SequencerGrid grid;
 };
 
