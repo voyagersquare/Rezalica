@@ -1,6 +1,7 @@
 // Headless smoke test: chops a generated sample, plays it via MIDI and the sequencer, checks output.
 #include "../Source/PluginProcessor.h"
 #include "../Source/PluginEditor.h"
+#include "../Source/TimeStretch.h"
 #include <iostream>
 
 static int failures = 0;
@@ -308,6 +309,119 @@ int main (int argc, char** argv)
         p.getEngine().getPad (0).effects.reverbOn = true;
     }
 
+    // ---- Time stretch algorithms ----
+    {
+        const double sr = 44100.0;
+        juce::AudioBuffer<float> sine (2, 44100);
+        for (int i = 0; i < 44100; ++i)
+            for (int ch = 0; ch < 2; ++ch)
+                sine.setSample (ch, i, 0.5f * std::sin (juce::MathConstants<float>::twoPi * 440.0f * (float) i / (float) sr));
+        auto zeroCrossRate = [] (const juce::AudioBuffer<float>& b, int from, int to)
+        {
+            int z = 0;
+            for (int i = from + 1; i < to; ++i)
+                if ((b.getSample (0, i - 1) < 0.0f) != (b.getSample (0, i) < 0.0f)) ++z;
+            return (double) z / (to - from);
+        };
+        const double zIn = zeroCrossRate (sine, 0, 44100);
+        for (double factor : { 2.0, 0.6 })
+        {
+            const int outLen = (int) (44100 * factor);
+            auto out = rz::stretch::complex (sine, sr, outLen);
+            const double zOut = zeroCrossRate (out, outLen / 4, outLen * 3 / 4);
+            const float rmsRatio = out.getRMSLevel (0, outLen / 4, outLen / 2) / sine.getRMSLevel (0, 0, 44100);
+            std::cout << "       complex x" << factor << ": pitch ratio " << zOut / zIn << ", level ratio " << rmsRatio << "\n";
+            check (out.getNumSamples() == outLen, "complex: exact target length");
+            check (std::abs (zOut / zIn - 1.0) < 0.02, "complex: pitch stays the same");
+            check (rmsRatio > 0.8f && rmsRatio < 1.25f, "complex: level stays the same");
+        }
+
+        // Beats: 8 clicks 0.25 s apart, stretched 1.5x -> clicks 0.375 s apart, each still sharp
+        juce::AudioBuffer<float> clicks (2, 88200);
+        clicks.clear();
+        for (int k = 0; k < 8; ++k)
+            for (int i = 0; i < 2000; ++i)
+                for (int ch = 0; ch < 2; ++ch)
+                    clicks.setSample (ch, k * 11025 + i, 0.8f * std::sin (i * 0.05f) * (1.0f - i / 2000.0f));
+        auto stretched = rz::stretch::beats (clicks, sr, 132300, 0, 0, 100.0f, 8.0);
+        int found = 0;
+        for (int k = 0; k < 8; ++k)
+        {
+            const int expect = (int) (k * 11025 * 1.5);
+            if (stretched.getMagnitude (0, expect, 400) > 0.3f && (k == 0 || stretched.getMagnitude (0, expect - 2000, 1500) < 0.01f))
+                ++found;
+        }
+        std::cout << "       beats x1.5: " << found << "/8 hits at their new positions\n";
+        check (stretched.getNumSamples() == 132300 && found == 8, "beats: every hit moves to its stretched position");
+        auto squeezed = rz::stretch::beats (clicks, sr, 44100, 0, 1, 100.0f, 8.0);
+        check (squeezed.getNumSamples() == 44100 && squeezed.getMagnitude (0, 3 * 5512, 300) > 0.3f, "beats: speeding up keeps the hits");
+    }
+
+    // ---- Warp on the processor ----
+    {
+        p.chopFileToPads (file, RezalicaProcessor::chop8);
+        auto& wseq = p.getSequencer();
+        wseq.syncToHost = false;
+        wseq.bpm = 120.0f;
+        renderBlocks (p, 2); // updates the tempo the warp follows
+
+        const auto original = p.getEngine().getPadSample (3);
+        const float start3 = p.getEngine().getPad (3).start.load();
+        p.selectedPad = 3;
+        rz::WarpSettings w;
+        w.enabled = true;
+        w.mode = rz::WarpSettings::beats;
+        w.lengthIndex = 3;         // 2 bars = 8 beats = 4 s at 120 BPM
+        w.syncHost = true;
+        w.wholeSample = true;
+        check (p.setWarp (3, w), "warp on");
+        auto warped = p.getEngine().getPadSample (3);
+        check (warped != original && warped->isWarped() && std::abs (warped->buffer.getNumSamples() - 4 * 44100) < 2, "warp: 2 bars at 120 BPM = 4 s");
+        check (p.getEngine().getPadSample (0) == warped && std::abs (p.getEngine().getPad (3).start.load() - start3) < 1.0e-6f,
+               "whole-sample warp keeps all slices on their pads");
+
+        // the stretched sample is written to disk in the background
+        for (int i = 0; i < 100 && ! warped->renderedFile.existsAsFile(); ++i)
+            juce::Thread::sleep (50);
+        juce::Thread::sleep (100);
+        check (warped->renderedFile.existsAsFile() && warped->renderedFile.getSize() > 4 * 44100 * 2 * 3, "stretched sample saved in the background");
+
+        // state restores the warp from the saved file
+        juce::MemoryBlock st;
+        p.getStateInformation (st);
+        RezalicaProcessor r;
+        r.setStateInformation (st.getData(), (int) st.getSize());
+        auto rw = r.getEngine().getPadSample (3);
+        check (rw != nullptr && rw->isWarped() && rw->buffer.getNumSamples() == warped->buffer.getNumSamples()
+               && rw->renderedFile == warped->renderedFile, "project reopens with the warped sample (loaded from the saved WAV)");
+
+        // following the DAW tempo
+        wseq.bpm = 96.0f;
+        renderBlocks (p, 2);
+        p.updateWarpTempo();
+        auto rewarped = p.getEngine().getPadSample (3);
+        check (rewarped->isWarped() && std::abs (rewarped->buffer.getNumSamples() - 5 * 44100) < 2, "warp follows a tempo change (96 BPM -> 5 s)");
+
+        // complex mode, only one pad
+        w.mode = rz::WarpSettings::complex;
+        w.wholeSample = false;
+        w.lengthIndex = 1;          // 2 beats at 96 BPM = 1.25 s
+        p.setWarp (3, w);
+        auto padOnly = p.getEngine().getPadSample (3);
+        check (padOnly->isWarped() && p.getEngine().getPadSample (0) == original && std::abs (padOnly->buffer.getNumSamples() - 55125) < 2,
+               "pad-only warp stretches just that pad's slice");
+
+        w.enabled = false;
+        p.setWarp (3, w);
+        check (p.getEngine().getPadSample (3) == original && std::abs (p.getEngine().getPad (3).start.load() - start3) < 1.0e-5f,
+               "warp off restores the original sample and markers");
+
+        for (auto f : { warped->renderedFile, rewarped->renderedFile, padOnly->renderedFile })
+            f.deleteFile();
+        wseq.bpm = 120.0f;
+        renderBlocks (p, 2);
+    }
+
     // State round trip
     juce::MemoryBlock state;
     p.getStateInformation (state);
@@ -346,6 +460,13 @@ int main (int argc, char** argv)
         panel.setLookAndFeel (&lnf);
         save (panel, "sequencer.png");
         panel.setLookAndFeel (nullptr);
+
+        {
+            rz::StretchPanel sp (q);
+            sp.setLookAndFeel (&lnf);
+            save (sp, "stretch.png");
+            sp.setLookAndFeel (nullptr);
+        }
 
         rz::WaveformView wv (q);
         wv.setLookAndFeel (&lnf);

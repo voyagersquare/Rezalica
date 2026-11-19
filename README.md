@@ -18,6 +18,15 @@
   - kod jakog zooma vidi se svaki uzorak, pa markere možeš postaviti točno na uzorak
 - Kad sviraš MIDI kontrolerom ili tipkovnicom, valni oblik prati pad koji si zadnji udario.
 - **Valni oblik**: vidiš sample, sve isječke i markere početka/kraja. Markere povlačiš mišem (Alt+klik pomiče najbliži start/end marker), a klik na isječak odabire njegov pad.
+- **Time Stretch / Warp** (gumbi `WARP` i `STRETCH...` iznad kontrola pada). Nikad se ne uključuje sam, nego samo kad ga ti uključiš.
+  - `STRETCH...` otvara zaseban prozor sa svim opcijama:
+    - **Mode**: **Beats** za bubnjeve i perkusivne loopove (svaki udarac ostaje oštar i svira originalnom brzinom, mijenja se samo razmak) ili **Complex** za melodijski i miješani materijal (phase vocoder s phase lockingom, glatkiji zvuk).
+    - **Length**: 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars ili 16 bars.
+    - **Tempo**: prati tempo DAW-a (ako se tempo promijeni, sample se sam ponovno rastegne) ili ručni BPM.
+    - **Apply to**: cijeli sample (svi njegovi isječci i padovi ga prate) ili samo odabrani pad.
+    - **Beats opcije**: Preserve (Transients, 1/8, 1/16), Transient loop (Off, Loop Forward, Loop Back-and-Forth), Transient envelope.
+  - Visina tona se ne mijenja. Original ostaje netaknut, a `WARP OFF` ga vraća.
+  - Rastegnuti sample sprema se u pozadini kao WAV u `Dokumenti/Rezalica/Warped`, a projekt ga pri otvaranju učita izravno.
 - **Postavke po padu**: Gain, Pan, Pitch (±24 polutona), Attack, Release, Start, End.
 - **Modovi pada**: `LOOP` (dio između markera vrti se ukrug dok držiš pad, tipku ili MIDI notu, a staje kad pustiš), `REVERSE`, `GATE` (svira samo dok držiš), `MUTE`.
 - **TRIM** (truncate): od samplea pada ostaje samo narančasti dio između markera. Taj dio postaje novi sample na tom padu i sprema se kao WAV u `Dokumenti/Rezalica/Trimmed`, a ostali padovi zadržavaju originalni sample.
@@ -100,6 +109,8 @@ cmake --build build --config Release --target RezalicaTests
 | `Source/PluginEditor.*` | Glavni prozor |
 | `Source/WaveformView.*`, `PadButton.h` | Valni oblik i padovi |
 | `Source/SequencerWindow.*` | Prozor sekvencera |
+| `Source/TimeStretch.h` | Time stretch algoritmi: Beats i Complex (phase vocoder) |
+| `Source/StretchWindow.*` | Prozor Time Stretch / Warp |
 
 ## Licenca
 

@@ -54,6 +54,14 @@ public:
     bool trimPad (int pad); // keeps only start..end of the pad's sample (new sample, saved as WAV)
     static juce::File getTrimFolder();
 
+    // Time stretch / warp (applied to the selected pad's sample, or only its region)
+    bool setWarp (int pad, rz::WarpSettings settings);   // settings.enabled = false removes the warp
+    rz::WarpSettings getWarpSettings (int pad) const;    // current settings of the pad (or the last used ones)
+    bool isPadWarped (int pad) const;
+    double getWarpTempo (const rz::WarpSettings& s) const;
+    void updateWarpTempo();                              // re-stretches synced samples when the DAW tempo changes
+    static juce::File getWarpFolder();
+
     // manual chop markers (switch the chop mode to Manual)
     void addSlicePoint (float normalisedPosition);
     void removeSlicePoint (int index);
@@ -101,6 +109,11 @@ private:
 
     void timerCallback() override;
     rz::SampleData::Ptr loadSample (const juce::File& file);
+    rz::SampleData::Ptr renderWarp (const rz::SampleData::Ptr& source, float regionStart, float regionEnd,
+                                    const rz::WarpSettings& settings, double bpm, bool saveInBackground = true);
+    void replaceSampleOnPads (const rz::SampleData::Ptr& from, const rz::SampleData::Ptr& to);
+    void saveInBackground (const rz::SampleData::Ptr& s);
+
     void rechop();
     void applySlices();
     void prepareManualSource();
@@ -146,6 +159,11 @@ private:
     double currentSampleRate = 44100.0;
 
     std::atomic<float>* pMaster = nullptr;
+
+    rz::WarpSettings lastWarpSettings;
+
+    // writes stretched samples to disk in the background (declared last: stopped first)
+    juce::ThreadPool fileWriter { 1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RezalicaProcessor)
 };

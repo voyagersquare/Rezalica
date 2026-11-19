@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "TimeStretch.h"
 #include <algorithm>
 #include <cmath>
 
@@ -25,6 +26,7 @@ RezalicaProcessor::RezalicaProcessor()
 RezalicaProcessor::~RezalicaProcessor()
 {
     stopTimer();
+    fileWriter.removeAllJobs (false, 10000); // let pending WAV writes finish
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout RezalicaProcessor::createLayout()
@@ -291,7 +293,7 @@ void RezalicaProcessor::triggerPadFromUi (int pad, float velocity, bool isNoteOn
 rz::SampleData::Ptr RezalicaProcessor::loadSample (const juce::File& file)
 {
     for (auto* s : samplePool)
-        if (s->file == file)
+        if (s->file == file && ! s->isWarped())
             return s;
 
     std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file));
@@ -755,8 +757,180 @@ juce::String RezalicaProcessor::getPadName (int pad) const
     return {};
 }
 
+//==============================================================================
+juce::File RezalicaProcessor::getWarpFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Warped");
+}
+
+double RezalicaProcessor::getWarpTempo (const rz::WarpSettings& s) const
+{
+    return juce::jlimit (20.0, 400.0, (double) (s.syncHost ? sequencer.effectiveBpm.load() : s.bpm));
+}
+
+bool RezalicaProcessor::isPadWarped (int pad) const
+{
+    auto s = engine.getPadSample (pad);
+    return s != nullptr && s->isWarped();
+}
+
+rz::WarpSettings RezalicaProcessor::getWarpSettings (int pad) const
+{
+    if (auto s = engine.getPadSample (pad); s != nullptr && s->isWarped())
+        return s->warp;
+    auto w = lastWarpSettings;
+    w.enabled = false;
+    return w;
+}
+
+void RezalicaProcessor::saveInBackground (const rz::SampleData::Ptr& s)
+{
+    auto folder = getWarpFolder();
+    folder.createDirectory();
+    auto file = folder.getNonexistentChildFile (juce::File::createLegalFileName (s->name), ".wav", false);
+    file.create(); // reserve the name
+    s->renderedFile = file;
+
+    rz::SampleData::Ptr keep = s;
+    fileWriter.addJob ([keep, file]
+    {
+        auto tmp = file.withFileExtension (".tmp");
+        {
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::OutputStream> out (tmp.createOutputStream());
+            if (out == nullptr)
+                return;
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (out.get(), keep->sampleRate, 2, 24, {}, 0));
+            if (w == nullptr)
+                return;
+            out.release();
+            w->writeFromAudioSampleBuffer (keep->buffer, 0, keep->buffer.getNumSamples());
+        }
+        tmp.moveFileTo (file); // only complete files get the final name
+    });
+}
+
+rz::SampleData::Ptr RezalicaProcessor::renderWarp (const rz::SampleData::Ptr& source, float regionStart, float regionEnd,
+                                                   const rz::WarpSettings& settings, double bpm, bool background)
+{
+    const int len = source->buffer.getNumSamples();
+    const int a = juce::jlimit (0, len - 1, (int) (regionStart * (float) len));
+    const int b = juce::jlimit (a + 2, len, (int) (regionEnd * (float) len));
+
+    juce::AudioBuffer<float> region (2, b - a);
+    for (int ch = 0; ch < 2; ++ch)
+        region.copyFrom (ch, 0, source->buffer, ch, a, b - a);
+
+    const double seconds = settings.lengthBeats() * 60.0 / bpm;
+    const int outLen = juce::jlimit (16, (int) (source->sampleRate * 60.0 * 10.0), (int) std::llround (seconds * source->sampleRate));
+
+    rz::SampleData::Ptr s = new rz::SampleData();
+    s->buffer = settings.mode == rz::WarpSettings::complex
+              ? rz::stretch::complex (region, source->sampleRate, outLen)
+              : rz::stretch::beats (region, source->sampleRate, outLen, settings.preserve, settings.loopMode,
+                                    settings.envelope, settings.lengthBeats());
+    s->sampleRate = source->sampleRate;
+    s->name = source->name + " [" + rz::WarpSettings::lengthNames()[settings.lengthIndex] + "]";
+    s->file = source->file;
+    s->warpSource = source;
+    s->regionStart = regionStart;
+    s->regionEnd = regionEnd;
+    s->warp = settings;
+    s->warp.enabled = true;
+    s->renderedBpm = bpm;
+
+    samplePool.add (s);
+    if (background)
+        saveInBackground (s);
+    return s;
+}
+
+void RezalicaProcessor::replaceSampleOnPads (const rz::SampleData::Ptr& from, const rz::SampleData::Ptr& to)
+{
+    for (int i = 0; i < rz::numPads; ++i)
+        if (engine.getPadSample (i) == from)
+            engine.setPadSample (i, to);
+    if (chopSource == from)
+        chopSource = to;
+}
+
+bool RezalicaProcessor::setWarp (int pad, rz::WarpSettings settings)
+{
+    auto current = engine.getPadSample (pad);
+    if (current == nullptr)
+        return false;
+
+    // 1. go back to the unwarped sample (pad positions mapped back into the original)
+    rz::SampleData::Ptr base = current;
+    if (current->isWarped())
+    {
+        base = current->warpSource;
+        const float ra = current->regionStart, rb = current->regionEnd;
+        auto mapBack = [ra, rb] (float p) { return ra + p * (rb - ra); };
+        for (int i = 0; i < rz::numPads; ++i)
+            if (engine.getPadSample (i) == current)
+            {
+                auto& ps = engine.getPad (i);
+                ps.start = mapBack (ps.start.load());
+                ps.end = mapBack (ps.end.load());
+                engine.setPadSample (i, base);
+            }
+        if (chopSource == current)
+        {
+            chopSource = base;
+            for (auto& p : slicePoints) p = mapBack (p);
+        }
+    }
+
+    if (settings.enabled)
+    {
+        // 2. stretch the whole sample (all its pads / slices follow) or only this pad's region
+        auto& ps = engine.getPad (pad);
+        const float ra = settings.wholeSample ? 0.0f : ps.start.load();
+        const float rb = settings.wholeSample ? 1.0f : ps.end.load();
+        auto warped = renderWarp (base, ra, rb, settings, getWarpTempo (settings));
+
+        if (settings.wholeSample)
+        {
+            replaceSampleOnPads (base, warped);
+        }
+        else
+        {
+            engine.setPadSample (pad, warped);
+            ps.start = 0.0f;
+            ps.end = 1.0f;
+        }
+        lastWarpSettings = settings;
+    }
+
+    padsChanged.sendChangeMessage();
+    return true;
+}
+
+void RezalicaProcessor::updateWarpTempo()
+{
+    std::vector<rz::SampleData::Ptr> done;
+    for (int i = 0; i < rz::numPads; ++i)
+    {
+        auto s = engine.getPadSample (i);
+        if (s == nullptr || ! s->isWarped() || ! s->warp.syncHost || std::find (done.begin(), done.end(), s) != done.end())
+            continue;
+        done.push_back (s);
+
+        const double bpm = getWarpTempo (s->warp);
+        if (std::abs (bpm - s->renderedBpm) < 0.01)
+            continue;
+
+        auto fresh = renderWarp (s->warpSource, s->regionStart, s->regionEnd, s->warp, bpm);
+        replaceSampleOnPads (s, fresh);
+        padsChanged.sendChangeMessage();
+    }
+}
+
 void RezalicaProcessor::timerCallback()
 {
+    updateWarpTempo();
+
     // Free samples nobody uses anymore (only the pool holds a reference).
     for (int i = samplePool.size(); --i >= 0;)
         if (samplePool.getObjectPointerUnchecked (i)->getReferenceCount() == 1)
@@ -800,6 +974,15 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         p.setProperty ("reverse", ps.reverse.load(), nullptr);
         p.setProperty ("gate", ps.gate.load(), nullptr);
         p.appendChild (ps.effects.toValueTree(), nullptr);
+        if (auto ws = engine.getPadSample (i); ws != nullptr && ws->isWarped())
+        {
+            auto w = ws->warp.toValueTree();
+            w.setProperty ("regionStart", ws->regionStart, nullptr);
+            w.setProperty ("regionEnd", ws->regionEnd, nullptr);
+            w.setProperty ("renderedBpm", ws->renderedBpm, nullptr);
+            w.setProperty ("renderedFile", ws->renderedFile.getFullPathName(), nullptr);
+            p.appendChild (w, nullptr);
+        }
         p.setProperty ("mute", ps.mute.load(), nullptr);
         pads.appendChild (p, nullptr);
     }
@@ -881,6 +1064,48 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
             if (f.existsAsFile())
                 s = loadSample (f);
         }
+
+        // warped (time-stretched) sample: reuse, load the WAV saved in the background, or re-stretch
+        if (auto w = p.getChildWithName ("WARP"); s != nullptr && w.isValid() && (bool) w.getProperty ("enabled", false))
+        {
+            const auto settings = rz::WarpSettings::fromValueTree (w);
+            const float ra = (float) w.getProperty ("regionStart", 0.0f), rb = (float) w.getProperty ("regionEnd", 1.0f);
+            const double bpm = (double) w.getProperty ("renderedBpm", 120.0);
+            rz::SampleData::Ptr warped;
+
+            for (auto* c : samplePool)
+                if (c->warpSource == s && std::abs (c->regionStart - ra) < 1.0e-6f && std::abs (c->regionEnd - rb) < 1.0e-6f
+                    && c->warp.sameRenderAs (settings) && std::abs (c->renderedBpm - bpm) < 0.01)
+                    { warped = c; break; }
+
+            const juce::File rendered (w.getProperty ("renderedFile").toString());
+            if (warped == nullptr && rendered.existsAsFile())
+            {
+                std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (rendered));
+                if (reader != nullptr && reader->lengthInSamples > 0)
+                {
+                    warped = new rz::SampleData();
+                    warped->buffer.setSize (2, (int) reader->lengthInSamples);
+                    reader->read (&warped->buffer, 0, (int) reader->lengthInSamples, 0, true, true);
+                    if (reader->numChannels == 1)
+                        warped->buffer.copyFrom (1, 0, warped->buffer, 0, 0, warped->buffer.getNumSamples());
+                    warped->sampleRate = reader->sampleRate;
+                    warped->name = s->name + " [" + rz::WarpSettings::lengthNames()[settings.lengthIndex] + "]";
+                    warped->file = s->file;
+                    warped->warpSource = s;
+                    warped->regionStart = ra;
+                    warped->regionEnd = rb;
+                    warped->warp = settings;
+                    warped->renderedBpm = bpm;
+                    warped->renderedFile = rendered;
+                    samplePool.add (warped);
+                }
+            }
+            if (warped == nullptr)
+                warped = renderWarp (s, ra, rb, settings, bpm);
+            s = warped;
+        }
+
         engine.setPadSample (i, s);
 
         const juce::ScopedLock sl (missingPathLock);
@@ -933,6 +1158,15 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
             }
         }
     }
+
+    // the chop source may be playing in its warped version
+    if (chopSource != nullptr)
+        for (int i = 0; i < rz::numPads; ++i)
+            if (auto ps = engine.getPadSample (i); ps != nullptr && ps->warpSource == chopSource && ps->warp.wholeSample)
+            {
+                chopSource = ps;
+                break;
+            }
 
     padsChanged.sendChangeMessage();
 }

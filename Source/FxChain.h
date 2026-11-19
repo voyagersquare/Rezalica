@@ -149,11 +149,11 @@ private:
         const float tubeBiasOffset = std::tanh (tubeBias);
 
         // Tube: asymmetric soft curve -> mostly 2nd harmonic, warm
-        const auto tubeStage = makeStage (tube, 3.0f, [=] (float v) { return std::tanh (v + tubeBias) - tubeBiasOffset; });
+        const auto tubeStage = makeStage (tube, 4.5f, [=] (float v) { return std::tanh (v + tubeBias) - tubeBiasOffset; });
         // Tape: very soft knee (plus a gentle high-frequency roll-off below)
-        const auto tapeStage = makeStage (tape, 2.5f, [] (float v) { return (2.0f / juce::MathConstants<float>::pi) * std::atan (v * juce::MathConstants<float>::halfPi); });
+        const auto tapeStage = makeStage (tape, 3.8f, [] (float v) { return (2.0f / juce::MathConstants<float>::pi) * std::atan (v * juce::MathConstants<float>::halfPi); });
         // Solid state: firmer, symmetric knee -> odd harmonics
-        const auto solidStage = makeStage (solid, 4.0f, [] (float v)
+        const auto solidStage = makeStage (solid, 6.0f, [] (float v)
         {
             const float c = juce::jlimit (-1.0f, 1.0f, v);
             return c - c * c * c / 3.0f;

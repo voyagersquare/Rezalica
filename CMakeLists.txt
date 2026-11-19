@@ -38,7 +38,8 @@ target_sources(Rezalica PRIVATE
     Source/PluginEditor.cpp
     Source/SamplerEngine.cpp
     Source/WaveformView.cpp
-    Source/SequencerWindow.cpp)
+    Source/SequencerWindow.cpp
+    Source/StretchWindow.cpp)
 
 target_compile_definitions(Rezalica PUBLIC
     JUCE_WEB_BROWSER=0

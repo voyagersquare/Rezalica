@@ -5,6 +5,7 @@
 #include "PadButton.h"
 #include "WaveformView.h"
 #include "SequencerWindow.h"
+#include "StretchWindow.h"
 
 class RezalicaEditor : public juce::AudioProcessorEditor,
                        private juce::Timer,
@@ -59,7 +60,8 @@ private:
     rz::Knob gainKnob { "GAIN" }, panKnob { "PAN" }, pitchKnob { "PITCH" }, attackKnob { "ATTACK" },
              releaseKnob { "RELEASE" }, startKnob { "START" }, endKnob { "END" };
     juce::TextButton loopButton { "LOOP" }, reverseButton { "REVERSE" }, gateButton { "GATE" },
-                     muteButton { "MUTE" }, loadPadButton { "LOAD" }, clearPadButton { "CLEAR" }, trimButton { "TRIM" };
+                     muteButton { "MUTE" }, loadPadButton { "LOAD" }, clearPadButton { "CLEAR" }, trimButton { "TRIM" },
+                     warpButton { "WARP" }, stretchButton { "STRETCH..." };
 
     // pads
     std::vector<std::unique_ptr<rz::PadButton>> pads;
@@ -91,6 +93,8 @@ private:
     juce::ValueTree fxClipboard;
 
     std::unique_ptr<rz::SequencerWindow> sequencerWindow;
+    std::unique_ptr<rz::StretchWindow> stretchWindow;
+    void showStretchWindow();
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::Rectangle<int> headerArea, sampleArea, padArea, fxArea;

@@ -163,7 +163,20 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
             selectPad (pad);
     };
     loopButton.setTooltip ("Loop: plays the part between the markers over and over while you hold the pad / key / MIDI note");
-    for (auto* b : { &loadPadButton, &clearPadButton, &trimButton })
+    styleToggle (warpButton);
+    warpButton.setTooltip ("Time stretch / warp this pad's sample on or off (settings: STRETCH...)");
+    warpButton.onClick = [this]
+    {
+        const int pad = processor.selectedPad.load();
+        auto ws = processor.getWarpSettings (pad);
+        ws.enabled = warpButton.getToggleState();
+        if (! processor.setWarp (pad, ws))
+            warpButton.setToggleState (false, juce::dontSendNotification);
+        selectPad (pad);
+    };
+    stretchButton.setTooltip ("Open the time stretch / warp window");
+    stretchButton.onClick = [this] { showStretchWindow(); };
+    for (auto* b : { &loadPadButton, &clearPadButton, &trimButton, &warpButton, &stretchButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (*b);
@@ -321,6 +334,7 @@ RezalicaEditor::~RezalicaEditor()
     stopTimer();
     processor.padsChanged.removeChangeListener (this);
     sequencerWindow = nullptr;
+    stretchWindow = nullptr;
     setLookAndFeel (nullptr);
 }
 
@@ -402,6 +416,7 @@ void RezalicaEditor::refreshPadControls()
     reverseButton.setToggleState (s.reverse.load(), juce::dontSendNotification);
     gateButton.setToggleState (s.gate.load(), juce::dontSendNotification);
     muteButton.setToggleState (s.mute.load(), juce::dontSendNotification);
+    warpButton.setToggleState (processor.isPadWarped (pad), juce::dontSendNotification);
 }
 
 void RezalicaEditor::refreshFxControls()
@@ -537,6 +552,14 @@ void RezalicaEditor::chooseChopFile()
             refreshChopControls();
         }
     });
+}
+
+void RezalicaEditor::showStretchWindow()
+{
+    if (stretchWindow == nullptr)
+        stretchWindow = std::make_unique<rz::StretchWindow> (processor, lnf);
+    stretchWindow->setVisible (true);
+    stretchWindow->toFront (true);
 }
 
 void RezalicaEditor::toggleSequencerWindow()
@@ -680,6 +703,10 @@ void RezalicaEditor::resized()
         loadPadButton.setBounds (titleRow.removeFromRight (70));
         titleRow.removeFromRight (6);
         trimButton.setBounds (titleRow.removeFromRight (70));
+        titleRow.removeFromRight (6);
+        stretchButton.setBounds (titleRow.removeFromRight (90));
+        titleRow.removeFromRight (6);
+        warpButton.setBounds (titleRow.removeFromRight (70));
         padTitle.setBounds (titleRow);
 
         s.removeFromTop (6);

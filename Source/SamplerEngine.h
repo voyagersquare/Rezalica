@@ -18,6 +18,66 @@ inline juce::String padLabel (int pad)
     return juce::String::charToString ((juce::juce_wchar) ('A' + pad / padsPerBank)) + juce::String (pad % padsPerBank + 1);
 }
 
+/** Time stretch / warp settings of a sample. */
+struct WarpSettings
+{
+    enum Mode { beats = 0, complex = 1 };
+    static const juce::StringArray& lengthNames()
+    {
+        static const juce::StringArray n { "1 beat", "2 beats", "1 bar", "2 bars", "4 bars", "8 bars", "16 bars" };
+        return n;
+    }
+    static double lengthInBeats (int index) { static const double b[] { 1, 2, 4, 8, 16, 32, 64 }; return b[juce::jlimit (0, 6, index)]; }
+
+    bool enabled = false;
+    int mode = beats;
+    int lengthIndex = 2;        // 1 bar
+    bool syncHost = true;       // use the DAW tempo
+    float bpm = 120.0f;         // used when not synced
+    bool wholeSample = true;    // false: only the selected pad's region
+    int preserve = 0;           // Beats: 0 transients, 1 = 1/8, 2 = 1/16
+    int loopMode = 1;           // Beats: 0 off, 1 loop forward, 2 loop back-and-forth
+    float envelope = 100.0f;    // Beats: transient envelope, 100 = no fade
+
+    double lengthBeats() const { return lengthInBeats (lengthIndex); }
+
+    juce::ValueTree toValueTree() const
+    {
+        juce::ValueTree t ("WARP");
+        t.setProperty ("enabled", enabled, nullptr);
+        t.setProperty ("mode", mode, nullptr);
+        t.setProperty ("length", lengthIndex, nullptr);
+        t.setProperty ("sync", syncHost, nullptr);
+        t.setProperty ("bpm", bpm, nullptr);
+        t.setProperty ("whole", wholeSample, nullptr);
+        t.setProperty ("preserve", preserve, nullptr);
+        t.setProperty ("loopMode", loopMode, nullptr);
+        t.setProperty ("envelope", envelope, nullptr);
+        return t;
+    }
+
+    static WarpSettings fromValueTree (const juce::ValueTree& t)
+    {
+        WarpSettings w;
+        w.enabled = (bool) t.getProperty ("enabled", false);
+        w.mode = (int) t.getProperty ("mode", 0);
+        w.lengthIndex = (int) t.getProperty ("length", 2);
+        w.syncHost = (bool) t.getProperty ("sync", true);
+        w.bpm = (float) t.getProperty ("bpm", 120.0f);
+        w.wholeSample = (bool) t.getProperty ("whole", true);
+        w.preserve = (int) t.getProperty ("preserve", 0);
+        w.loopMode = (int) t.getProperty ("loopMode", 1);
+        w.envelope = (float) t.getProperty ("envelope", 100.0f);
+        return w;
+    }
+
+    bool sameRenderAs (const WarpSettings& o) const
+    {
+        return mode == o.mode && lengthIndex == o.lengthIndex && wholeSample == o.wholeSample
+            && preserve == o.preserve && loopMode == o.loopMode && std::abs (envelope - o.envelope) < 0.01f;
+    }
+};
+
 /** One loaded audio file. Always stored as 2 channels at its original sample rate. */
 struct SampleData : public juce::ReferenceCountedObject
 {
@@ -27,6 +87,15 @@ struct SampleData : public juce::ReferenceCountedObject
     double sampleRate = 44100.0;
     juce::String name;
     juce::File file;
+
+    // set when this sample is a time-stretched (warped) version of another one
+    Ptr warpSource;
+    float regionStart = 0.0f, regionEnd = 1.0f; // part of warpSource that was stretched
+    WarpSettings warp;
+    double renderedBpm = 0.0;
+    juce::File renderedFile;                    // WAV written in the background
+
+    bool isWarped() const noexcept { return warpSource != nullptr; }
 };
 
 /** Per-pad effect settings (each pad has its own effect chain). */
