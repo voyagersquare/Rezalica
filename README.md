@@ -5,14 +5,18 @@
 ## Mogućnosti
 
 - **4 banke (A–D) × 16 padova = 64 pada.** Svaki pad ima svoj sample ili isječak (slice) zajedničkog samplea.
-- **Automatsko rezanje (chop)**: odaberi **2, 4, 8 ili 16 jednakih dijelova**, **Transients** ili **Manual** i sample se odmah ponovno izreže (reže se sample odabranog pada).
+- **Učitavanje**: `LOAD SAMPLE` ili povlačenje datoteke na valni oblik stavlja cijeli sample na odabrani pad, bez rezanja.
+- **Rezanje (chop)**: tek kad odabereš mod (**2, 4, 8 ili 16 jednakih dijelova**, **Transients** ili **Manual**), sample se izreže, a pri svakoj promjeni moda automatski se ponovno izreže. **Off** vraća cijeli sample na A1.
   - U modu **Transients** kliznik **Sens** određuje osjetljivost: što je veća, to je više isječaka (do **64**).
   - Isječci 1–16 idu u banku A, 17–32 u banku B, 33–48 u C i 49–64 u D. Banku biraš gumbima **A B C D** iznad padova.
-  - **Manual**: chop markere postavljaš sam. Dvoklik na valni oblik dodaje marker, povlačenjem ga pomičeš, a desni klik ga briše. Markeri se sami poravnaju na najbliži prolaz kroz nulu, da ne bude klikova. Kad dodaš marker, mod se sam prebaci na Manual i postojeći isječci ostaju.
+  - **Manual**: chop markere postavljaš sam. **Shift+klik** (ili dvoklik) na valni oblik dodaje marker, povlačenjem ga pomičeš, a desni klik ga briše. Markeri se sami poravnaju na najbliži prolaz kroz nulu, da ne bude klikova. Ako je sample prije bio izrezan u drugom modu (npr. Transients), taj se mod poništava, svi njegovi markeri se uklone i prelazi se u Manual. Isto vrijedi kad iz izbornika odabereš Manual.
   - **LAZY CHOP**: odabrani sample svira od početka. Svaki udarac pada, tipke ili MIDI note postavlja rez na mjestu playheada (crvena linija), a isječci redom pune A1, A2, A3… Završava sam kad sample dođe do kraja ili kad ponovno klikneš LAZY CHOP.
-- **Vertikalni zoom** valnog oblika (do 32×): kliznik ZOOM desno ili kotačić miša iznad valnog oblika. Dvoklik na kliznik vraća zoom na 1×.
+- **Horizontalni zoom** valnog oblika, sve do pojedinačnih uzoraka (16 uzoraka preko cijelog prozora):
+  - kotačić miša zumira oko pokazivača, a Shift + kotačić ili traka ispod valnog oblika pomiče prikaz
+  - kliznik ZOOM gore desno; dvoklik na njega prikazuje cijeli sample
+  - kod jakog zooma vidi se svaki uzorak, pa markere možeš postaviti točno na uzorak
 - Kad sviraš MIDI kontrolerom ili tipkovnicom, valni oblik prati pad koji si zadnji udario.
-- **Valni oblik**: vidiš sample, sve isječke i markere početka/kraja. Markere povlačiš mišem (Shift+klik pomiče najbliži marker), a klik na isječak odabire njegov pad.
+- **Valni oblik**: vidiš sample, sve isječke i markere početka/kraja. Markere povlačiš mišem (Alt+klik pomiče najbliži start/end marker), a klik na isječak odabire njegov pad.
 - **Postavke po padu**: Gain, Pan, Pitch (±24 polutona), Attack, Release, Start, End.
 - **Modovi pada**: `LOOP`, `REVERSE`, `GATE` (svira samo dok držiš), `FX` (šalje pad kroz efekte), `MUTE`.
   - Loop bez Gatea radi kao prekidač: prvi udarac pokreće, drugi zaustavlja.

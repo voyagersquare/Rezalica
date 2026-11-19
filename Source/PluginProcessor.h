@@ -41,11 +41,12 @@ public:
 
     //==============================================================================
     // Message-thread API used by the editor
-    enum ChopMode { chop2 = 2, chop4 = 4, chop8 = 8, chop16 = 16, chopTransients = 0, chopManual = -1 };
+    enum ChopMode { chop2 = 2, chop4 = 4, chop8 = 8, chop16 = 16, chopTransients = 0, chopManual = -1, chopOff = -2 };
     static constexpr int maxSlices = 64;
 
     bool loadFileToPad (int pad, const juce::File& file);
     bool chopFileToPads (const juce::File& file, int mode);   // file becomes the chop source
+    bool loadFileForChopping (const juce::File& file);        // loads to the selected pad, not chopped until a mode is chosen
     void chopPadSample (int pad, int mode);                   // pad's sample becomes the chop source
     void setChopMode (int mode);                              // re-chops the selected pad's sample automatically
     void setTransientSensitivity (float sensitivity01);       // re-chops when in transient mode
@@ -114,7 +115,7 @@ private:
     // chop state (message thread)
     rz::SampleData::Ptr chopSource, previousChopSource;
     void setChopSource (rz::SampleData::Ptr s);
-    int chopMode = chop16;
+    int chopMode = chopOff;
     float transientSensitivity = 0.5f;
     std::vector<float> slicePoints;
 

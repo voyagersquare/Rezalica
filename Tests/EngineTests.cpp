@@ -97,13 +97,25 @@ int main (int argc, char** argv)
     p.setTransientSensitivity (0.5f);
     check (p.getNumSlices() == 8 && p.getEngine().getPadSample (8) == nullptr, "re-chopping a short sample clears banks B-D");
 
-    // Manual chop markers
+    // Loading does not chop; choosing a mode does
+    p.selectedPad = 5;
+    check (p.loadFileForChopping (file), "load sample to selected pad");
+    check (p.getChopMode() == RezalicaProcessor::chopOff && p.getNumSlices() == 0, "loaded sample is not chopped");
+    check (p.getEngine().getPadSample (5) != nullptr && std::abs (p.getEngine().getPad (5).end.load() - 1.0f) < 1.0e-6f, "whole sample sits on the selected pad");
+    p.setChopMode (RezalicaProcessor::chop4);
+    check (p.getNumSlices() == 4 && p.getEngine().getPadSample (3) != nullptr, "choosing a mode chops it");
+    p.setChopMode (RezalicaProcessor::chopTransients);
+    check (p.getNumSlices() == 8, "switching mode re-chops automatically");
+
+    // Manual chop markers: adding one leaves transient mode and removes its markers
     p.selectedPad = 0;
-    p.setChopMode (RezalicaProcessor::chopManual);
-    check (p.getChopMode() == RezalicaProcessor::chopManual && p.getNumSlices() == 8, "manual mode keeps the existing markers");
     p.addSlicePoint (0.06f);
-    check (p.getNumSlices() == 9 && p.getEngine().getPadSample (8) != nullptr, "double-click marker adds a slice / pad");
+    check (p.getChopMode() == RezalicaProcessor::chopManual && p.getNumSlices() == 2, "shift+click marker switches to manual and clears transient markers");
+    check (p.getEngine().getPadSample (2) == nullptr, "old transient slices are removed from the pads");
     check (std::abs (p.getEngine().getPad (1).start.load() - 0.06f) < 0.01f, "new marker becomes start of pad A2");
+    for (float pos : { 0.25f, 0.375f, 0.5f, 0.625f, 0.75f, 0.875f, 0.125f })
+        p.addSlicePoint (pos);
+    check (p.getNumSlices() == 9 && p.getEngine().getPadSample (8) != nullptr, "more manual markers add more slices / pads");
     p.removeSlicePoint (1);
     check (p.getNumSlices() == 8 && p.getEngine().getPadSample (8) == nullptr, "deleting a marker removes the slice");
     p.moveSlicePoint (2, 0.30f);
@@ -182,8 +194,9 @@ int main (int argc, char** argv)
         for (int s = 0; s < 16; s += 2) q.getSequencer().setStep (0, 7, s, 70);
         q.selectedPad = 2;
         q.setTransientSensitivity (0.5f);
-        q.setChopMode (RezalicaProcessor::chopManual);
         q.addSlicePoint (0.07f);
+        q.addSlicePoint (0.25f);
+        q.addSlicePoint (0.375f);
         q.getEngine().getPad (2).loop = true;
         std::unique_ptr<juce::AudioProcessorEditor> ed (q.createEditor());
         ed->setVisible (true);
@@ -202,6 +215,16 @@ int main (int argc, char** argv)
         panel.setLookAndFeel (&lnf);
         save (panel, "sequencer.png");
         panel.setLookAndFeel (nullptr);
+
+        rz::WaveformView wv (q);
+        wv.setLookAndFeel (&lnf);
+        wv.setSize (700, 260);
+        wv.setPad (2);
+        wv.setVisibleRange (0.2495, 0.006);   // ~530 samples
+        save (wv, "zoom-mid.png");
+        wv.setVisibleRange (0.2502, 0.0007); // ~60 samples: individual sample points
+        save (wv, "zoom-max.png");
+        wv.setLookAndFeel (nullptr);
     }
 
     file.deleteFile();

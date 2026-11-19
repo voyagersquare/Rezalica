@@ -316,6 +316,8 @@ std::vector<float> RezalicaProcessor::findSlicePoints (const rz::SampleData& s, 
 
     if (mode == chopManual)
         return { 0.0f };
+    if (mode == chopOff)
+        return {};
 
     if (mode != chopTransients)
     {
@@ -452,6 +454,19 @@ bool RezalicaProcessor::loadFileToPad (int pad, const juce::File& file)
     return true;
 }
 
+bool RezalicaProcessor::loadFileForChopping (const juce::File& file)
+{
+    const int pad = selectedPad.load();
+    if (! loadFileToPad (pad, file))
+        return false;
+
+    setChopSource (engine.getPadSample (pad));
+    chopMode = chopOff;
+    slicePoints.clear();
+    padsChanged.sendChangeMessage();
+    return true;
+}
+
 bool RezalicaProcessor::chopFileToPads (const juce::File& file, int mode)
 {
     auto s = loadSample (file);
@@ -478,8 +493,23 @@ void RezalicaProcessor::setChopMode (int mode)
 {
     if (mode == chopManual)
     {
-        prepareManualSource(); // keeps the current markers
+        prepareManualSource(); // removes the old markers: ready for manual chopping
         applySlices();
+        return;
+    }
+
+    if (mode == chopOff)
+    {
+        // back to one whole sample (on A1)
+        if (auto s = engine.getPadSample (selectedPad.load()))
+            setChopSource (s);
+        chopMode = chopOff;
+        if (chopSource != nullptr)
+        {
+            slicePoints = { 0.0f };
+            applySlices();
+        }
+        slicePoints.clear();
         return;
     }
 
@@ -497,8 +527,11 @@ void RezalicaProcessor::prepareManualSource()
         setChopSource (s);
         slicePoints = { 0.0f };
     }
-    if (slicePoints.empty())
+
+    // coming from another mode (transients, 16 slices ...): its markers are removed
+    if (chopMode != chopManual || slicePoints.empty())
         slicePoints = { 0.0f };
+
     chopMode = chopManual;
 }
 

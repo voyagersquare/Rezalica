@@ -71,8 +71,10 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     }
     seqButton.onClick = [this] { toggleSequencerWindow(); };
     stopButton.onClick = [this] { processor.stopAll(); };
-    loadChopButton.setTooltip ("Load an audio file and slice it across the pads");
+    loadChopButton.setTooltip ("Load an audio file onto the selected pad. Choose a chop mode to slice it.");
 
+    chopModeBox.addItem ("Off (no chop)", 7);
+    chopModeBox.addSeparator();
     chopModeBox.addItem ("2 slices", 1);
     chopModeBox.addItem ("4 slices", 2);
     chopModeBox.addItem ("8 slices", 3);
@@ -107,7 +109,12 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     addAndMakeVisible (waveform);
     waveform.onPadSelected = [this] (int pad) { selectPad (pad); };
     waveform.onRegionChanged = [this] { refreshPadControls(); };
-    waveform.onFileDropped = [this] (const juce::File& f) { processor.chopFileToPads (f, chopModeFromBox()); selectPad (0); refreshChopControls(); };
+    waveform.onFileDropped = [this] (const juce::File& f)
+    {
+        if (processor.loadFileForChopping (f))
+            selectPad (processor.selectedPad.load());
+        refreshChopControls();
+    };
 
     // ---- selected pad controls ----
     padTitle.setFont (juce::FontOptions (16.0f, juce::Font::bold));
@@ -262,7 +269,7 @@ void RezalicaEditor::refreshChopControls()
     const int mode = processor.getChopMode();
     const int id = mode == RezalicaProcessor::chop2 ? 1 : mode == RezalicaProcessor::chop4 ? 2
                  : mode == RezalicaProcessor::chop8 ? 3 : mode == RezalicaProcessor::chopTransients ? 5
-                 : mode == RezalicaProcessor::chopManual ? 6 : 4;
+                 : mode == RezalicaProcessor::chopManual ? 6 : mode == RezalicaProcessor::chopOff ? 7 : 4;
     chopModeBox.setSelectedId (id, juce::dontSendNotification);
 
     const bool transient = mode == RezalicaProcessor::chopTransients;
@@ -392,6 +399,7 @@ int RezalicaEditor::chopModeFromBox() const
         case 3: return RezalicaProcessor::chop8;
         case 5: return RezalicaProcessor::chopTransients;
         case 6: return RezalicaProcessor::chopManual;
+        case 7: return RezalicaProcessor::chopOff;
         default: return RezalicaProcessor::chop16;
     }
 }
@@ -411,15 +419,15 @@ void RezalicaEditor::choosePadFile (int pad)
 
 void RezalicaEditor::chooseChopFile()
 {
-    fileChooser = std::make_unique<juce::FileChooser> ("Load a sample to chop across the pads", juce::File(),
+    fileChooser = std::make_unique<juce::FileChooser> ("Load a sample (choose a chop mode afterwards)", juce::File(),
                                                        processor.getFormatManager().getWildcardForAllFormats());
     fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                               [this] (const juce::FileChooser& fc)
     {
         auto f = fc.getResult();
-        if (f.existsAsFile() && processor.chopFileToPads (f, chopModeFromBox()))
+        if (f.existsAsFile() && processor.loadFileForChopping (f))
         {
-            selectPad (0);
+            selectPad (processor.selectedPad.load());
             refreshChopControls();
         }
     });

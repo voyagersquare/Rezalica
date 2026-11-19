@@ -6,10 +6,12 @@ namespace rz
 {
 /** Shows the selected pad's sample, its chop markers and the selected slice.
     - drag the orange triangles to trim the selected pad
-    - drag a chop marker to move it, double-click to add one, right-click to delete
-    - mouse wheel / slider on the right: vertical zoom */
+    - Shift+click or double-click adds a chop marker (switches to Manual), drag moves it, right-click deletes
+    - mouse wheel zooms horizontally around the mouse (down to single samples),
+      Shift+wheel or the scroll bar scrolls */
 class WaveformView : public juce::Component,
-                     public juce::FileDragAndDropTarget
+                     public juce::FileDragAndDropTarget,
+                     private juce::ScrollBar::Listener
 {
 public:
     explicit WaveformView (RezalicaProcessor& p);
@@ -17,12 +19,14 @@ public:
     void setPad (int pad);
     void refresh();              // call when samples / regions changed
     void updatePlayhead();       // call from a timer
+    void setVisibleRange (double start, double length) { setView (start, length); }
 
     std::function<void (int)> onPadSelected;
     std::function<void()> onRegionChanged;
     std::function<void (const juce::File&)> onFileDropped;
 
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
@@ -42,21 +46,26 @@ private:
     juce::Rectangle<float> waveArea() const;
     float xToNorm (float x) const;
     float normToX (float n) const;
-    void rebuildPeaks();
     bool isChopSource() const { return sample != nullptr && sample == processor.getChopSource(); }
+    bool isVisibleNorm (float n) const { return n >= viewStart && n <= viewStart + viewLength; }
+    void setView (double start, double length);
+    void zoomAround (float x, double factor);
+    void scrollBarMoved (juce::ScrollBar*, double newRangeStart) override;
+    double minViewLength() const;
+    double zoomToSlider (double length) const;
     int sliceMarkerNear (float x) const;
     void showMenu (float x);
 
     RezalicaProcessor& processor;
     int pad = 0;
     SampleData::Ptr sample;
-    std::vector<std::pair<float, float>> peaks;
     Drag dragging = DragNone;
     int dragSlice = -1;
     bool dragOver = false;
     float playhead = -1.0f, previewHead = -1.0f;
 
-    juce::Slider zoomSlider;
-    float verticalZoom = 1.0f;
+    juce::Slider zoomSlider;     // horizontal zoom, 0 = whole sample, 1 = maximum
+    juce::ScrollBar scrollBar { false };
+    double viewStart = 0.0, viewLength = 1.0; // visible part of the sample (normalised)
 };
 } // namespace rz
