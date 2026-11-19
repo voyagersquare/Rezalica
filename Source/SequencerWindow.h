@@ -1,0 +1,78 @@
+#pragma once
+
+#include "PluginProcessor.h"
+#include "LookAndFeel.h"
+
+namespace rz
+{
+/** The step grid: 16 rows (pads) x pattern length (16th-note steps). */
+class SequencerGrid : public juce::Component
+{
+public:
+    explicit SequencerGrid (RezalicaProcessor& p) : processor (p) { setWantsKeyboardFocus (false); }
+
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+
+private:
+    static constexpr int labelWidth = 120;
+    int numSteps() const;
+    bool cellAt (juce::Point<int> pos, int& pad, int& step) const;
+    juce::Rectangle<float> cellBounds (int pad, int step) const;
+
+    RezalicaProcessor& processor;
+    juce::uint8 paintValue = 0;
+    int auditionPad = -1;
+};
+
+/** Transport + pattern controls above the grid. */
+class SequencerPanel : public juce::Component,
+                       private juce::Timer
+{
+public:
+    explicit SequencerPanel (RezalicaProcessor& p);
+    ~SequencerPanel() override;
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void timerCallback() override;
+    void syncControls();
+
+    RezalicaProcessor& processor;
+    juce::TextButton playButton { "PLAY" }, recButton { "REC" }, syncButton { "SYNC HOST" }, clearButton { "CLEAR" }, copyButton { "COPY TO NEXT" };
+    juce::ComboBox patternBox, lengthBox;
+    juce::Slider bpmSlider, swingSlider;
+    juce::Label bpmLabel, swingLabel, patternLabel, lengthLabel, infoLabel;
+    SequencerGrid grid;
+};
+
+class SequencerWindow : public juce::DocumentWindow
+{
+public:
+    SequencerWindow (RezalicaProcessor& p, juce::LookAndFeel& lnf)
+        : juce::DocumentWindow ("Rezalica - Pattern Sequencer", colours::background, juce::DocumentWindow::closeButton)
+    {
+        setLookAndFeel (&lnf);
+        setUsingNativeTitleBar (true);
+        setContentOwned (new SequencerPanel (p), true);
+        setResizable (true, false);
+        setResizeLimits (640, 420, 2000, 1400);
+        setAlwaysOnTop (true);
+        centreWithSize (getWidth(), getHeight());
+    }
+
+    ~SequencerWindow() override { setLookAndFeel (nullptr); }
+
+    void closeButtonPressed() override
+    {
+        setVisible (false);
+        if (onClose) onClose();
+    }
+
+    std::function<void()> onClose;
+};
+} // namespace rz
