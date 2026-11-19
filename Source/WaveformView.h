@@ -30,7 +30,7 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
-    void mouseUp (const juce::MouseEvent&) override { dragging = DragNone; dragSlice = -1; }
+    void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
@@ -41,7 +41,18 @@ public:
     void filesDropped (const juce::StringArray& files, int, int) override;
 
 private:
-    enum Drag { DragNone, DragStart, DragEnd, DragSlice };
+    enum Drag { DragNone, DragStart, DragEnd, DragSlice, DragWarp };
+
+    // warp markers (Ctrl + drag): the sample is stretched so the marker lands on the grid
+    bool isWarpView() const { return sample != nullptr && sample->isWarped(); }
+    double gridStepNorm() const;            // current grid resolution, as a fraction of the sample
+    float snapToGrid (float v) const;
+    int warpMarkerNear (float x) const;     // index into the shown warp markers, or -1
+    const WarpSettings& shownWarp() const { return warpPreview ? warpWorking : sample->warp; }
+    float displayPos (float v) const;       // stored position -> position shown during a pending warp
+    void startWarpDrag (float x);
+    void applyWarp();
+    void drawWarpGrid (juce::Graphics&, juce::Rectangle<float> area);
 
     juce::Rectangle<float> waveArea() const;
     float xToNorm (float x) const;
@@ -63,6 +74,10 @@ private:
     int dragSlice = -1;
     bool dragOver = false;
     float playhead = -1.0f, previewHead = -1.0f;
+
+    WarpSettings warpWorking;
+    bool warpPreview = false;  // drawing warpWorking while the stretched sample is being computed
+    int warpDragIndex = -1;
 
     juce::Slider zoomSlider;     // horizontal zoom, 0 = whole sample, 1 = maximum
     juce::ScrollBar scrollBar { false };

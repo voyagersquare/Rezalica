@@ -1,0 +1,1194 @@
+#include "PianoRollWindow.h"
+
+namespace rz
+{
+namespace
+{
+bool isBlackKey (int note)
+{
+    const int n = note % 12;
+    return n == 1 || n == 3 || n == 6 || n == 8 || n == 10;
+}
+constexpr float minNoteLength = 0.05f;
+} // namespace
+
+//==============================================================================
+PianoRollEditor::PianoRollEditor (RezalicaProcessor& p) : processor (p)
+{
+    setWantsKeyboardFocus (true);
+    for (auto* s : { &hScroll, &vScroll })
+    {
+        s->addListener (this);
+        s->setAutoHide (false);
+        s->setColour (juce::ScrollBar::thumbColourId, colours::accent2.withAlpha (0.6f));
+        addAndMakeVisible (*s);
+    }
+    refreshFromSequencer();
+}
+
+//==============================================================================
+juce::Rectangle<int> PianoRollEditor::rulerArea() const
+{
+    return { keyboardWidth, 0, getWidth() - keyboardWidth - scrollSize, rulerHeight };
+}
+
+juce::Rectangle<int> PianoRollEditor::noteArea() const
+{
+    return { keyboardWidth, rulerHeight, getWidth() - keyboardWidth - scrollSize,
+             juce::jmax (10, getHeight() - rulerHeight - velocityHeight - scrollSize) };
+}
+
+juce::Rectangle<int> PianoRollEditor::velocityArea() const
+{
+    auto n = noteArea();
+    return { n.getX(), n.getBottom(), n.getWidth(), velocityHeight };
+}
+
+juce::Rectangle<int> PianoRollEditor::keyboardArea() const
+{
+    auto n = noteArea();
+    return { 0, n.getY(), keyboardWidth, n.getHeight() };
+}
+
+int PianoRollEditor::getViewMode() const { return clip != nullptr ? clip->mode : NoteClip::drum; }
+int PianoRollEditor::getTargetPad() const { return clip != nullptr ? clip->targetPad : 0; }
+int PianoRollEditor::numRows() const { return getViewMode() == NoteClip::melodic ? 128 : numPads; }
+int PianoRollEditor::rowForDisplay (int d) const { return getViewMode() == NoteClip::melodic ? 127 - d : d; }
+int PianoRollEditor::displayForRow (int r) const { return getViewMode() == NoteClip::melodic ? 127 - r : r; }
+
+double PianoRollEditor::patternLength() const
+{
+    auto& seq = processor.getSequencer();
+    return (double) juce::jlimit (1, Sequencer::maxSteps, seq.length[(size_t) seq.currentPattern.load()].load());
+}
+
+float PianoRollEditor::xForStep (double s) const
+{
+    return (float) noteArea().getX() + (float) ((s - viewStart) * pixelsPerStep);
+}
+
+double PianoRollEditor::stepForX (float x) const
+{
+    return viewStart + (x - (float) noteArea().getX()) / pixelsPerStep;
+}
+
+float PianoRollEditor::yForRow (int row) const
+{
+    return (float) noteArea().getY() + (float) ((displayForRow (row) - topDisplayRow) * rowHeight);
+}
+
+int PianoRollEditor::rowForY (float y) const
+{
+    const int d = topDisplayRow + (int) std::floor ((y - (float) noteArea().getY()) / (float) rowHeight);
+    return rowForDisplay (juce::jlimit (0, numRows() - 1, d));
+}
+
+juce::Rectangle<float> PianoRollEditor::noteBounds (const PianoNote& n) const
+{
+    const float x0 = xForStep (n.start), x1 = xForStep (n.start + n.length);
+    return { x0, yForRow (n.row) + 1.0f, juce::jmax (3.0f, x1 - x0), (float) rowHeight - 2.0f };
+}
+
+double PianoRollEditor::snapFloor (double s) const
+{
+    return snap > 0.0 ? std::floor (s / snap + 1.0e-6) * snap : s;
+}
+
+double PianoRollEditor::snapRound (double s) const
+{
+    return snap > 0.0 ? std::round (s / snap) * snap : s;
+}
+
+int PianoRollEditor::noteIndexAt (juce::Point<float> p) const
+{
+    if (! noteArea().toFloat().contains (p))
+        return -1;
+    const int kind = getViewMode();
+    for (int i = (int) notes.size(); --i >= 0;)
+        if ((int) notes[(size_t) i].kind == kind && noteBounds (notes[(size_t) i]).expanded (0.0f, 0.5f).contains (p))
+            return i;
+    return -1;
+}
+
+std::vector<PianoNote> PianoRollEditor::currentKindNotes() const
+{
+    std::vector<PianoNote> r;
+    for (auto& n : notes)
+        if ((int) n.kind == getViewMode())
+            r.push_back (n);
+    return r;
+}
+
+juce::String PianoRollEditor::rowName (int row) const
+{
+    if (getViewMode() == NoteClip::melodic)
+        return juce::MidiMessage::getMidiNoteName (row, true, true, 3);
+    return padLabel (row);
+}
+
+//==============================================================================
+void PianoRollEditor::refreshFromSequencer()
+{
+    auto& seq = processor.getSequencer();
+    const int pattern = seq.currentPattern.load();
+    auto c = seq.getClip (pattern);
+
+    if (pattern != shownPattern)
+    {
+        shownPattern = pattern;
+        clip = c;
+        notes = c->notes;
+        selection.clear();
+        undoStack.clear();
+        redoStack.clear();
+        if (getViewMode() == NoteClip::melodic)
+            topDisplayRow = juce::jlimit (0, 127, 127 - 72); // around C4 at the top
+        repaint();
+        if (onChanged) onChanged();
+    }
+    else if (c != clip && drag == Drag::none)
+    {
+        clip = c;
+        notes = c->notes; // e.g. notes recorded live
+        std::set<juce::uint32> keep;
+        for (auto& n : notes)
+            if (selection.count (n.id)) keep.insert (n.id);
+        selection = keep;
+        repaint();
+        if (onChanged) onChanged();
+    }
+    updateScrollBars();
+}
+
+void PianoRollEditor::pushUndo()
+{
+    undoStack.push_back (notes);
+    if (undoStack.size() > 100)
+        undoStack.erase (undoStack.begin());
+    redoStack.clear();
+}
+
+void PianoRollEditor::commit()
+{
+    auto c = clip != nullptr ? clip->copy() : NoteClip::Ptr (new NoteClip());
+    c->notes = notes;
+    processor.getSequencer().setClip (shownPattern, c);
+    clip = c;
+    repaint();
+    if (onChanged) onChanged();
+}
+
+void PianoRollEditor::undo()
+{
+    if (undoStack.empty()) return;
+    redoStack.push_back (notes);
+    notes = undoStack.back();
+    undoStack.pop_back();
+    selection.clear();
+    commit();
+}
+
+void PianoRollEditor::redo()
+{
+    if (redoStack.empty()) return;
+    undoStack.push_back (notes);
+    notes = redoStack.back();
+    redoStack.pop_back();
+    selection.clear();
+    commit();
+}
+
+void PianoRollEditor::setViewMode (int mode)
+{
+    if (clip == nullptr || clip->mode == mode) return;
+    auto c = clip->copy();
+    c->mode = mode;
+    c->notes = notes;
+    processor.getSequencer().setClip (shownPattern, c);
+    clip = c;
+    selection.clear();
+    topDisplayRow = mode == NoteClip::melodic ? 127 - 72 : 0;
+    updateScrollBars();
+    repaint();
+    if (onChanged) onChanged();
+}
+
+void PianoRollEditor::setTargetPad (int pad)
+{
+    if (clip == nullptr || clip->targetPad == pad) return;
+    auto c = clip->copy();
+    c->targetPad = pad;
+    c->notes = notes;
+    processor.getSequencer().setClip (shownPattern, c);
+    clip = c;
+    repaint();
+}
+
+void PianoRollEditor::preview (int row, bool on, int velocity)
+{
+    if (getViewMode() == NoteClip::melodic)
+        processor.previewNoteFromUi (getTargetPad(), (float) velocity / 127.0f, (float) (row - 60), on);
+    else if (row >= 0 && row < numPads)
+        processor.triggerPadFromUi (row, (float) velocity / 127.0f, on);
+}
+
+//==============================================================================
+void PianoRollEditor::deleteSelected()
+{
+    if (selection.empty()) return;
+    pushUndo();
+    notes.erase (std::remove_if (notes.begin(), notes.end(), [this] (const PianoNote& n) { return isSelected (n); }), notes.end());
+    selection.clear();
+    commit();
+}
+
+void PianoRollEditor::selectAll()
+{
+    selection.clear();
+    for (auto& n : notes)
+        if ((int) n.kind == getViewMode())
+            selection.insert (n.id);
+    repaint();
+}
+
+void PianoRollEditor::copySelection()
+{
+    clipboard.clear();
+    for (auto& n : notes)
+        if (isSelected (n))
+            clipboard.push_back (n);
+}
+
+void PianoRollEditor::paste()
+{
+    if (clipboard.empty()) return;
+    double minStart = 1.0e9, maxEnd = 0.0;
+    for (auto& n : clipboard) { minStart = juce::jmin (minStart, (double) n.start); maxEnd = juce::jmax (maxEnd, (double) (n.start + n.length)); }
+    const double span = snap > 0.0 ? std::ceil ((maxEnd - minStart) / snap - 1.0e-6) * snap : (maxEnd - minStart);
+
+    pushUndo();
+    selection.clear();
+    for (auto& n : clipboard)
+    {
+        auto c = n;
+        c.id = processor.getSequencer().newNoteId();
+        c.start = (float) (n.start + span);
+        c.kind = (juce::uint8) getViewMode();
+        if (c.start < patternLength())
+        {
+            notes.push_back (c);
+            selection.insert (c.id);
+        }
+    }
+    for (auto& n : clipboard) n.start = (float) (n.start + span); // the next paste goes after this one
+    commit();
+}
+
+void PianoRollEditor::duplicate()
+{
+    copySelection();
+    paste();
+}
+
+void PianoRollEditor::quantize()
+{
+    const double grid = snap > 0.0 ? snap : 1.0;
+    pushUndo();
+    for (auto& n : notes)
+        if ((int) n.kind == getViewMode() && (selection.empty() || isSelected (n)))
+            n.start = (float) juce::jlimit (0.0, patternLength() - grid, std::round (n.start / grid) * grid);
+    commit();
+}
+
+void PianoRollEditor::transposeSelection (int semitones)
+{
+    if (selection.empty()) return;
+    pushUndo();
+    for (auto& n : notes)
+        if (isSelected (n))
+            n.row = rowForDisplay (juce::jlimit (0, numRows() - 1, displayForRow (n.row) - semitones));
+    commit();
+    for (auto& n : notes)
+        if (isSelected (n)) { preview (n.row, true, n.velocity); preview (n.row, false); break; }
+}
+
+void PianoRollEditor::nudgeSelection (double steps)
+{
+    if (selection.empty()) return;
+    pushUndo();
+    for (auto& n : notes)
+        if (isSelected (n))
+            n.start = (float) juce::jlimit (0.0, patternLength() - minNoteLength, (double) n.start + steps);
+    commit();
+}
+
+void PianoRollEditor::clearAll()
+{
+    pushUndo();
+    const int kind = getViewMode();
+    notes.erase (std::remove_if (notes.begin(), notes.end(), [kind] (const PianoNote& n) { return (int) n.kind == kind; }), notes.end());
+    selection.clear();
+    commit();
+}
+
+//==============================================================================
+void PianoRollEditor::resized()
+{
+    auto n = noteArea();
+    vScroll.setBounds (n.getRight(), n.getY(), scrollSize, n.getHeight());
+    hScroll.setBounds (n.getX(), velocityArea().getBottom(), n.getWidth(), scrollSize);
+    updateScrollBars();
+}
+
+void PianoRollEditor::updateScrollBars()
+{
+    const double visibleSteps = noteArea().getWidth() / pixelsPerStep;
+    const double total = juce::jmax (patternLength() + 4.0, viewStart + visibleSteps);
+    hScroll.setRangeLimits (0.0, total, juce::dontSendNotification);
+    hScroll.setCurrentRange (viewStart, visibleSteps, juce::dontSendNotification);
+
+    const int visibleRows = noteArea().getHeight() / juce::jmax (1, rowHeight);
+    topDisplayRow = juce::jlimit (0, juce::jmax (0, numRows() - visibleRows), topDisplayRow);
+    vScroll.setRangeLimits (0.0, (double) numRows(), juce::dontSendNotification);
+    vScroll.setCurrentRange ((double) topDisplayRow, (double) visibleRows, juce::dontSendNotification);
+}
+
+void PianoRollEditor::scrollBarMoved (juce::ScrollBar* bar, double start)
+{
+    if (bar == &hScroll) viewStart = juce::jmax (0.0, start);
+    else                 topDisplayRow = juce::roundToInt (start);
+    updateScrollBars();
+    repaint();
+}
+
+void PianoRollEditor::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    const float d = std::abs (w.deltaY) > std::abs (w.deltaX) ? w.deltaY : w.deltaX;
+    if (std::abs (d) < 1.0e-4f) return;
+
+    if (e.mods.isCommandDown())          // horizontal zoom around the mouse
+    {
+        const double anchor = stepForX ((float) e.x);
+        pixelsPerStep = juce::jlimit (3.0, 200.0, pixelsPerStep * (d > 0 ? 1.2 : 1.0 / 1.2));
+        viewStart = juce::jmax (0.0, anchor - (e.x - noteArea().getX()) / pixelsPerStep);
+    }
+    else if (e.mods.isAltDown())         // row height
+    {
+        rowHeight = juce::jlimit (8, 40, rowHeight + (d > 0 ? 2 : -2));
+    }
+    else if (e.mods.isShiftDown() || std::abs (w.deltaX) > std::abs (w.deltaY))
+    {
+        viewStart = juce::jmax (0.0, viewStart - d * 8.0 * 22.0 / pixelsPerStep);
+    }
+    else
+    {
+        topDisplayRow -= (int) std::round (d * 8.0f);
+    }
+    updateScrollBars();
+    repaint();
+}
+
+//==============================================================================
+void PianoRollEditor::mouseMove (const juce::MouseEvent& e)
+{
+    const auto p = e.position;
+    if (noteArea().toFloat().contains (p))
+    {
+        const int i = noteIndexAt (p);
+        if (i >= 0)
+        {
+            auto b = noteBounds (notes[(size_t) i]);
+            const bool edge = p.x >= b.getRight() - 6.0f || (p.x <= b.getX() + 5.0f && b.getWidth() > 14.0f);
+            setMouseCursor (edge ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::DraggingHandCursor);
+        }
+        else
+        {
+            setMouseCursor (tool == Tool::draw ? juce::MouseCursor::CrosshairCursor : juce::MouseCursor::NormalCursor);
+        }
+    }
+    else
+    {
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+    }
+}
+
+void PianoRollEditor::mouseDown (const juce::MouseEvent& e)
+{
+    grabKeyboardFocus();
+    const auto p = e.position;
+    dragStart = p;
+    changedDuringDrag = false;
+
+    if (keyboardArea().toFloat().contains (p))
+    {
+        drag = Drag::keyboard;
+        previewRow = rowForY (p.y);
+        preview (previewRow, true, newVelocity);
+        return;
+    }
+
+    if (velocityArea().toFloat().contains (p))
+    {
+        pushUndo();
+        drag = Drag::velocity;
+        lastVelocityX = p.x;
+        mouseDrag (e);
+        return;
+    }
+
+    if (! noteArea().toFloat().contains (p))
+        return;
+
+    const int idx = noteIndexAt (p);
+
+    if (e.mods.isPopupMenu())            // right click: delete, right drag: delete everything touched
+    {
+        pushUndo();
+        drag = Drag::erase;
+        lastEraseX = p.x;
+        lastEraseY = p.y;
+        if (idx >= 0)
+        {
+            selection.erase (notes[(size_t) idx].id);
+            notes.erase (notes.begin() + idx);
+            changedDuringDrag = true;
+            repaint();
+        }
+        return;
+    }
+
+    if (idx >= 0)
+    {
+        auto& n = notes[(size_t) idx];
+        if (e.mods.isShiftDown())
+        {
+            if (isSelected (n)) { selection.erase (n.id); repaint(); drag = Drag::none; return; }
+            selection.insert (n.id);
+        }
+        else if (! isSelected (n))
+        {
+            selection = { n.id };
+        }
+
+        auto b = noteBounds (n);
+        if (p.x >= b.getRight() - 6.0f)                          drag = Drag::resizeRight;
+        else if (p.x <= b.getX() + 5.0f && b.getWidth() > 14.0f) drag = Drag::resizeLeft;
+        else                                                     drag = Drag::move;
+
+        pushUndo();
+        const int clickedRow = n.row;
+        const int clickedVel = n.velocity;
+
+        // Ctrl / Cmd + drag: move copies, the originals stay
+        if (drag == Drag::move && e.mods.isCommandDown())
+        {
+            std::vector<PianoNote> copies;
+            for (auto& o : notes)
+                if (isSelected (o)) { auto c = o; c.id = processor.getSequencer().newNoteId(); copies.push_back (c); }
+            selection.clear();
+            for (auto& c : copies) { notes.push_back (c); selection.insert (c.id); }
+            changedDuringDrag = true;
+        }
+
+        dragOriginal.clear();
+        for (auto& o : notes)
+            if (isSelected (o)) dragOriginal.push_back (o);
+
+        if (drag == Drag::move)
+        {
+            previewRow = clickedRow;
+            preview (previewRow, true, clickedVel);
+        }
+        repaint();
+        return;
+    }
+
+    // empty space
+    if (tool == Tool::draw)
+    {
+        pushUndo();
+        PianoNote n;
+        n.id = processor.getSequencer().newNoteId();
+        n.kind = (juce::uint8) getViewMode();
+        n.row = rowForY (p.y);
+        n.start = (float) juce::jlimit (0.0, juce::jmax (0.0, patternLength() - minNoteLength), snapFloor (stepForX (p.x)));
+        n.length = (float) juce::jmin (juce::jmax ((double) minNoteLength, lastLength), patternLength() - n.start);
+        n.velocity = (juce::uint8) newVelocity;
+        notes.push_back (n);
+        selection = { n.id };
+        dragOriginal = { n };
+        drag = Drag::create;
+        changedDuringDrag = true;
+        previewRow = n.row;
+        preview (previewRow, true, n.velocity);
+        repaint();
+    }
+    else
+    {
+        if (! e.mods.isShiftDown())
+            selection.clear();
+        dragOriginal.clear();
+        for (auto& o : notes)
+            if (isSelected (o)) dragOriginal.push_back (o); // kept while rubber-banding with shift
+        drag = Drag::rubberBand;
+        rubber = { p, p };
+        repaint();
+    }
+}
+
+void PianoRollEditor::mouseDrag (const juce::MouseEvent& e)
+{
+    const auto p = e.position;
+    const double deltaSteps = stepForX (p.x) - stepForX (dragStart.x);
+    const double len = patternLength();
+    const double minLen = snap > 0.0 ? juce::jmin (snap, 1.0) : (double) minNoteLength;
+
+    switch (drag)
+    {
+        case Drag::keyboard:
+        {
+            const int r = rowForY (p.y);
+            if (r != previewRow) { preview (previewRow, false); previewRow = r; preview (r, true, newVelocity); }
+            break;
+        }
+
+        case Drag::velocity:
+        {
+            auto va = velocityArea().toFloat();
+            const int vel = juce::jlimit (1, 127, (int) std::round ((va.getBottom() - p.y) / (va.getHeight() - 6.0f) * 127.0f));
+            const float x0 = juce::jmin (lastVelocityX, p.x) - 3.0f, x1 = juce::jmax (lastVelocityX, p.x) + 3.0f;
+            for (auto& n : notes)
+            {
+                if ((int) n.kind != getViewMode() || (! selection.empty() && ! isSelected (n)))
+                    continue;
+                const float nx = xForStep (n.start);
+                if (nx >= x0 && nx <= x1) { n.velocity = (juce::uint8) vel; changedDuringDrag = true; }
+            }
+            lastVelocityX = p.x;
+            repaint();
+            break;
+        }
+
+        case Drag::erase:
+        {
+            // walk along the mouse path so fast movements don't skip notes
+            const float dist = std::hypot (p.x - lastEraseX, p.y - lastEraseY);
+            const int stepsN = juce::jmax (1, (int) (dist / 3.0f));
+            for (int i = 1; i <= stepsN; ++i)
+            {
+                const float t = (float) i / (float) stepsN;
+                const juce::Point<float> q (lastEraseX + (p.x - lastEraseX) * t, lastEraseY + (p.y - lastEraseY) * t);
+                const int idx = noteIndexAt (q);
+                if (idx >= 0)
+                {
+                    selection.erase (notes[(size_t) idx].id);
+                    notes.erase (notes.begin() + idx);
+                    changedDuringDrag = true;
+                }
+            }
+            lastEraseX = p.x;
+            lastEraseY = p.y;
+            repaint();
+            break;
+        }
+
+        case Drag::create:
+        {
+            for (auto& n : notes)
+                if (! dragOriginal.empty() && n.id == dragOriginal[0].id)
+                {
+                    const double end = juce::jmax ((double) n.start + minLen, snap > 0.0 ? std::ceil (stepForX (p.x) / snap - 1.0e-6) * snap : stepForX (p.x));
+                    n.length = (float) juce::jlimit (minLen, len - n.start, end - n.start);
+                }
+            repaint();
+            break;
+        }
+
+        case Drag::resizeRight:
+        case Drag::resizeLeft:
+        {
+            for (auto& o : dragOriginal)
+                for (auto& n : notes)
+                    if (n.id == o.id)
+                    {
+                        const double oEnd = o.start + o.length;
+                        if (drag == Drag::resizeRight)
+                        {
+                            const double end = juce::jlimit ((double) o.start + minLen, len, snapRound (oEnd + deltaSteps));
+                            n.length = (float) (end - o.start);
+                        }
+                        else
+                        {
+                            const double start = juce::jlimit (0.0, oEnd - minLen, snapRound (o.start + deltaSteps));
+                            n.start = (float) start;
+                            n.length = (float) (oEnd - start);
+                        }
+                    }
+            changedDuringDrag = true;
+            repaint();
+            break;
+        }
+
+        case Drag::move:
+        {
+            const double d = snap > 0.0 ? std::round (deltaSteps / snap) * snap : deltaSteps;
+            const int rowDelta = displayForRow (rowForY (p.y)) - displayForRow (rowForY (dragStart.y));
+            for (auto& o : dragOriginal)
+                for (auto& n : notes)
+                    if (n.id == o.id)
+                    {
+                        n.start = (float) juce::jlimit (0.0, len - minNoteLength, o.start + d);
+                        n.row = rowForDisplay (juce::jlimit (0, numRows() - 1, displayForRow (o.row) + rowDelta));
+                    }
+            if (! dragOriginal.empty())
+            {
+                const int r = rowForDisplay (juce::jlimit (0, numRows() - 1, displayForRow (dragOriginal[0].row) + rowDelta));
+                if (r != previewRow) { preview (previewRow, false); previewRow = r; preview (r, true, dragOriginal[0].velocity); }
+            }
+            changedDuringDrag = changedDuringDrag || std::abs (d) > 1.0e-6 || rowDelta != 0;
+            repaint();
+            break;
+        }
+
+        case Drag::rubberBand:
+        {
+            rubber = juce::Rectangle<float> (dragStart, p);
+            selection.clear();
+            for (auto& o : dragOriginal) selection.insert (o.id);
+            for (auto& n : notes)
+                if ((int) n.kind == getViewMode() && noteBounds (n).intersects (rubber))
+                    selection.insert (n.id);
+            repaint();
+            break;
+        }
+
+        case Drag::none:
+            break;
+    }
+}
+
+void PianoRollEditor::mouseUp (const juce::MouseEvent&)
+{
+    if (previewRow >= 0 && (drag == Drag::keyboard || drag == Drag::move || drag == Drag::create))
+        preview (previewRow, false);
+    previewRow = -1;
+
+    if (drag == Drag::create || drag == Drag::resizeRight)
+        for (auto& n : notes)
+            if (! dragOriginal.empty() && n.id == dragOriginal[0].id)
+                lastLength = n.length;
+
+    const bool editing = drag == Drag::create || drag == Drag::move || drag == Drag::resizeLeft || drag == Drag::resizeRight
+                      || drag == Drag::erase || drag == Drag::velocity;
+    if (editing)
+    {
+        if (changedDuringDrag) commit();
+        else if (! undoStack.empty()) undoStack.pop_back(); // nothing changed: no undo step
+    }
+
+    drag = Drag::none;
+    rubber = {};
+    dragOriginal.clear();
+    repaint();
+}
+
+void PianoRollEditor::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (! noteArea().toFloat().contains (e.position) || e.mods.isPopupMenu())
+        return;
+    const int idx = noteIndexAt (e.position);
+    if (idx >= 0 && tool == Tool::select)
+    {
+        pushUndo();
+        selection.erase (notes[(size_t) idx].id);
+        notes.erase (notes.begin() + idx);
+        commit();
+    }
+    else if (idx < 0 && tool == Tool::select)
+    {
+        // select tool: double-click on empty space adds a note
+        tool = Tool::draw;
+        mouseDown (e);
+        mouseUp (e);
+        tool = Tool::select;
+    }
+}
+
+bool PianoRollEditor::keyPressed (const juce::KeyPress& k)
+{
+    const bool cmd = k.getModifiers().isCommandDown();
+    const bool shift = k.getModifiers().isShiftDown();
+    const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
+    const int code = k.getKeyCode();
+
+    if (k == juce::KeyPress::deleteKey || k == juce::KeyPress::backspaceKey) { deleteSelected(); return true; }
+    if (cmd && (code == 'A' || c == 'a')) { selectAll(); return true; }
+    if (cmd && (code == 'C' || c == 'c')) { copySelection(); return true; }
+    if (cmd && (code == 'V' || c == 'v')) { paste(); return true; }
+    if (cmd && (code == 'D' || c == 'd')) { duplicate(); return true; }
+    if (cmd && (code == 'Z' || c == 'z')) { shift ? redo() : undo(); return true; }
+    if (cmd && (code == 'Y' || c == 'y')) { redo(); return true; }
+    if (code == juce::KeyPress::upKey)    { transposeSelection (shift ? 12 : 1); return true; }
+    if (code == juce::KeyPress::downKey)  { transposeSelection (shift ? -12 : -1); return true; }
+    if (code == juce::KeyPress::leftKey)  { nudgeSelection (-(shift ? 4.0 : (snap > 0.0 ? snap : 1.0))); return true; }
+    if (code == juce::KeyPress::rightKey) { nudgeSelection (shift ? 4.0 : (snap > 0.0 ? snap : 1.0)); return true; }
+    if (! cmd && c == 'q') { quantize(); return true; }
+    if (! cmd && c == 'b') { tool = tool == Tool::draw ? Tool::select : Tool::draw; if (onChanged) onChanged(); return true; }
+    if (k == juce::KeyPress::escapeKey) { selection.clear(); repaint(); return true; }
+    if (k == juce::KeyPress::spaceKey)
+    {
+        auto& seq = processor.getSequencer();
+        seq.internalPlay = ! seq.internalPlay.load();
+        return true;
+    }
+    return false;
+}
+
+//==============================================================================
+void PianoRollEditor::paint (juce::Graphics& g)
+{
+    g.fillAll (colours::background);
+    paintNotes (g);
+    paintKeyboard (g);
+    paintRuler (g);
+    paintVelocity (g);
+
+    g.setColour (colours::panel);
+    g.fillRect (0, 0, keyboardWidth, rulerHeight);
+    g.fillRect (0, velocityArea().getY(), keyboardWidth, getHeight() - velocityArea().getY());
+    g.setColour (colours::dim);
+    g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+    g.drawText ("VELOCITY", juce::Rectangle<int> (0, velocityArea().getY(), keyboardWidth, 20), juce::Justification::centred);
+}
+
+void PianoRollEditor::paintRuler (juce::Graphics& g)
+{
+    auto r = rulerArea();
+    g.setColour (colours::panel);
+    g.fillRect (r);
+    g.saveState();
+    g.reduceClipRegion (r);
+
+    const double first = std::floor (viewStart);
+    const double last = stepForX ((float) r.getRight());
+    for (double s = first; s <= last; s += 1.0)
+    {
+        const float x = xForStep (s);
+        const int step = (int) s;
+        if (step % 16 == 0)
+        {
+            g.setColour (colours::text);
+            g.drawVerticalLine ((int) x, (float) r.getY(), (float) r.getBottom());
+            g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+            g.drawText (juce::String (step / 16 + 1), juce::Rectangle<float> (x + 3.0f, (float) r.getY(), 40.0f, (float) r.getHeight()), juce::Justification::centredLeft);
+        }
+        else if (step % 4 == 0 && pixelsPerStep * 4.0 > 24.0)
+        {
+            g.setColour (colours::dim);
+            g.drawVerticalLine ((int) x, (float) r.getBottom() - 8.0f, (float) r.getBottom());
+            if (pixelsPerStep * 4.0 > 50.0)
+            {
+                g.setFont (juce::FontOptions (9.0f));
+                g.drawText (juce::String (step / 16 + 1) + "." + juce::String ((step % 16) / 4 + 1),
+                            juce::Rectangle<float> (x + 2.0f, (float) r.getY(), 40.0f, (float) r.getHeight()), juce::Justification::centredLeft);
+            }
+        }
+    }
+
+    // end of the pattern
+    const float endX = xForStep (patternLength());
+    g.setColour (colours::accent);
+    g.fillRect (endX - 1.0f, (float) r.getY(), 2.0f, (float) r.getHeight());
+    g.restoreState();
+}
+
+void PianoRollEditor::paintKeyboard (juce::Graphics& g)
+{
+    auto k = keyboardArea();
+    g.saveState();
+    g.reduceClipRegion (k);
+    const bool melodic = getViewMode() == NoteClip::melodic;
+
+    for (int d = topDisplayRow; d < numRows(); ++d)
+    {
+        const int row = rowForDisplay (d);
+        const float y = yForRow (row);
+        if (y > (float) k.getBottom()) break;
+        auto cell = juce::Rectangle<float> ((float) k.getX(), y, (float) k.getWidth() - 2.0f, (float) rowHeight);
+
+        if (melodic)
+        {
+            const bool black = isBlackKey (row);
+            g.setColour (row == previewRow ? colours::accent : black ? juce::Colour (0xff1a1b1f) : juce::Colour (0xffd8d8d8));
+            g.fillRect (black ? cell.withWidth (cell.getWidth() * 0.62f) : cell);
+            if (black)
+            {
+                g.setColour (juce::Colour (0xffd8d8d8));
+                g.fillRect (cell.withTrimmedLeft (cell.getWidth() * 0.62f));
+            }
+            g.setColour (juce::Colour (0xff888888));
+            g.drawHorizontalLine ((int) cell.getBottom(), cell.getX(), cell.getRight());
+            if (row % 12 == 0 && rowHeight >= 10)
+            {
+                g.setColour (juce::Colours::black);
+                g.setFont (juce::FontOptions (juce::jmin (11.0f, (float) rowHeight - 2.0f), juce::Font::bold));
+                g.drawText (rowName (row), cell.reduced (4.0f, 0.0f), juce::Justification::centredRight);
+            }
+        }
+        else
+        {
+            g.setColour (row == previewRow ? colours::accent.withAlpha (0.6f)
+                         : (row / padsPerBank) % 2 == 0 ? colours::panel : colours::panelLight);
+            g.fillRect (cell.reduced (0.0f, 0.5f));
+            if (rowHeight >= 10)
+            {
+                g.setColour (colours::text);
+                g.setFont (juce::FontOptions (juce::jmin (11.0f, (float) rowHeight - 3.0f), juce::Font::bold));
+                g.drawText (padLabel (row), cell.reduced (4.0f, 0.0f), juce::Justification::centredLeft);
+                g.setColour (colours::dim);
+                g.setFont (juce::FontOptions (juce::jmin (10.0f, (float) rowHeight - 4.0f)));
+                g.drawText (processor.getPadName (row), cell.reduced (4.0f, 0.0f).withTrimmedLeft (28.0f), juce::Justification::centredLeft, true);
+            }
+        }
+    }
+    g.restoreState();
+}
+
+void PianoRollEditor::paintNotes (juce::Graphics& g)
+{
+    auto a = noteArea();
+    g.saveState();
+    g.reduceClipRegion (a);
+    const bool melodic = getViewMode() == NoteClip::melodic;
+
+    // rows
+    for (int d = topDisplayRow; d < numRows(); ++d)
+    {
+        const int row = rowForDisplay (d);
+        const float y = yForRow (row);
+        if (y > (float) a.getBottom()) break;
+        juce::Colour c = melodic ? (isBlackKey (row) ? juce::Colour (0xff1c1d22) : juce::Colour (0xff24262c))
+                                 : ((row / padsPerBank) % 2 == 0 ? juce::Colour (0xff24262c) : juce::Colour (0xff202227));
+        g.setColour (c);
+        g.fillRect ((float) a.getX(), y, (float) a.getWidth(), (float) rowHeight);
+        g.setColour (juce::Colour (0xff1a1b1f));
+        g.drawHorizontalLine ((int) (y + (float) rowHeight) - 1, (float) a.getX(), (float) a.getRight());
+        if ((melodic && row % 12 == 0) || (! melodic && row % padsPerBank == padsPerBank - 1))
+        {
+            g.setColour (colours::outline.brighter (0.2f));
+            g.drawHorizontalLine ((int) (y + (float) rowHeight) - 1, (float) a.getX(), (float) a.getRight());
+        }
+    }
+
+    // vertical grid: snap lines, beats, bars
+    const double grid = snap > 0.0 ? snap : 1.0;
+    const double firstLine = std::floor (viewStart / grid) * grid;
+    const double lastStep = stepForX ((float) a.getRight());
+    if (grid * pixelsPerStep >= 5.0)
+        for (double s = firstLine; s <= lastStep; s += grid)
+        {
+            g.setColour (juce::Colour (0xff2c2f36));
+            g.drawVerticalLine ((int) xForStep (s), (float) a.getY(), (float) a.getBottom());
+        }
+    for (double s = std::floor (viewStart); s <= lastStep; s += 1.0)
+    {
+        const int step = (int) s;
+        if (step % 4 != 0) continue;
+        g.setColour (step % 16 == 0 ? colours::outline.brighter (0.35f) : colours::outline);
+        g.drawVerticalLine ((int) xForStep (s), (float) a.getY(), (float) a.getBottom());
+    }
+
+    // outside the pattern
+    const float endX = xForStep (patternLength());
+    if (endX < (float) a.getRight())
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillRect (juce::Rectangle<float>::leftTopRightBottom (endX, (float) a.getY(), (float) a.getRight(), (float) a.getBottom()));
+    }
+
+    // notes
+    for (auto& n : notes)
+    {
+        if ((int) n.kind != getViewMode()) continue;
+        auto b = noteBounds (n);
+        if (b.getRight() < (float) a.getX() || b.getX() > (float) a.getRight()) continue;
+        const bool sel = isSelected (n);
+        const auto base = melodic ? colours::accent2 : colours::accent;
+        g.setColour (base.withMultipliedBrightness (0.45f + 0.55f * (float) n.velocity / 127.0f));
+        g.fillRoundedRectangle (b, 3.0f);
+        g.setColour (sel ? juce::Colours::white : juce::Colours::black.withAlpha (0.5f));
+        g.drawRoundedRectangle (b.reduced (0.5f), 3.0f, sel ? 1.6f : 1.0f);
+        // resize grip
+        g.setColour (juce::Colours::black.withAlpha (0.3f));
+        g.fillRect (b.getRight() - 3.0f, b.getY() + 2.0f, 2.0f, b.getHeight() - 4.0f);
+        if (b.getWidth() > 30.0f && rowHeight >= 12)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.75f));
+            g.setFont (juce::FontOptions (juce::jmin (10.0f, (float) rowHeight - 4.0f)));
+            g.drawText (rowName (n.row), b.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
+        }
+    }
+
+    // playhead
+    const double ph = processor.getSequencer().getPlayPositionSteps();
+    if (ph >= 0.0)
+    {
+        g.setColour (juce::Colours::white.withAlpha (0.8f));
+        g.drawVerticalLine ((int) xForStep (ph), (float) a.getY(), (float) a.getBottom());
+    }
+
+    if (! rubber.isEmpty())
+    {
+        g.setColour (colours::accent2.withAlpha (0.15f));
+        g.fillRect (rubber);
+        g.setColour (colours::accent2);
+        g.drawRect (rubber, 1.0f);
+    }
+    g.restoreState();
+}
+
+void PianoRollEditor::paintVelocity (juce::Graphics& g)
+{
+    auto v = velocityArea();
+    g.setColour (juce::Colour (0xff141518));
+    g.fillRect (v);
+    g.setColour (colours::outline);
+    g.drawHorizontalLine (v.getY(), (float) v.getX(), (float) v.getRight());
+    g.saveState();
+    g.reduceClipRegion (v);
+    const auto base = getViewMode() == NoteClip::melodic ? colours::accent2 : colours::accent;
+    for (auto& n : notes)
+    {
+        if ((int) n.kind != getViewMode()) continue;
+        const float x = xForStep (n.start);
+        const float h = (float) (v.getHeight() - 6) * (float) n.velocity / 127.0f;
+        g.setColour (isSelected (n) ? juce::Colours::white : base.withAlpha (0.85f));
+        g.fillRect (x, (float) v.getBottom() - h, 3.0f, h);
+        g.fillEllipse (x - 2.0f, (float) v.getBottom() - h - 3.0f, 7.0f, 7.0f);
+    }
+    g.restoreState();
+}
+
+//==============================================================================
+PianoRollPanel::PianoRollPanel (RezalicaProcessor& p) : processor (p), editor (p)
+{
+    auto toggle = [this] (juce::TextButton& b, juce::Colour on)
+    {
+        b.setClickingTogglesState (true);
+        b.setWantsKeyboardFocus (false);
+        b.setColour (juce::TextButton::buttonOnColourId, on);
+        addAndMakeVisible (b);
+    };
+    toggle (playButton, colours::accent);
+    toggle (recButton, juce::Colour (0xffe0413a));
+    toggle (syncButton, colours::accent2);
+    playButton.onClick = [this] { processor.getSequencer().internalPlay = playButton.getToggleState(); };
+    recButton.onClick = [this] { processor.getSequencer().pianoRecording = recButton.getToggleState(); };
+    syncButton.onClick = [this] { processor.getSequencer().syncToHost = syncButton.getToggleState(); };
+    recButton.setTooltip ("Record pads (drums) or MIDI keys (melodic) into the piano roll while it plays");
+
+    bpmSlider.setSliderStyle (juce::Slider::LinearBar);
+    bpmSlider.setRange (40.0, 240.0, 0.1);
+    bpmSlider.setTextValueSuffix (" BPM");
+    bpmSlider.setWantsKeyboardFocus (false);
+    bpmSlider.setColour (juce::Slider::trackColourId, colours::panelLight.brighter (0.15f));
+    bpmSlider.onValueChange = [this] { processor.getSequencer().bpm = (float) bpmSlider.getValue(); };
+    addAndMakeVisible (bpmSlider);
+
+    for (int i = 0; i < Sequencer::numPatterns; ++i)
+        patternBox.addItem ("Pattern " + juce::String (i + 1), i + 1);
+    patternBox.onChange = [this] { processor.getSequencer().currentPattern = patternBox.getSelectedId() - 1; editor.refreshFromSequencer(); };
+    for (int len : { 4, 8, 12, 16, 24, 32, 48, 64, 96, 128 })
+        lengthBox.addItem (juce::String (len) + " steps", len);
+    lengthBox.onChange = [this]
+    {
+        auto& s = processor.getSequencer();
+        s.length[(size_t) s.currentPattern.load()] = lengthBox.getSelectedId();
+        editor.repaint();
+    };
+    for (auto* c : { &patternBox, &lengthBox, &padBox, &snapBox })
+    {
+        c->setWantsKeyboardFocus (false);
+        addAndMakeVisible (*c);
+    }
+
+    // view mode
+    for (auto* b : { &drumButton, &melodicButton })
+    {
+        b->setRadioGroupId (5301);
+        toggle (*b, colours::accent);
+    }
+    melodicButton.setColour (juce::TextButton::buttonOnColourId, colours::accent2);
+    drumButton.setTooltip ("Rows are the 64 pads: for drums and percussion");
+    melodicButton.setTooltip ("Rows are notes: the chosen pad's sample is played chromatically (C3 = original pitch)");
+    drumButton.onClick = [this] { if (drumButton.getToggleState()) editor.setViewMode (NoteClip::drum); syncControls(); };
+    melodicButton.onClick = [this] { if (melodicButton.getToggleState()) editor.setViewMode (NoteClip::melodic); syncControls(); };
+
+    fillPadBox();
+    padBox.setTooltip ("The pad (sample) the melodic notes play");
+    padBox.onChange = [this]
+    {
+        const int pad = padBox.getSelectedId() - 1;
+        if (pad < 0) return;
+        editor.setTargetPad (pad);
+        if (midiKeysButton.getToggleState())
+            processor.chromaticPad = pad;
+    };
+    toggle (midiKeysButton, colours::accent2);
+    midiKeysButton.setTooltip ("Your MIDI keyboard plays the chosen pad chromatically instead of triggering pads");
+    midiKeysButton.onClick = [this] { processor.chromaticPad = midiKeysButton.getToggleState() ? editor.getTargetPad() : -1; };
+
+    // tools
+    for (auto* b : { &drawButton, &selectButton })
+    {
+        b->setRadioGroupId (5302);
+        toggle (*b, colours::accent);
+    }
+    drawButton.setTooltip ("Pencil (B): click to draw a note, drag to set its length");
+    selectButton.setTooltip ("Select (B): drag a frame to select notes, drag notes to move them");
+    drawButton.onClick = [this] { editor.tool = PianoRollEditor::Tool::draw; };
+    selectButton.onClick = [this] { editor.tool = PianoRollEditor::Tool::select; };
+
+    snapBox.addItem ("Snap 1/4", 1);
+    snapBox.addItem ("Snap 1/8", 2);
+    snapBox.addItem ("Snap 1/16", 3);
+    snapBox.addItem ("Snap 1/32", 4);
+    snapBox.addItem ("Snap 1/8 T", 5);
+    snapBox.addItem ("Snap 1/16 T", 6);
+    snapBox.addItem ("Snap off", 7);
+    snapBox.setSelectedId (3, juce::dontSendNotification);
+    snapBox.onChange = [this]
+    {
+        static const double values[] { 4.0, 2.0, 1.0, 0.5, 4.0 / 3.0, 2.0 / 3.0, 0.0 };
+        editor.snap = values[juce::jlimit (0, 6, snapBox.getSelectedId() - 1)];
+        editor.repaint();
+    };
+
+    for (auto* b : { &quantizeButton, &undoButton, &redoButton, &clearButton })
+    {
+        b->setWantsKeyboardFocus (false);
+        addAndMakeVisible (*b);
+    }
+    quantizeButton.setTooltip ("Quantize the selected notes (or all) to the snap grid (Q)");
+    quantizeButton.onClick = [this] { editor.quantize(); };
+    undoButton.onClick = [this] { editor.undo(); };
+    redoButton.onClick = [this] { editor.redo(); };
+    clearButton.onClick = [this] { editor.clearAll(); };
+
+    velocitySlider.setSliderStyle (juce::Slider::LinearBar);
+    velocitySlider.setRange (1.0, 127.0, 1.0);
+    velocitySlider.textFromValueFunction = [] (double v) { return "Velocity " + juce::String ((int) v); };
+    velocitySlider.setValue (100.0, juce::dontSendNotification);
+    velocitySlider.updateText();
+    velocitySlider.setWantsKeyboardFocus (false);
+    velocitySlider.setColour (juce::Slider::trackColourId, colours::accent.withAlpha (0.45f));
+    velocitySlider.onValueChange = [this] { editor.newVelocity = (int) velocitySlider.getValue(); };
+    addAndMakeVisible (velocitySlider);
+
+    infoLabel.setText ("Click = note (drag = length)   edge = resize   right-click / hold & drag = delete   Ctrl+drag = copy   "
+                       "wheel = scroll, Shift = sideways, Ctrl = zoom, Alt = row height   Ctrl+Z/Y  Ctrl+C/V/D  Del  arrows  Q",
+                       juce::dontSendNotification);
+    infoLabel.setColour (juce::Label::textColourId, colours::dim);
+    infoLabel.setFont (juce::FontOptions (11.0f));
+    addAndMakeVisible (infoLabel);
+
+    editor.onChanged = [this] { syncControls(); };
+    addAndMakeVisible (editor);
+
+    setSize (1180, 680);
+    syncControls();
+    startTimerHz (30);
+}
+
+PianoRollPanel::~PianoRollPanel()
+{
+    stopTimer();
+}
+
+void PianoRollPanel::fillPadBox()
+{
+    const int sel = padBox.getSelectedId();
+    padBox.clear (juce::dontSendNotification);
+    for (int i = 0; i < numPads; ++i)
+    {
+        auto name = processor.getPadName (i);
+        padBox.addItem (padLabel (i) + (name.isNotEmpty() ? "  " + name : juce::String()), i + 1);
+    }
+    padBox.setSelectedId (sel > 0 ? sel : editor.getTargetPad() + 1, juce::dontSendNotification);
+}
+
+void PianoRollPanel::syncControls()
+{
+    auto& s = processor.getSequencer();
+    playButton.setToggleState (s.internalPlay.load(), juce::dontSendNotification);
+    recButton.setToggleState (s.pianoRecording.load(), juce::dontSendNotification);
+    syncButton.setToggleState (s.syncToHost.load(), juce::dontSendNotification);
+    patternBox.setSelectedId (s.currentPattern.load() + 1, juce::dontSendNotification);
+    lengthBox.setSelectedId (s.length[(size_t) s.currentPattern.load()].load(), juce::dontSendNotification);
+    if (! bpmSlider.isMouseButtonDown())
+        bpmSlider.setValue (s.syncToHost.load() ? s.effectiveBpm.load() : s.bpm.load(), juce::dontSendNotification);
+
+    const bool melodic = editor.getViewMode() == NoteClip::melodic;
+    drumButton.setToggleState (! melodic, juce::dontSendNotification);
+    melodicButton.setToggleState (melodic, juce::dontSendNotification);
+    padBox.setEnabled (melodic);
+    midiKeysButton.setEnabled (melodic);
+    if (! padBox.isPopupActive())
+        padBox.setSelectedId (editor.getTargetPad() + 1, juce::dontSendNotification);
+    midiKeysButton.setToggleState (processor.chromaticPad.load() >= 0, juce::dontSendNotification);
+
+    drawButton.setToggleState (editor.tool == PianoRollEditor::Tool::draw, juce::dontSendNotification);
+    selectButton.setToggleState (editor.tool == PianoRollEditor::Tool::select, juce::dontSendNotification);
+    undoButton.setEnabled (editor.canUndo());
+    redoButton.setEnabled (editor.canRedo());
+}
+
+void PianoRollPanel::timerCallback()
+{
+    processor.collectRecordedPianoNotes();
+    editor.refreshFromSequencer();
+    syncControls();
+    static int counter = 0;
+    if (++counter % 30 == 0 && ! padBox.isPopupActive())
+        fillPadBox(); // pad names change when samples are loaded
+    editor.repaint();
+}
+
+void PianoRollPanel::paint (juce::Graphics& g)
+{
+    g.fillAll (colours::background);
+}
+
+void PianoRollPanel::resized()
+{
+    auto b = getLocalBounds().reduced (10);
+
+    auto row1 = b.removeFromTop (30);
+    playButton.setBounds (row1.removeFromLeft (70)); row1.removeFromLeft (6);
+    recButton.setBounds (row1.removeFromLeft (60)); row1.removeFromLeft (6);
+    syncButton.setBounds (row1.removeFromLeft (100)); row1.removeFromLeft (10);
+    bpmSlider.setBounds (row1.removeFromLeft (120)); row1.removeFromLeft (10);
+    patternBox.setBounds (row1.removeFromLeft (110)); row1.removeFromLeft (6);
+    lengthBox.setBounds (row1.removeFromLeft (110)); row1.removeFromLeft (16);
+    drumButton.setBounds (row1.removeFromLeft (80)); row1.removeFromLeft (4);
+    melodicButton.setBounds (row1.removeFromLeft (90)); row1.removeFromLeft (8);
+    padBox.setBounds (row1.removeFromLeft (190)); row1.removeFromLeft (6);
+    midiKeysButton.setBounds (row1.removeFromLeft (juce::jmin (170, row1.getWidth())));
+
+    b.removeFromTop (6);
+    auto row2 = b.removeFromTop (28);
+    drawButton.setBounds (row2.removeFromLeft (70)); row2.removeFromLeft (4);
+    selectButton.setBounds (row2.removeFromLeft (80)); row2.removeFromLeft (10);
+    snapBox.setBounds (row2.removeFromLeft (120)); row2.removeFromLeft (6);
+    quantizeButton.setBounds (row2.removeFromLeft (90)); row2.removeFromLeft (10);
+    velocitySlider.setBounds (row2.removeFromLeft (150)); row2.removeFromLeft (10);
+    undoButton.setBounds (row2.removeFromLeft (60)); row2.removeFromLeft (4);
+    redoButton.setBounds (row2.removeFromLeft (60)); row2.removeFromLeft (10);
+    clearButton.setBounds (row2.removeFromLeft (70));
+
+    b.removeFromTop (6);
+    infoLabel.setBounds (b.removeFromBottom (18));
+    b.removeFromBottom (4);
+    editor.setBounds (b);
+}
+} // namespace rz

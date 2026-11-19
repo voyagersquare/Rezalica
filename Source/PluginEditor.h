@@ -6,6 +6,7 @@
 #include "WaveformView.h"
 #include "SequencerWindow.h"
 #include "StretchWindow.h"
+#include "PianoRollWindow.h"
 
 class RezalicaEditor : public juce::AudioProcessorEditor,
                        private juce::Timer,
@@ -45,7 +46,7 @@ private:
     rz::RezalicaLookAndFeel lnf;
 
     // header
-    juce::TextButton loadChopButton { "LOAD SAMPLE" }, lazyButton { "LAZY CHOP" }, seqButton { "SEQUENCER" }, stopButton { "STOP ALL" };
+    juce::TextButton loadChopButton { "LOAD SAMPLE" }, lazyButton { "LAZY CHOP" }, seqButton { "STEP SEQ" }, pianoRollButton { "PIANO ROLL" }, stopButton { "STOP ALL" };
     bool lastLazyState = false;
     juce::ComboBox chopModeBox;
     juce::Slider sensitivitySlider;
@@ -94,6 +95,8 @@ private:
 
     std::unique_ptr<rz::SequencerWindow> sequencerWindow;
     std::unique_ptr<rz::StretchWindow> stretchWindow;
+    std::unique_ptr<rz::PianoRollWindow> pianoRollWindow;
+    void togglePianoRoll();
     void showStretchWindow();
     std::unique_ptr<juce::FileChooser> fileChooser;
 

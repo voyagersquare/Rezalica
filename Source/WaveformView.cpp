@@ -101,8 +101,14 @@ void WaveformView::refresh()
         s = processor.getChopSource(); // show the sample being lazy-chopped
     if (s != sample)
     {
+        const bool sameSource = sample != nullptr && s != nullptr
+                             && (s->warpSource == sample || s->warpSource == sample->warpSource || sample->warpSource == s);
         sample = s;
-        setView (0.0, 1.0);
+        warpPreview = false; // the stretched result arrived
+        if (! sameSource)
+            setView (0.0, 1.0); // keep the zoom while warping the same sample
+        else
+            setView (viewStart, viewLength);
     }
     repaint();
 }
@@ -198,7 +204,34 @@ void WaveformView::paint (juce::Graphics& g)
         const double samplesPerPixel = viewLength * len / width;
         auto colourFor = [&] (double n) { return padUsesSample && n >= st && n <= en ? accent2 : dim.withAlpha (0.6f); };
 
-        if (samplesPerPixel >= 1.0)
+        if (warpPreview && sample->warpSource != nullptr)
+        {
+            // live preview while dragging a warp marker: read the original through the new time map
+            const auto& base = *sample->warpSource;
+            const int blen = base.buffer.getNumSamples();
+            const float* bl = base.buffer.getReadPointer (0);
+            const float* br = base.buffer.getReadPointer (1);
+            const double ra = sample->regionStart, rb = sample->regionEnd;
+            auto basePos = [&] (double v) { return (int) ((ra + warpWorking.dstToSrc ((float) juce::jlimit (0.0, 1.0, v)) * (rb - ra)) * blen); };
+            for (int x = 0; x < width; ++x)
+            {
+                const double n0 = viewStart + viewLength * x / width;
+                const double n1 = viewStart + viewLength * (x + 1) / width;
+                const int s0 = juce::jlimit (0, blen - 1, basePos (n0));
+                const int s1 = juce::jlimit (s0 + 1, blen, basePos (n1));
+                const int stride = juce::jmax (1, (s1 - s0) / 512);
+                float lo = 0.0f, hi = 0.0f;
+                for (int i = s0; i < s1; i += stride)
+                {
+                    const float m = 0.5f * (bl[i] + br[i]);
+                    lo = juce::jmin (lo, m);
+                    hi = juce::jmax (hi, m);
+                }
+                g.setColour (accent2.withAlpha (0.8f));
+                g.drawVerticalLine ((int) area.getX() + x, mid - hi * half, mid - lo * half + 1.0f);
+            }
+        }
+        else if (samplesPerPixel >= 1.0)
         {
             for (int x = 0; x < width; ++x)
             {
@@ -243,6 +276,9 @@ void WaveformView::paint (juce::Graphics& g)
         }
     }
 
+    if (isWarpView())
+        drawWarpGrid (g, area);
+
     // chop markers (there can be more of them than there are pads in a bank)
     if (isChopSource())
     {
@@ -250,9 +286,10 @@ void WaveformView::paint (juce::Graphics& g)
         g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
         for (int i = 0; i < (int) pts.size(); ++i)
         {
-            if (! isVisibleNorm (pts[(size_t) i]))
+            const float pv = displayPos (pts[(size_t) i]);
+            if (! isVisibleNorm (pv))
                 continue;
-            const float x = normToX (pts[(size_t) i]);
+            const float x = normToX (pv);
             g.setColour ((i == dragSlice ? text : accent2).withAlpha (0.75f));
             g.drawVerticalLine ((int) x, area.getY(), area.getBottom());
             juce::Path handle;
@@ -282,7 +319,7 @@ void WaveformView::paint (juce::Graphics& g)
     {
         for (int m = 0; m < 2; ++m)
         {
-            const float x = normToX (m == 0 ? st : en);
+            const float x = normToX (displayPos (m == 0 ? st : en));
             g.setColour (accent);
             g.fillRect (x - 1.0f, area.getY(), 2.0f, area.getHeight());
             juce::Path tri;
@@ -343,9 +380,15 @@ void WaveformView::paintOverChildren (juce::Graphics& g)
         g.setColour (juce::Colour (0xffe0413a));
         g.drawText ("LAZY CHOP: hit pads / keys / MIDI to drop slices", footer, juce::Justification::centred);
     }
+    else if (isWarpView())
+    {
+        g.setColour (juce::Colour (0xffffc94a));
+        g.drawText (warpPreview ? "warping..." : "WARP: Ctrl+drag a marker onto the grid (Alt = no snap)   Ctrl+double-click: remove warp marker",
+                    footer, juce::Justification::centred);
+    }
     else if (isChopSource())
     {
-        g.drawText ("shift+click: add marker   double-click marker: delete   drag: move   wheel: zoom", footer, juce::Justification::centred);
+        g.drawText ("shift+click: add marker   double-click marker: delete   drag: move   Ctrl+drag: warp   wheel: zoom", footer, juce::Justification::centred);
     }
 
     g.setColour (dim);
@@ -359,7 +402,7 @@ void WaveformView::mouseMove (const juce::MouseEvent& e)
     if (sample == nullptr) { setMouseCursor (juce::MouseCursor::NormalCursor); return; }
     auto& ps = processor.getEngine().getPad (pad);
     const float x = (float) e.x;
-    const bool nearMarker = sliceMarkerNear (x) >= 0
+    const bool nearMarker = warpMarkerNear (x) >= 0 || sliceMarkerNear (x) >= 0
                          || std::abs (x - normToX (ps.start.load())) < 6.0f
                          || std::abs (x - normToX (ps.end.load())) < 6.0f;
     setMouseCursor (nearMarker ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
@@ -376,12 +419,30 @@ void WaveformView::showMenu (float x)
     m.addItem (3, "Clear all chop markers", isChopSource() && processor.getNumSlices() > 1);
     m.addSeparator();
     m.addItem (4, "Show whole sample (zoom out)", viewLength < 0.999);
+    const int wm = warpMarkerNear (x);
+    if (isWarpView())
+    {
+        m.addSeparator();
+        m.addItem (5, "Remove this warp marker", wm >= 0);
+        m.addItem (6, "Remove all warp markers", ! shownWarp().markers.empty());
+    }
 
     juce::Component::SafePointer<WaveformView> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe, marker, n] (int r)
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe, marker, n, wm] (int r)
     {
         if (safe == nullptr) return;
         auto& proc = safe->processor;
+        if ((r == 5 || r == 6) && safe->isWarpView())
+        {
+            if (! safe->warpPreview) safe->warpWorking = safe->sample->warp;
+            if (r == 5 && wm >= 0 && wm < (int) safe->warpWorking.markers.size())
+                safe->warpWorking.markers.erase (safe->warpWorking.markers.begin() + wm);
+            if (r == 6)
+                safe->warpWorking.markers.clear();
+            safe->warpPreview = true;
+            safe->applyWarp();
+            return;
+        }
         if (r == 1) proc.addSlicePoint (n);
         if (r == 2) proc.removeSlicePoint (marker);
         if (r == 3) proc.clearSlicePoints();
@@ -400,6 +461,13 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
     if (e.mods.isPopupMenu())
     {
         showMenu (x);
+        return;
+    }
+
+    // Ctrl (Cmd) + drag: warp the sample at this marker
+    if (e.mods.isCommandDown())
+    {
+        startWarpDrag (x);
         return;
     }
 
@@ -460,6 +528,20 @@ void WaveformView::mouseDrag (const juce::MouseEvent& e)
 
     const float n = xToNorm ((float) e.x);
 
+    if (dragging == DragWarp)
+    {
+        auto& m = warpWorking.markers;
+        if (warpDragIndex < 0 || warpDragIndex >= (int) m.size())
+            return;
+        float v = e.mods.isAltDown() ? n : snapToGrid (n);
+        const float eps = 1.0e-4f;
+        const float lo = (warpDragIndex > 0 ? m[(size_t) warpDragIndex - 1].second : 0.0f) + eps;
+        const float hi = (warpDragIndex + 1 < (int) m.size() ? m[(size_t) warpDragIndex + 1].second : 1.0f) - eps;
+        m[(size_t) warpDragIndex].second = juce::jlimit (lo, juce::jmax (lo, hi), v);
+        repaint();
+        return;
+    }
+
     if (dragging == DragSlice)
     {
         dragSlice = processor.moveSlicePoint (dragSlice, n);
@@ -478,10 +560,165 @@ void WaveformView::mouseDrag (const juce::MouseEvent& e)
     repaint();
 }
 
+void WaveformView::mouseUp (const juce::MouseEvent&)
+{
+    if (dragging == DragWarp)
+        applyWarp();
+    dragging = DragNone;
+    dragSlice = -1;
+    warpDragIndex = -1;
+}
+
+//==============================================================================
+double WaveformView::gridStepNorm() const
+{
+    if (sample == nullptr || ! sample->isWarped())
+        return 0.0;
+    const double beats = sample->warp.lengthBeats();
+    const double pxPerBeat = waveArea().getWidth() / (viewLength * beats);
+    // finest grid that still leaves ~10 px between lines: 4 beats ... 1/64 beat (1/256 note)
+    double sub = 1.0;
+    while (sub > 1.0 / 64.0 && sub * 0.5 * pxPerBeat >= 10.0)
+        sub *= 0.5;
+    while (sub < 4.0 && sub * pxPerBeat < 10.0)
+        sub *= 2.0;
+    return sub / beats;
+}
+
+float WaveformView::snapToGrid (float v) const
+{
+    const double g = gridStepNorm();
+    return g > 0.0 ? (float) (std::round (v / g) * g) : v;
+}
+
+float WaveformView::displayPos (float v) const
+{
+    if (! warpPreview || sample == nullptr || ! sample->isWarped())
+        return v;
+    return warpWorking.srcToDst (sample->warp.dstToSrc (v));
+}
+
+int WaveformView::warpMarkerNear (float x) const
+{
+    if (! isWarpView())
+        return -1;
+    const auto& m = shownWarp().markers;
+    int best = -1;
+    float bestDist = 7.0f;
+    for (int i = 0; i < (int) m.size(); ++i)
+    {
+        const float d = std::abs (x - normToX (m[(size_t) i].second));
+        if (d < bestDist) { bestDist = d; best = i; }
+    }
+    return best;
+}
+
+void WaveformView::startWarpDrag (float x)
+{
+    // not warped yet: switch WARP on (whole sample, length that fits the current tempo)
+    if (! isWarpView())
+    {
+        if (processor.getEngine().getPadSample (pad) == nullptr)
+            return;
+        processor.setWarp (pad, processor.suggestWarpSettings (pad));
+        refresh();
+        if (! isWarpView())
+            return;
+    }
+
+    if (! warpPreview)
+        warpWorking = sample->warp;
+
+    int wm = warpMarkerNear (x);
+    if (wm < 0)
+    {
+        // grab the chop / transient marker under the mouse, or the clicked position
+        float v = xToNorm (x);
+        if (const int cm = sliceMarkerNear (x); cm >= 0)
+            v = displayPos (processor.getSlicePoints()[(size_t) cm]);
+        if (v <= 0.0005f || v >= 0.9995f)
+            return; // the start and the end stay where they are
+        const float u = warpWorking.dstToSrc (v);
+        auto& m = warpWorking.markers;
+        auto it = std::lower_bound (m.begin(), m.end(), u, [] (const std::pair<float, float>& a, float val) { return a.first < val; });
+        wm = (int) std::distance (m.begin(), m.insert (it, { u, v }));
+    }
+
+    warpDragIndex = wm;
+    warpPreview = true;
+    dragging = DragWarp;
+    repaint();
+}
+
+void WaveformView::applyWarp()
+{
+    if (! warpPreview || sample == nullptr)
+        return;
+    auto s = warpWorking;
+    s.enabled = true;
+    processor.requestWarp (pad, s); // stretched in the background; refresh() ends the preview
+    repaint();
+}
+
+void WaveformView::drawWarpGrid (juce::Graphics& g, juce::Rectangle<float> area)
+{
+    const double beats = sample->warp.lengthBeats();
+    const double grid = gridStepNorm();
+    if (grid <= 0.0)
+        return;
+
+    const double first = std::floor (viewStart / grid) * grid;
+    for (double v = first; v <= viewStart + viewLength + grid * 0.5; v += grid)
+    {
+        const double beat = v * beats;
+        const bool bar = std::abs (beat / 4.0 - std::round (beat / 4.0)) < 1.0e-6;
+        const bool onBeat = std::abs (beat - std::round (beat)) < 1.0e-6;
+        g.setColour (bar ? juce::Colour (0x66ffffff) : onBeat ? juce::Colour (0x33ffffff) : juce::Colour (0x18ffffff));
+        g.drawVerticalLine ((int) normToX ((float) v), area.getY(), area.getBottom());
+        if (bar)
+        {
+            g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+            g.setColour (juce::Colour (0x99ffffff));
+            g.drawText (juce::String ((int) std::round (beat / 4.0) + 1), juce::Rectangle<float> (normToX ((float) v) + 2.0f, area.getBottom() - 14.0f, 30.0f, 12.0f),
+                        juce::Justification::left);
+        }
+    }
+
+    // warp markers: yellow handles at the top
+    const auto& m = shownWarp().markers;
+    for (int i = 0; i < (int) m.size(); ++i)
+    {
+        const float v = m[(size_t) i].second;
+        if (! isVisibleNorm (v)) continue;
+        const float x = normToX (v);
+        g.setColour (juce::Colour (0xffffc94a).withAlpha (i == warpDragIndex ? 1.0f : 0.85f));
+        g.fillRect (x - 0.75f, area.getY(), 1.5f, area.getHeight());
+        juce::Path d;
+        d.addRectangle (-4.5f, -4.5f, 9.0f, 9.0f);
+        g.fillPath (d, juce::AffineTransform::rotation (juce::MathConstants<float>::pi * 0.25f).translated (x, area.getY() + 7.0f));
+    }
+}
+
 void WaveformView::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (sample == nullptr || e.mods.isPopupMenu())
         return;
+
+    // Ctrl + double-click: remove a warp marker
+    if (e.mods.isCommandDown())
+    {
+        if (! isWarpView()) return;
+        const int wm = warpMarkerNear ((float) e.x);
+        if (wm >= 0)
+        {
+            if (! warpPreview) warpWorking = sample->warp;
+            warpWorking.markers.erase (warpWorking.markers.begin() + wm);
+            warpPreview = true;
+            applyWarp();
+        }
+        dragging = DragNone;
+        return;
+    }
 
     // double-click on a marker deletes it (also transient markers), elsewhere adds one
     if (const int m = sliceMarkerNear ((float) e.x); m >= 0)

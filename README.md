@@ -40,13 +40,37 @@
     - **Solid State**: čvršće tranzistorsko rezanje, neparni harmonici
   - **Delay**: slobodno vrijeme u ms ili sinkronizirano s tempom (1/4, 1/8, 1/8 s točkom, 1/16, triole)
   - **Reverb**: Size, Damp, Width, Mix
-- **Sekvencer** (gumb `SEQUENCER` otvara zaseban prozor):
-  - 8 patterna, duljina 4–32 koraka (šesnaestinke), swing
+- **Step sekvencer** (gumb `STEP SEQ` otvara zaseban prozor), uglavnom za perkusivne samplove:
+  - 8 patterna, duljina 4–128 koraka (šesnaestinke), swing
+  - kod patterna duljih od 32 koraka prikaz ide po stranicama (1-32, 33-64, …), a `FOLLOW` prati playhead
   - gumbi A–D prikazuju redove banke koju uređuješ, a pattern svira svih 64 padova
   - `SYNC HOST`: prati transport i tempo DAW-a, a bez toga ima vlastiti BPM i `PLAY`
   - `REC`: snima ono što sviraš na padovima izravno u pattern
   - Shift+klik dodaje naglašeni korak, desni klik ili povlačenje briše
 - Sve se sprema s projektom u DAW-u: padovi, postavke i patterni. Za samplove se pamti putanja do datoteke.
+
+- **Piano Roll** (gumb `PIANO ROLL` otvara zaseban prozor), za melodijske samplove i za bubnjeve:
+  - Usklađen je sa step sekvencerom: ista reprodukcija, tempo, pattern i duljina. Oba sviraju zajedno.
+  - **DRUMS**: redovi su 64 pada. **MELODIC**: redovi su tonovi, a odabrani pad svira kromatski (C3 = originalna visina, s akordima).
+    - Obje vrste nota sviraju zajedno, a gumbi samo biraju koju uređuješ.
+  - `PLAY WITH MIDI KEYS`: MIDI klavijatura svira odabrani sample po tonovima.
+  - `REC` snima note s njihovom duljinom: padove u DRUMS, MIDI tipke u MELODIC.
+  - **Olovka (DRAW)**: lijevi klik stavlja notu, a povlačenjem odmah određuješ duljinu. Povlačenjem ruba nota se rasteže.
+  - **SELECT**: okvir za odabir više nota i pomicanje. Ctrl+povlačenje kopira.
+  - **Desni klik** briše notu, a desni klik s povlačenjem briše sve note preko kojih prijeđeš.
+  - Ostalo:
+    - Velocity traka ispod nota (povuci gore-dolje)
+    - Snap 1/4 … 1/32, triole, Off
+    - QUANTIZE (Q), UNDO / REDO (Ctrl+Z / Ctrl+Y)
+    - Ctrl+C / Ctrl+V / Ctrl+D (kopiraj, zalijepi, dupliciraj), Ctrl+A, Delete
+    - Strelice: transpozicija (Shift = oktava) i pomicanje lijevo-desno
+    - Kotačić: pomicanje, Ctrl + kotačić: zoom, Alt + kotačić: visina redova
+    - Klik na klavijaturu preslušava ton, a `Space` pokreće i zaustavlja.
+- **Warp markeri (Ctrl + klik i povlačenje na valnom obliku)**, kao u Abletonu:
+  - Uhvati marker (transient ili ručni) s Ctrl i povuci ga lijevo ili desno po gridu. Sample se između markera rasteže i skuplja tako da udarac padne na grid.
+  - Grid je visoke rezolucije: s jačim zoomom ide sve do 1/64 doba. Alt isključuje snap.
+  - Ako WARP nije uključen, Ctrl+klik ga sam uključi s duljinom koja najbolje odgovara sampleu.
+  - Isječci (padovi) prate zvuk. Ctrl + dvoklik ili desni klik uklanja warp marker.
 
 ## Sviranje
 

@@ -11,9 +11,9 @@ int SequencerGrid::numSteps() const
 
 juce::Rectangle<float> SequencerGrid::cellBounds (int pad, int step) const
 {
-    const float w = (float) (getWidth() - labelWidth) / (float) numSteps();
+    const float w = (float) (getWidth() - labelWidth) / (float) visibleSteps();
     const float h = (float) getHeight() / (float) padsPerBank;
-    return { (float) labelWidth + (float) step * w, (float) pad * h, w, h };
+    return { (float) labelWidth + (float) (step - firstStep) * w, (float) pad * h, w, h };
 }
 
 bool SequencerGrid::cellAt (juce::Point<int> pos, int& pad, int& step) const
@@ -25,7 +25,7 @@ bool SequencerGrid::cellAt (juce::Point<int> pos, int& pad, int& step) const
         step = -1;
         return false;
     }
-    step = juce::jlimit (0, numSteps() - 1, (pos.x - labelWidth) * numSteps() / juce::jmax (1, getWidth() - labelWidth));
+    step = juce::jlimit (0, numSteps() - 1, firstStep + (pos.x - labelWidth) * visibleSteps() / juce::jmax (1, getWidth() - labelWidth));
     return true;
 }
 
@@ -52,7 +52,7 @@ void SequencerGrid::paint (juce::Graphics& g)
         g.setFont (juce::FontOptions (juce::jmin (11.0f, rowH * 0.55f)));
         g.drawText (processor.getPadName (pad), label.reduced (6.0f, 0.0f).withTrimmedLeft (30.0f), juce::Justification::centredLeft, true);
 
-        for (int s = 0; s < steps; ++s)
+        for (int s = firstStep; s < juce::jmin (steps, firstStep + visibleSteps()); ++s)
         {
             auto cell = cellBounds (row, s).reduced (1.5f);
             const bool beatStart = (s / 4) % 2 == 0;
@@ -68,7 +68,7 @@ void SequencerGrid::paint (juce::Graphics& g)
         }
     }
 
-    if (current >= 0 && current < steps)
+    if (current >= firstStep && current < juce::jmin (steps, firstStep + visibleSteps()))
     {
         auto col = cellBounds (0, current).withHeight ((float) getHeight());
         g.setColour (juce::Colours::white.withAlpha (0.6f));
@@ -159,6 +159,7 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p) : processor (p), grid (p)
         const int from = s.currentPattern.load();
         const int to = (from + 1) % Sequencer::numPatterns;
         s.setPatternData (to, s.getPatternData (from));
+        s.setClip (to, s.getClip (from)->copy()); // the piano roll part too
         s.length[(size_t) to] = s.length[(size_t) from].load();
         s.currentPattern = to;
         syncControls();
@@ -169,7 +170,7 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p) : processor (p), grid (p)
         patternBox.addItem ("Pattern " + juce::String (i + 1), i + 1);
     patternBox.onChange = [this] { processor.getSequencer().currentPattern = patternBox.getSelectedId() - 1; grid.repaint(); };
 
-    for (int len : { 4, 8, 12, 16, 24, 32 })
+    for (int len : { 4, 8, 12, 16, 24, 32, 48, 64, 96, 128 })
         lengthBox.addItem (juce::String (len) + " steps", len);
     lengthBox.onChange = [this]
     {
@@ -213,6 +214,23 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p) : processor (p), grid (p)
         addAndMakeVisible (bb);
     }
 
+    for (int i = 0; i < (int) pageButtons.size(); ++i)
+    {
+        auto& pb = pageButtons[(size_t) i];
+        pb.setButtonText (juce::String (i * SequencerGrid::stepsPerPage + 1) + "-" + juce::String ((i + 1) * SequencerGrid::stepsPerPage));
+        pb.setClickingTogglesState (true);
+        pb.setRadioGroupId (4713);
+        pb.setWantsKeyboardFocus (false);
+        pb.onClick = [this, i] { if (pageButtons[(size_t) i].getToggleState()) { followButton.setToggleState (false, juce::dontSendNotification); grid.setFirstStep (i * SequencerGrid::stepsPerPage); } };
+        addAndMakeVisible (pb);
+    }
+    followButton.setClickingTogglesState (true);
+    followButton.setWantsKeyboardFocus (false);
+    followButton.setToggleState (true, juce::dontSendNotification);
+    followButton.setColour (juce::TextButton::buttonOnColourId, colours::accent2);
+    followButton.setTooltip ("Show the page that is playing");
+    addAndMakeVisible (followButton);
+
     infoLabel.setText ("Click = step on/off   Shift+click = accent   Right-click/drag = erase   Click a pad name = audition. "
                        "With SYNC HOST on, the pattern follows your DAW transport.",
                        juce::dontSendNotification);
@@ -248,6 +266,21 @@ void SequencerPanel::syncControls()
 
 void SequencerPanel::timerCallback()
 {
+    // pages of 32 steps (only shown when the pattern is longer than 32)
+    const int steps = grid.numSteps();
+    const int pages = (steps + SequencerGrid::stepsPerPage - 1) / SequencerGrid::stepsPerPage;
+    for (int i = 0; i < (int) pageButtons.size(); ++i)
+        pageButtons[(size_t) i].setVisible (pages > 1 && i < pages);
+    followButton.setVisible (pages > 1);
+    int first = grid.getFirstStep();
+    if (first >= steps) first = 0;
+    const int cur = processor.getSequencer().currentStep.load();
+    if (followButton.getToggleState() && cur >= 0)
+        first = (cur / SequencerGrid::stepsPerPage) * SequencerGrid::stepsPerPage;
+    grid.setFirstStep (pages > 1 ? first : 0);
+    for (int i = 0; i < (int) pageButtons.size(); ++i)
+        pageButtons[(size_t) i].setToggleState (i * SequencerGrid::stepsPerPage == grid.getFirstStep(), juce::dontSendNotification);
+
     syncControls();
     grid.repaint();
 }
@@ -278,6 +311,13 @@ void SequencerPanel::resized()
     {
         bb.setBounds (bankRow.removeFromLeft (40));
         bankRow.removeFromLeft (4);
+    }
+    followButton.setBounds (bankRow.removeFromRight (80));
+    bankRow.removeFromRight (8);
+    for (int i = (int) pageButtons.size(); --i >= 0;)
+    {
+        pageButtons[(size_t) i].setBounds (bankRow.removeFromRight (70));
+        bankRow.removeFromRight (4);
     }
 
     b.removeFromTop (6);

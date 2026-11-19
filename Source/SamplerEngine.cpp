@@ -4,8 +4,11 @@
 namespace rz
 {
 //==============================================================================
-void Voice::start (int padIndex, SampleData::Ptr s, const PadSettings& ps, float velocity, double hostRate, juce::uint32 order)
+void Voice::start (int padIndex, SampleData::Ptr s, const PadSettings& ps, float velocity, double hostRate, juce::uint32 order,
+                   float transposeSemitones, int noteTag)
 {
+    transpose = transposeSemitones;
+    tag = noteTag;
     sample = std::move (s);
     settings = &ps;
     pad = padIndex;
@@ -73,7 +76,7 @@ void Voice::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& pad
     const float* srcR = sample->buffer.getReadPointer (1);
     const int len = sample->buffer.getNumSamples();
 
-    const double inc = baseRatio * std::pow (2.0, (double) settings->pitch.load() / 12.0);
+    const double inc = baseRatio * std::pow (2.0, (double) (settings->pitch.load() + transpose) / 12.0);
     const float g = juce::Decibels::decibelsToGain (settings->gainDb.load(), -80.0f) * vel;
     const float angle = (settings->pan.load() + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
     const float gl = g * std::cos (angle) * juce::MathConstants<float>::sqrt2;
@@ -213,7 +216,7 @@ bool SamplerEngine::isPadPlaying (int pad) const
     return false;
 }
 
-void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer)
+void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer, float transpose, int tag, bool poly)
 {
     if (pad < 0 || pad >= numPads)
         return;
@@ -229,9 +232,10 @@ void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer)
     if (s == nullptr || ps.mute.load())
         return;
 
-    // Each pad is monophonic: retriggering cuts the previous voice.
+    // A pad is monophonic (retriggering cuts the previous voice), unless it is played
+    // as a melodic instrument: then only the same note is cut.
     for (auto& v : voices)
-        if (v.isActive() && v.getPad() == pad)
+        if (v.isActive() && v.getPad() == pad && (! poly || (tag >= 0 && v.getTag() == tag)))
             v.fastStop();
 
     Voice* target = nullptr;
@@ -246,7 +250,7 @@ void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer)
                 target = &v;
     }
 
-    target->start (pad, s, ps, velocity, sampleRate, ++voiceCounter);
+    target->start (pad, s, ps, velocity, sampleRate, ++voiceCounter, transpose, tag);
     hitCounter[(size_t) pad]++;
 }
 
@@ -264,6 +268,17 @@ void SamplerEngine::noteOff (int pad, bool fromSequencer)
     for (auto& v : voices)
         if (v.isActive() && v.getPad() == pad)
             v.release();
+}
+
+void SamplerEngine::noteOffTag (int tag, bool force)
+{
+    for (auto& v : voices)
+        if (v.isActive() && v.getTag() == tag)
+        {
+            const auto& ps = settings[(size_t) v.getPad()];
+            if (force || ps.gate.load() || ps.loop.load())
+                v.release();
+        }
 }
 
 void SamplerEngine::allNotesOff()

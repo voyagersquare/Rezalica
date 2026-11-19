@@ -39,7 +39,50 @@ struct WarpSettings
     int loopMode = 1;           // Beats: 0 off, 1 loop forward, 2 loop back-and-forth
     float envelope = 100.0f;    // Beats: transient envelope, 100 = no fade
 
+    /** Warp markers: (source position, target position), both 0..1 of the stretched region.
+        Between markers the audio is stretched / squeezed so each marker lands on its target. */
+    std::vector<std::pair<float, float>> markers;
+
     double lengthBeats() const { return lengthInBeats (lengthIndex); }
+
+    /** Piecewise-linear time map through (0,0), the markers and (1,1). */
+    float srcToDst (float u) const { return mapThrough (u, false); }
+    float dstToSrc (float v) const { return mapThrough (v, true); }
+
+    float mapThrough (float x, bool inverse) const
+    {
+        float x0 = 0.0f, y0 = 0.0f;
+        for (size_t i = 0; i <= markers.size(); ++i)
+        {
+            const float sx = i < markers.size() ? markers[i].first : 1.0f;
+            const float sy = i < markers.size() ? markers[i].second : 1.0f;
+            const float ax = inverse ? sy : sx, ay = inverse ? sx : sy;
+            if (x <= ax || i == markers.size())
+            {
+                const float span = ax - x0;
+                return span > 1.0e-9f ? y0 + (x - x0) / span * (ay - y0) : ay;
+            }
+            x0 = ax;
+            y0 = ay;
+        }
+        return x;
+    }
+
+    juce::String markersToString() const
+    {
+        juce::StringArray a;
+        for (auto& m : markers) a.add (juce::String (m.first, 7) + ":" + juce::String (m.second, 7));
+        return a.joinIntoString (",");
+    }
+
+    void markersFromString (const juce::String& str)
+    {
+        markers.clear();
+        for (auto& t : juce::StringArray::fromTokens (str, ",", {}))
+            if (t.containsChar (':'))
+                markers.push_back ({ t.upToFirstOccurrenceOf (":", false, false).getFloatValue(),
+                                     t.fromFirstOccurrenceOf (":", false, false).getFloatValue() });
+    }
 
     juce::ValueTree toValueTree() const
     {
@@ -53,6 +96,7 @@ struct WarpSettings
         t.setProperty ("preserve", preserve, nullptr);
         t.setProperty ("loopMode", loopMode, nullptr);
         t.setProperty ("envelope", envelope, nullptr);
+        t.setProperty ("markers", markersToString(), nullptr);
         return t;
     }
 
@@ -68,13 +112,15 @@ struct WarpSettings
         w.preserve = (int) t.getProperty ("preserve", 0);
         w.loopMode = (int) t.getProperty ("loopMode", 1);
         w.envelope = (float) t.getProperty ("envelope", 100.0f);
+        w.markersFromString (t.getProperty ("markers").toString());
         return w;
     }
 
     bool sameRenderAs (const WarpSettings& o) const
     {
         return mode == o.mode && lengthIndex == o.lengthIndex && wholeSample == o.wholeSample
-            && preserve == o.preserve && loopMode == o.loopMode && std::abs (envelope - o.envelope) < 0.01f;
+            && preserve == o.preserve && loopMode == o.loopMode && std::abs (envelope - o.envelope) < 0.01f
+            && markersToString() == o.markersToString();
     }
 };
 
@@ -188,7 +234,9 @@ struct PadSettings
 class Voice
 {
 public:
-    void start (int padIndex, SampleData::Ptr s, const PadSettings& ps, float velocity, double hostRate, juce::uint32 order);
+    void start (int padIndex, SampleData::Ptr s, const PadSettings& ps, float velocity, double hostRate, juce::uint32 order,
+                float transposeSemitones = 0.0f, int noteTag = -1);
+    int getTag() const noexcept { return tag; }
     void release();
     void fastStop();
     /** Writes into padBus when the pad has effects switched on, else into dry. */
@@ -210,6 +258,8 @@ private:
     int pad = -1;
     juce::uint32 age = 0;
     bool active = false, reverse = false, loop = false;
+    float transpose = 0.0f;
+    int tag = -1;
     int s0 = 0, s1 = 0;
     double pos = 0.0, baseRatio = 1.0, sr = 44100.0;
     float vel = 1.0f, env = 0.0f, attackInc = 1.0f, releaseDec = 0.001f;
@@ -231,8 +281,12 @@ public:
 
     // ---- audio thread ----
     void syncSamples();
-    void noteOn (int pad, float velocity, bool fromSequencer);
+    /** transpose: semitones on top of the pad's pitch (piano roll / chromatic MIDI).
+        tag >= 0 identifies the note for noteOffTag(); poly = several notes of this pad may sound at once. */
+    void noteOn (int pad, float velocity, bool fromSequencer, float transpose = 0.0f, int tag = -1, bool poly = false);
     void noteOff (int pad, bool fromSequencer);
+    /** Ends the note with this tag. force: always release, else only if the pad is in gate / loop mode. */
+    void noteOffTag (int tag, bool force);
     void allNotesOff();
     void render (juce::AudioBuffer<float>& dry, std::array<juce::AudioBuffer<float>, numPads>& padBuses, int startSample, int numSamples);
     void updatePlayPositions();

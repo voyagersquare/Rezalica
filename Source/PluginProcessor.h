@@ -61,6 +61,7 @@ public:
     bool isWarpBusy() const noexcept { return warpJobs.load() > 0; }
     rz::WarpSettings getWarpSettings (int pad) const;    // current settings of the pad (or the last used ones)
     bool isPadWarped (int pad) const;
+    rz::WarpSettings suggestWarpSettings (int pad) const; // warp on, length closest to the sample at the current tempo
     double getWarpTempo (const rz::WarpSettings& s) const;
     void updateWarpTempo (bool async = false);           // re-stretches synced samples when the DAW tempo changes
 
@@ -91,6 +92,8 @@ public:
 
     void triggerPadFromUi (int pad, float velocity, bool isNoteOn);
     void stopAll() { triggerPadFromUi (-1, 0.0f, false); }
+    /** Plays the pad transposed (piano roll keyboard / note preview). */
+    void previewNoteFromUi (int pad, float velocity, float transpose, bool isNoteOn);
 
     rz::SamplerEngine& getEngine() noexcept { return engine; }
     rz::Sequencer& getSequencer() noexcept { return sequencer; }
@@ -100,16 +103,24 @@ public:
 
     std::atomic<int> selectedPad { 0 };
     std::atomic<int> currentBank { 0 }; // bank shown in the UI and played by the computer keyboard
+    std::atomic<int> chromaticPad { -1 }; // >= 0: incoming MIDI plays this pad's sample chromatically (C3 = original)
+
+    /** Moves notes recorded live into the piano roll clips (message thread). Returns true if any were added. */
+    bool collectRecordedPianoNotes();
     juce::ChangeBroadcaster padsChanged; // pad samples / settings replaced
 
 private:
-    struct UiEvent { int pad; float velocity; bool on; };
+    struct UiEvent { int pad; float velocity; bool on; bool preview = false; float transpose = 0.0f; };
+    enum EventType { evStopAll = -1, evOff = 0, evOffSeq = 1, evOffTag = 2, evOn = 10, evOnSeq = 11, evOnTag = 12 };
     struct Event
     {
         int offset;
-        int type; // 0 = off, 1 = off (seq), 2 = on, 3 = on (seq), -1 = stop all
+        int type;          // EventType: note-offs sort before note-ons at the same sample
         int pad;
         float velocity;
+        float transpose = 0.0f;
+        int tag = -1;
+        bool flag = false; // evOnTag: polyphonic, evOffTag: force release
     };
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
@@ -133,6 +144,7 @@ private:
     void prepareManualSource();
     float snapToZeroCrossing (float normalisedPosition) const;
     void addEvent (int offset, int type, int pad, float velocity);
+    void addTaggedEvent (int offset, int type, int pad, float velocity, float transpose, int tag, bool flag);
     rz::FxChain::Params readFxParams (int pad, bool padSounding) const;
 
     juce::AudioProcessorValueTreeState apvts;

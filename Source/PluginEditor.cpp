@@ -28,7 +28,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     };
 
     // ---- header ----
-    for (auto* b : { &loadChopButton, &lazyButton, &seqButton, &stopButton })
+    for (auto* b : { &loadChopButton, &lazyButton, &seqButton, &pianoRollButton, &stopButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (*b);
@@ -64,6 +64,9 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         addAndMakeVisible (bb);
     }
     seqButton.onClick = [this] { toggleSequencerWindow(); };
+    styleToggle (pianoRollButton, rz::colours::accent2);
+    pianoRollButton.setTooltip ("Piano roll: draw notes for melodic samples and drums");
+    pianoRollButton.onClick = [this] { togglePianoRoll(); };
     stopButton.onClick = [this] { processor.stopAll(); };
     loadChopButton.setTooltip ("Load an audio file onto the selected pad. Choose a chop mode to slice it.");
 
@@ -338,6 +341,7 @@ RezalicaEditor::~RezalicaEditor()
     processor.padsChanged.removeChangeListener (this);
     sequencerWindow = nullptr;
     stretchWindow = nullptr;
+    pianoRollWindow = nullptr;
     setLookAndFeel (nullptr);
 }
 
@@ -559,6 +563,20 @@ void RezalicaEditor::chooseChopFile()
     });
 }
 
+void RezalicaEditor::togglePianoRoll()
+{
+    if (pianoRollWindow == nullptr)
+    {
+        pianoRollWindow = std::make_unique<rz::PianoRollWindow> (processor, lnf);
+        pianoRollWindow->onClose = [this] { pianoRollButton.setToggleState (false, juce::dontSendNotification); };
+    }
+    const bool show = ! pianoRollWindow->isVisible();
+    pianoRollWindow->setVisible (show);
+    if (show)
+        pianoRollWindow->toFront (true);
+    pianoRollButton.setToggleState (show, juce::dontSendNotification);
+}
+
 void RezalicaEditor::showStretchWindow()
 {
     if (stretchWindow == nullptr)
@@ -676,17 +694,18 @@ void RezalicaEditor::resized()
         masterKnob.setBounds (h.removeFromRight (130).withSizeKeepingCentre (130, 44));
         h.removeFromRight (10);
         auto row = h.withSizeKeepingCentre (h.getWidth(), 30);
-        loadChopButton.setBounds (row.removeFromLeft (120)); row.removeFromLeft (6);
-        chopModeBox.setBounds (row.removeFromLeft (120)); row.removeFromLeft (6);
+        loadChopButton.setBounds (row.removeFromLeft (112)); row.removeFromLeft (6);
+        chopModeBox.setBounds (row.removeFromLeft (112)); row.removeFromLeft (6);
         if (sensitivitySlider.isVisible())
         {
-            sensitivitySlider.setBounds (row.removeFromLeft (120));
+            sensitivitySlider.setBounds (row.removeFromLeft (100));
             row.removeFromLeft (6);
         }
-        lazyButton.setBounds (row.removeFromLeft (100)); row.removeFromLeft (6);
-        sliceCountLabel.setBounds (row.removeFromLeft (130));
-        stopButton.setBounds (row.removeFromRight (90)); row.removeFromRight (6);
-        seqButton.setBounds (row.removeFromRight (110));
+        lazyButton.setBounds (row.removeFromLeft (96)); row.removeFromLeft (6);
+        stopButton.setBounds (row.removeFromRight (86)); row.removeFromRight (6);
+        pianoRollButton.setBounds (row.removeFromRight (100)); row.removeFromRight (6);
+        seqButton.setBounds (row.removeFromRight (90)); row.removeFromRight (6);
+        sliceCountLabel.setBounds (row);
     }
     b.removeFromTop (10);
 

@@ -449,6 +449,198 @@ int main (int argc, char** argv)
         renderBlocks (p, 2);
     }
 
+    // ---- Step sequencer: 128 steps ----
+    {
+        auto& sq = p.getSequencer();
+        sq.syncToHost = false;
+        sq.bpm = 240.0f;              // 1 step = 1/16 at 240 BPM = 62.5 ms
+        sq.length[0] = 128;
+        sq.setStep (0, 0, 100, 100);  // step 101 of 128
+        // only step 101 should play: mute the other steps of pad A1 for this test
+        std::array<juce::uint8, 16> saved {};
+        for (int st = 0; st < 16; ++st) { saved[(size_t) st] = sq.getStep (0, 0, st); sq.setStep (0, 0, st, 0); }
+        const int before = p.getEngine().hitCounter[0].load();
+        sq.internalPlay = true;
+        renderBlocks (p, (int) (48000 * 6.3 / 512)); // 6.3 s > 100 steps
+        sq.internalPlay = false;
+        renderBlocks (p, 20);
+        for (int st = 0; st < 16; ++st) sq.setStep (0, 0, st, saved[(size_t) st]);
+        check (p.getEngine().hitCounter[0].load() == before + 1, "128-step pattern plays step 101");
+
+        juce::MemoryBlock old (64 * 32);
+        old.fillWith (0);
+        static_cast<juce::uint8*> (old.getData())[5 * 32 + 7] = 90; // pad A6, step 8 in the old 32-step layout
+        sq.setPatternData (1, old, 32);
+        check (sq.getStep (1, 5, 7) == 90 && sq.getStep (1, 5, 39) == 0, "old 32-step projects load correctly");
+        sq.clearPattern (1);
+        sq.setStep (0, 0, 100, 0);
+        sq.length[0] = 16;
+        sq.bpm = 120.0f;
+    }
+
+    // ---- Piano roll ----
+    {
+        auto& sq = p.getSequencer();
+        // a 440 Hz tone on pad A2 for pitch checks
+        auto toneFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_tone.wav");
+        {
+            juce::AudioBuffer<float> b (1, 44100 * 2);
+            for (int i = 0; i < b.getNumSamples(); ++i)
+                b.setSample (0, i, 0.5f * std::sin (juce::MathConstants<float>::twoPi * 440.0f * (float) i / 44100.0f));
+            juce::WavAudioFormat wav;
+            toneFile.deleteFile();
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (toneFile), 44100, 1, 16, {}, 0));
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+        }
+        p.loadFileToPad (1, toneFile);
+
+        auto renderCollect = [&] (double seconds)
+        {
+            const int blocks = (int) (48000 * seconds / 512);
+            juce::AudioBuffer<float> out (2, blocks * 512), blk (2, 512);
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer m;
+                p.processBlock (blk, m);
+                for (int ch = 0; ch < 2; ++ch) out.copyFrom (ch, b * 512, blk, ch, 0, 512);
+            }
+            return out;
+        };
+        auto zeroRate = [] (const juce::AudioBuffer<float>& b, int from, int to)
+        {
+            int z = 0;
+            for (int i = from + 1; i < to; ++i)
+                if ((b.getSample (0, i - 1) < 0.0f) != (b.getSample (0, i) < 0.0f)) ++z;
+            return (double) z / (to - from);
+        };
+
+        sq.syncToHost = false;
+        sq.bpm = 120.0f;                 // 1 step = 125 ms
+        sq.length[3] = 16;
+        sq.currentPattern = 3;
+
+        // melodic: C3 = original pitch, C4 = one octave up; notes last as long as drawn
+        rz::NoteClip::Ptr clip = new rz::NoteClip();
+        clip->mode = rz::NoteClip::melodic;
+        clip->targetPad = 1;
+        rz::PianoNote a; a.id = sq.newNoteId(); a.kind = rz::NoteClip::melodic; a.row = 60; a.start = 0; a.length = 4;  a.velocity = 100;
+        rz::PianoNote b = a; b.id = sq.newNoteId(); b.row = 72; b.start = 8;
+        clip->notes = { a, b };
+        sq.setClip (3, clip);
+        sq.internalPlay = true;
+        auto out = renderCollect (2.0);  // 16 steps
+        sq.internalPlay = false;
+        renderCollect (0.2);
+        const double zLow = zeroRate (out, 2400, 21000);          // note C3 (0 .. 0.5 s)
+        const double zHigh = zeroRate (out, 48000 + 2400, 69000);  // note C4 (1.0 .. 1.5 s)
+        const float gap = out.getMagnitude (0, 31000, 12000);       // 0.65 .. 0.9 s: between the notes
+        std::cout << "       piano roll: C4/C3 pitch ratio " << zHigh / zLow << ", level between notes " << gap << "\n";
+        check (std::abs (zHigh / zLow - 2.0) < 0.03, "melodic notes play the sample chromatically (C4 = octave up)");
+        check (gap < 0.01f, "melodic notes stop at their end (note length)");
+
+        // chord: two notes at once on the same pad (polyphonic)
+        rz::NoteClip::Ptr chord = clip->copy();
+        rz::PianoNote c1 = a; c1.id = sq.newNoteId(); c1.row = 64; c1.start = 0;
+        chord->notes = { a, c1 };
+        sq.setClip (3, chord);
+        sq.internalPlay = true;
+        auto chordOut = renderCollect (0.4);
+        sq.internalPlay = false;
+        renderCollect (0.2);
+        check (chordOut.getRMSLevel (0, 4800, 9600) > out.getRMSLevel (0, 4800, 9600) * 1.2f, "melodic notes are polyphonic (chords)");
+
+        // drum notes: rows are pads
+        rz::NoteClip::Ptr drums = new rz::NoteClip();
+        rz::PianoNote d; d.id = sq.newNoteId(); d.kind = rz::NoteClip::drum; d.row = 0; d.start = 2; d.length = 1; d.velocity = 120;
+        drums->notes = { d };
+        sq.setClip (3, drums);
+        const int padHits = p.getEngine().hitCounter[0].load();
+        sq.internalPlay = true;
+        renderCollect (0.6);
+        sq.internalPlay = false;
+        renderCollect (0.2);
+        check (p.getEngine().hitCounter[0].load() == padHits + 1, "drum notes in the piano roll trigger their pad");
+
+        // chromatic MIDI keys + recording into the piano roll
+        sq.setClip (3, new rz::NoteClip());
+        p.chromaticPad = 1;
+        sq.pianoRecording = true;
+        sq.internalPlay = true;
+        {
+            juce::AudioBuffer<float> blk (2, 512);
+            for (int bi = 0; bi < 120; ++bi)
+            {
+                juce::MidiBuffer m;
+                if (bi == 10) m.addEvent (juce::MidiMessage::noteOn (1, 67, (juce::uint8) 90), 0);
+                if (bi == 40) m.addEvent (juce::MidiMessage::noteOff (1, 67), 0);
+                p.processBlock (blk, m);
+                if (bi == 20)
+                    check (p.getEngine().isPadSounding (1), "MIDI keys play the chosen pad chromatically");
+            }
+        }
+        sq.internalPlay = false;
+        sq.pianoRecording = false;
+        p.chromaticPad = -1;
+        renderCollect (0.2);
+        p.collectRecordedPianoNotes();
+        auto rec = sq.getClip (3);
+        const bool recOk = rec->notes.size() == 1 && rec->notes[0].row == 67 && rec->notes[0].kind == rz::NoteClip::melodic
+                        && std::abs (rec->notes[0].length - 30 * 512 / 6000.0f) < 0.3f;
+        if (! rec->notes.empty())
+            std::cout << "       recorded note: row " << rec->notes[0].row << " start " << rec->notes[0].start << " length " << rec->notes[0].length << " steps\n";
+        check (recOk, "REC records MIDI notes into the piano roll with their length");
+
+        // the piano roll is saved with the project
+        juce::MemoryBlock st;
+        p.getStateInformation (st);
+        RezalicaProcessor r2;
+        r2.setStateInformation (st.getData(), (int) st.getSize());
+        auto rc = r2.getSequencer().getClip (3);
+        check (rc->notes.size() == 1 && rc->notes[0].row == 67 && rc->notes[0].kind == rz::NoteClip::melodic, "piano roll notes are saved with the project");
+
+        sq.setClip (3, new rz::NoteClip());
+        p.clearPad (1);
+        sq.currentPattern = 0;
+        toneFile.deleteFile();
+    }
+
+    // ---- Warp markers ----
+    {
+        p.chopFileToPads (file, RezalicaProcessor::chop8);
+        auto& sq = p.getSequencer();
+        sq.syncToHost = false;
+        sq.bpm = 120.0f;
+        renderBlocks (p, 2);
+        rz::WarpSettings w;
+        w.enabled = true;
+        w.mode = rz::WarpSettings::beats;
+        w.lengthIndex = 3;           // 2 bars = 4 s at 120 BPM
+        w.wholeSample = true;
+        w.loopMode = 0;
+        w.markers = { { 0.25f, 0.4f } }; // the 3rd hit (at 1/4 of the loop) is moved to 40 %
+        p.setWarp (2, w);
+        auto ws = p.getEngine().getPadSample (2);
+        const int len = ws->buffer.getNumSamples();
+        const int at = (int) (0.4f * len);
+        const bool hitMoved = ws->buffer.getMagnitude (0, at, 600) > 0.3f && ws->buffer.getMagnitude (0, (int) (0.25f * len), 600) < 0.01f;
+        check (len == 4 * 44100 && hitMoved, "warp marker moves its hit to the new position");
+        check (std::abs (p.getEngine().getPad (2).start.load() - 0.4f) < 0.002f && std::abs (p.getEngine().getPad (1).end.load() - 0.4f) < 0.002f,
+               "slices follow the warp marker");
+        // between the marker and the end the audio is stretched evenly: 4th hit (3/8) -> 0.4 + 0.125/0.75 * 0.6 = 0.5
+        check (ws->buffer.getMagnitude (0, (int) (0.5f * len), 600) > 0.3f, "audio between warp markers is stretched evenly");
+
+        w.mode = rz::WarpSettings::complex;
+        p.setWarp (2, w);
+        auto wc = p.getEngine().getPadSample (2);
+        check (wc->buffer.getNumSamples() == 4 * 44100 && std::isfinite (wc->buffer.getMagnitude (0, 0, wc->buffer.getNumSamples())),
+               "complex mode follows warp markers too");
+
+        w.enabled = false;
+        p.setWarp (2, w);
+        check (std::abs (p.getEngine().getPad (2).start.load() - 0.25f) < 0.002f, "warp off puts the slices back");
+        for (auto f : { ws->renderedFile, wc->renderedFile }) { for (int i = 0; i < 40 && ! f.existsAsFile(); ++i) juce::Thread::sleep (50); juce::Thread::sleep (100); f.deleteFile(); }
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);
@@ -506,6 +698,52 @@ int main (int argc, char** argv)
         save (panel, "sequencer.png");
         panel.setLookAndFeel (nullptr);
 
+        {
+            auto& qs = q.getSequencer();
+            rz::NoteClip::Ptr c = new rz::NoteClip();
+            c->mode = rz::NoteClip::melodic;
+            c->targetPad = 2;
+            const int mel[] { 60, 63, 67, 70, 72, 67, 63, 65 };
+            for (int k = 0; k < 8; ++k)
+            {
+                rz::PianoNote n; n.id = qs.newNoteId(); n.kind = rz::NoteClip::melodic; n.row = mel[k];
+                n.start = (float) (k * 2); n.length = k % 3 == 0 ? 3.0f : 1.5f; n.velocity = (juce::uint8) (60 + k * 8);
+                c->notes.push_back (n);
+            }
+            for (int k = 0; k < 16; k += 4)
+            {
+                rz::PianoNote n; n.id = qs.newNoteId(); n.kind = rz::NoteClip::drum; n.row = k % 8 == 0 ? 0 : 4; n.start = (float) k; n.length = 1.0f;
+                c->notes.push_back (n);
+            }
+            qs.setClip (0, c);
+            rz::PianoRollPanel pr (q);
+            pr.setLookAndFeel (&lnf);
+            pr.setSize (1180, 680);
+            save (pr, "pianoroll.png");
+            pr.setLookAndFeel (nullptr);
+
+            qs.length[0] = 128;
+            rz::SequencerPanel sp128 (q);
+            sp128.setLookAndFeel (&lnf);
+            save (sp128, "sequencer128.png");
+            sp128.setLookAndFeel (nullptr);
+            qs.length[0] = 16;
+        }
+        {
+            q.selectedPad = 0;
+            q.chopFileToPads (file, RezalicaProcessor::chopTransients);
+            q.getSequencer().syncToHost = false;
+            q.getSequencer().bpm = 120.0f;
+            juce::AudioBuffer<float> blk (2, 512); juce::MidiBuffer mm; q.processBlock (blk, mm);
+            rz::WarpSettings ww; ww.enabled = true; ww.lengthIndex = 3; ww.markers = { { 0.25f, 0.4f } };
+            q.setWarp (0, ww);
+            rz::WaveformView wvw (q);
+            wvw.setLookAndFeel (&lnf);
+            wvw.setSize (900, 260);
+            wvw.setPad (0);
+            save (wvw, "warpview.png");
+            wvw.setLookAndFeel (nullptr);
+        }
         {
             rz::StretchPanel sp (q);
             sp.setLookAndFeel (&lnf);

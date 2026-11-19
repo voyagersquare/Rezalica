@@ -16,9 +16,15 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
+    static constexpr int stepsPerPage = 32;
+    void setFirstStep (int s) { if (s != firstStep) { firstStep = s; repaint(); } }
+    int getFirstStep() const noexcept { return firstStep; }
+    int numSteps() const;
+
 private:
     static constexpr int labelWidth = 120;
-    int numSteps() const;
+    int visibleSteps() const { return juce::jmax (1, juce::jmin (stepsPerPage, numSteps() - firstStep)); }
+    int firstStep = 0;
     bool cellAt (juce::Point<int> pos, int& pad, int& step) const;
     juce::Rectangle<float> cellBounds (int pad, int step) const;
 
@@ -48,6 +54,8 @@ private:
     juce::Slider bpmSlider, swingSlider;
     juce::Label bpmLabel, swingLabel, patternLabel, lengthLabel, infoLabel;
     std::array<juce::TextButton, numBanks> bankButtons;
+    std::array<juce::TextButton, Sequencer::maxSteps / SequencerGrid::stepsPerPage> pageButtons;
+    juce::TextButton followButton { "FOLLOW" };
     SequencerGrid grid;
 };
 

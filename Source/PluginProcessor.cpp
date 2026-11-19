@@ -72,6 +72,39 @@ void RezalicaProcessor::addEvent (int offset, int type, int pad, float velocity)
         events[(size_t) numEvents++] = { offset, type, pad, velocity };
 }
 
+void RezalicaProcessor::addTaggedEvent (int offset, int type, int pad, float velocity, float transpose, int tag, bool flag)
+{
+    if (numEvents < (int) events.size())
+        events[(size_t) numEvents++] = { offset, type, pad, velocity, transpose, tag, flag };
+}
+
+bool RezalicaProcessor::collectRecordedPianoNotes()
+{
+    auto notes = sequencer.takeRecordedNotes();
+    if (notes.empty())
+        return false;
+
+    std::array<rz::NoteClip::Ptr, rz::Sequencer::numPatterns> changed;
+    for (auto& r : notes)
+    {
+        auto& c = changed[(size_t) r.pattern];
+        if (c == nullptr)
+            c = sequencer.getClip (r.pattern)->copy();
+        rz::PianoNote n;
+        n.id = sequencer.newNoteId();
+        n.start = r.start;
+        n.length = r.length;
+        n.row = r.row;
+        n.velocity = r.velocity;
+        n.kind = r.kind;
+        c->notes.push_back (n);
+    }
+    for (int i = 0; i < rz::Sequencer::numPatterns; ++i)
+        if (changed[(size_t) i] != nullptr)
+            sequencer.setClip (i, changed[(size_t) i]);
+    return true;
+}
+
 const juce::StringArray& RezalicaProcessor::getDelayDivisionNames()
 {
     return delayDivisions;
@@ -138,26 +171,38 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     {
         auto& p = pendingSeqOff[(size_t) pad];
         if (p < 0.0) continue;
-        if (p < numSamples) { addEvent ((int) p, 1, pad, 0.0f); p = -1.0; }
+        if (p < numSamples) { addEvent ((int) p, evOffSeq, pad, 0.0f); p = -1.0; }
     }
 
     const bool wasRunning = sequencer.isRunning();
-    sequencer.process (position, numSamples, [&] (int pad, float vel, int offset)
-    {
-        addEvent (offset, 3, pad, vel);
-        pendingSeqOff[(size_t) pad] = offset + sequencer.getSamplesPerStep() * 0.98;
-    });
+    sequencer.process (position, numSamples,
+        [&] (int pad, float vel, int offset)                       // step sequencer hit
+        {
+            addEvent (offset, evOnSeq, pad, vel);
+            pendingSeqOff[(size_t) pad] = offset + sequencer.getSamplesPerStep() * 0.98;
+        },
+        [&] (int mode, int row, float vel, int offset, int tag, int targetPad)   // piano roll note on
+        {
+            if (mode == rz::NoteClip::melodic)
+                addTaggedEvent (offset, evOnTag, targetPad, vel, (float) (row - 60), tag, true);
+            else if (row >= 0 && row < rz::numPads)
+                addTaggedEvent (offset, evOnTag, row, vel, 0.0f, tag, false);
+        },
+        [&] (int mode, int, int offset, int tag, int)              // piano roll note off
+        {
+            addTaggedEvent (offset, evOffTag, -1, 0.0f, 0.0f, tag, mode == rz::NoteClip::melodic);
+        });
 
     if (wasRunning && ! sequencer.isRunning())
     {
         for (int pad = 0; pad < rz::numPads; ++pad)
-            if (pendingSeqOff[(size_t) pad] >= 0.0) { addEvent (0, 1, pad, 0.0f); pendingSeqOff[(size_t) pad] = -1.0; }
+            if (pendingSeqOff[(size_t) pad] >= 0.0) { addEvent (0, evOffSeq, pad, 0.0f); pendingSeqOff[(size_t) pad] = -1.0; }
     }
 
     for (int pad = 0; pad < rz::numPads; ++pad)
     {
         auto& p = pendingSeqOff[(size_t) pad];
-        if (p >= 0.0 && p < numSamples) { addEvent ((int) p, 1, pad, 0.0f); p = -1.0; }
+        if (p >= 0.0 && p < numSamples) { addEvent ((int) p, evOffSeq, pad, 0.0f); p = -1.0; }
         else if (p >= numSamples) p -= numSamples;
     }
 
@@ -167,9 +212,25 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         reader.forEach ([&] (int i)
         {
             const auto& e = uiEvents[(size_t) i];
-            if (e.pad < 0) { addEvent (0, -1, -1, 0.0f); return; }
-            addEvent (0, e.on ? 2 : 0, e.pad, e.velocity);
-            if (e.on) sequencer.recordHit (e.pad, e.velocity, 0);
+            if (e.pad < 0) { addEvent (0, evStopAll, -1, 0.0f); return; }
+            if (e.preview)
+            {
+                // piano roll keyboard / note preview: melodic, tagged so it can be released
+                const int tag = (1 << 29) + juce::roundToInt (e.transpose) + 128;
+                if (e.on) addTaggedEvent (0, evOnTag, e.pad, e.velocity, e.transpose, tag, true);
+                else      addTaggedEvent (0, evOffTag, -1, 0.0f, 0.0f, tag, true);
+                return;
+            }
+            addEvent (0, e.on ? evOn : evOff, e.pad, e.velocity);
+            if (e.on)
+            {
+                sequencer.recordHit (e.pad, e.velocity, 0);
+                sequencer.recordPianoNoteOn (e.pad, e.velocity, 0, false);
+            }
+            else
+            {
+                sequencer.recordPianoNoteOff (e.pad, 0, false);
+            }
         });
     }
 
@@ -179,24 +240,42 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         const auto m = meta.getMessage();
         const int offset = juce::jlimit (0, numSamples - 1, meta.samplePosition);
 
-        if (m.isNoteOn())
+        const int chromatic = chromaticPad.load();
+
+        if (m.isNoteOn() && chromatic >= 0 && chromatic < rz::numPads)
+        {
+            // melodic: every key plays the chosen pad, C3 (60) = original pitch
+            const int note = m.getNoteNumber();
+            addTaggedEvent (offset, evOnTag, chromatic, m.getFloatVelocity(), (float) (note - 60), rz::Sequencer::midiTagBase + note, true);
+            sequencer.recordPianoNoteOn (note, m.getFloatVelocity(), offset, true);
+        }
+        else if (m.isNoteOff() && chromatic >= 0 && chromatic < rz::numPads)
+        {
+            addTaggedEvent (offset, evOffTag, -1, 0.0f, 0.0f, rz::Sequencer::midiTagBase + m.getNoteNumber(), true);
+            sequencer.recordPianoNoteOff (m.getNoteNumber(), offset, true);
+        }
+        else if (m.isNoteOn())
         {
             const int pad = m.getNoteNumber() - midiBaseNote;
             if (pad >= 0 && pad < rz::numPads)
             {
-                addEvent (offset, 2, pad, m.getFloatVelocity());
+                addEvent (offset, evOn, pad, m.getFloatVelocity());
                 sequencer.recordHit (pad, m.getFloatVelocity(), offset);
+                sequencer.recordPianoNoteOn (pad, m.getFloatVelocity(), offset, false);
             }
         }
         else if (m.isNoteOff())
         {
             const int pad = m.getNoteNumber() - midiBaseNote;
             if (pad >= 0 && pad < rz::numPads)
-                addEvent (offset, 0, pad, 0.0f);
+            {
+                addEvent (offset, evOff, pad, 0.0f);
+                sequencer.recordPianoNoteOff (pad, offset, false);
+            }
         }
         else if (m.isAllNotesOff() || m.isAllSoundOff())
         {
-            addEvent (offset, -1, -1, 0.0f);
+            addEvent (offset, evStopAll, -1, 0.0f);
         }
     }
     midi.clear();
@@ -216,10 +295,16 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
         switch (e.type)
         {
-            case -1: engine.allNotesOff(); sequencer.internalPlay = false; break;
-            case 0:  engine.noteOff (e.pad, false); break;
-            case 1:  engine.noteOff (e.pad, true); break;
-            case 2:
+            case evStopAll: engine.allNotesOff(); sequencer.internalPlay = false; break;
+            case evOff:     engine.noteOff (e.pad, false); break;
+            case evOffSeq:  engine.noteOff (e.pad, true); break;
+            case evOffTag:  engine.noteOffTag (e.tag, e.flag); break;
+            case evOnTag:
+                if (lazyActive.load() && e.tag >= rz::Sequencer::midiTagBase)
+                    break;
+                engine.noteOn (e.pad, e.velocity, e.tag < rz::Sequencer::midiTagBase, e.transpose, e.tag, e.flag);
+                break;
+            case evOn:
                 if (lazyActive.load())
                 {
                     const float pos = engine.getPreviewPositionNow();
@@ -234,7 +319,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                     engine.noteOn (e.pad, e.velocity, false);
                 }
                 break;
-            case 3:  engine.noteOn (e.pad, e.velocity, true); break;
+            case evOnSeq:   engine.noteOn (e.pad, e.velocity, true); break;
             default: break;
         }
     }
@@ -290,6 +375,12 @@ void RezalicaProcessor::triggerPadFromUi (int pad, float velocity, bool isNoteOn
 {
     auto writer = uiFifo.write (1);
     writer.forEach ([&] (int i) { uiEvents[(size_t) i] = { pad, velocity, isNoteOn }; });
+}
+
+void RezalicaProcessor::previewNoteFromUi (int pad, float velocity, float transpose, bool isNoteOn)
+{
+    auto writer = uiFifo.write (1);
+    writer.forEach ([&] (int i) { uiEvents[(size_t) i] = { pad, velocity, isNoteOn, true, transpose }; });
 }
 
 rz::SampleData::Ptr RezalicaProcessor::loadSample (const juce::File& file)
@@ -826,10 +917,21 @@ juce::AudioBuffer<float> RezalicaProcessor::computeStretch (const rz::SampleData
     const double seconds = settings.lengthBeats() * 60.0 / bpm;
     const int outLen = juce::jlimit (16, (int) (source.sampleRate * 60.0 * 10.0), (int) std::llround (seconds * source.sampleRate));
 
+    // warp markers: piecewise time map between the region (input) and the stretched result (output)
+    const double inLen = region.getNumSamples();
+    const double outLenD = outLen;
+    const auto ws = settings;
+    rz::stretch::TimeMap outForIn, inForOut;
+    if (! ws.markers.empty())
+    {
+        outForIn = [ws, inLen, outLenD] (double i) { return (double) ws.srcToDst ((float) (i / inLen)) * outLenD; };
+        inForOut = [ws, inLen, outLenD] (double o) { return (double) ws.dstToSrc ((float) (o / outLenD)) * inLen; };
+    }
+
     return settings.mode == rz::WarpSettings::complex
-         ? rz::stretch::complex (region, source.sampleRate, outLen)
+         ? rz::stretch::complex (region, source.sampleRate, outLen, inForOut)
          : rz::stretch::beats (region, source.sampleRate, outLen, settings.preserve, settings.loopMode,
-                               settings.envelope, settings.lengthBeats());
+                               settings.envelope, settings.lengthBeats(), outForIn);
 }
 
 rz::SampleData::Ptr RezalicaProcessor::renderWarp (const rz::SampleData::Ptr& source, float regionStart, float regionEnd,
@@ -872,8 +974,9 @@ void RezalicaProcessor::warpRegionFor (int pad, const rz::WarpSettings& settings
     if (current != nullptr && current->isWarped())
     {
         base = current->warpSource;
-        st = current->regionStart + st * (current->regionEnd - current->regionStart);
-        en = current->regionStart + en * (current->regionEnd - current->regionStart);
+        const float span = current->regionEnd - current->regionStart;
+        st = current->regionStart + current->warp.dstToSrc (st) * span;
+        en = current->regionStart + current->warp.dstToSrc (en) * span;
     }
     ra = settings.wholeSample ? 0.0f : st;
     rb = settings.wholeSample ? 1.0f : en;
@@ -932,7 +1035,8 @@ bool RezalicaProcessor::setWarp (int pad, rz::WarpSettings settings, const juce:
     {
         base = current->warpSource;
         const float ra = current->regionStart, rb = current->regionEnd;
-        auto mapBack = [ra, rb] (float p) { return ra + p * (rb - ra); };
+        const auto oldWarp = current->warp;
+        auto mapBack = [ra, rb, oldWarp] (float p) { return ra + oldWarp.dstToSrc (p) * (rb - ra); };
         for (int i = 0; i < rz::numPads; ++i)
             if (engine.getPadSample (i) == current)
             {
@@ -958,6 +1062,16 @@ bool RezalicaProcessor::setWarp (int pad, rz::WarpSettings settings, const juce:
 
         if (settings.wholeSample)
         {
+            // slices follow the audio through the warp markers
+            for (int i = 0; i < rz::numPads; ++i)
+                if (engine.getPadSample (i) == base)
+                {
+                    auto& pp = engine.getPad (i);
+                    pp.start = settings.srcToDst (pp.start.load());
+                    pp.end = settings.srcToDst (pp.end.load());
+                }
+            if (chopSource == base)
+                for (auto& sp : slicePoints) sp = settings.srcToDst (sp);
             replaceSampleOnPads (base, warped);
         }
         else
@@ -971,6 +1085,29 @@ bool RezalicaProcessor::setWarp (int pad, rz::WarpSettings settings, const juce:
 
     padsChanged.sendChangeMessage();
     return true;
+}
+
+rz::WarpSettings RezalicaProcessor::suggestWarpSettings (int pad) const
+{
+    auto w = lastWarpSettings;
+    w.enabled = true;
+    w.wholeSample = true;
+    w.markers.clear();
+    if (auto s = engine.getPadSample (pad))
+    {
+        auto base = s->isWarped() ? s->warpSource : s;
+        const double seconds = base->buffer.getNumSamples() / base->sampleRate;
+        const double beats = seconds * getWarpTempo (w) / 60.0;
+        int best = 0;
+        double bestDist = 1.0e9;
+        for (int i = 0; i < rz::WarpSettings::lengthNames().size(); ++i)
+        {
+            const double d = std::abs (std::log (rz::WarpSettings::lengthInBeats (i) / juce::jmax (1.0e-3, beats)));
+            if (d < bestDist) { bestDist = d; best = i; }
+        }
+        w.lengthIndex = best;
+    }
+    return w;
 }
 
 void RezalicaProcessor::updateWarpTempo (bool async)
@@ -1084,6 +1221,7 @@ void RezalicaProcessor::pastePad (int pad)
 
 void RezalicaProcessor::timerCallback()
 {
+    collectRecordedPianoNotes();
     updateWarpTempo (true);
 
     // Free samples nobody uses anymore (only the pool holds a reference).
@@ -1098,6 +1236,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
     juce::ValueTree root ("REZALICA");
     root.setProperty ("version", 1, nullptr);
     root.setProperty ("selectedPad", selectedPad.load(), nullptr);
+    root.setProperty ("chromaticPad", chromaticPad.load(), nullptr);
     root.setProperty ("bank", currentBank.load(), nullptr);
     root.appendChild (apvts.copyState(), nullptr);
 
@@ -1154,6 +1293,8 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         pat.setProperty ("index", i, nullptr);
         pat.setProperty ("length", sequencer.length[(size_t) i].load(), nullptr);
         pat.setProperty ("steps", sequencer.getPatternData (i).toBase64Encoding(), nullptr);
+        pat.setProperty ("stride", rz::Sequencer::maxSteps, nullptr);
+        pat.appendChild (sequencer.getClip (i)->toValueTree(), nullptr);
         seq.appendChild (pat, nullptr);
     }
     root.appendChild (seq, nullptr);
@@ -1188,6 +1329,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         apvts.replaceState (params);
 
     selectedPad = juce::jlimit (0, rz::numPads - 1, (int) root.getProperty ("selectedPad", 0));
+    chromaticPad = juce::jlimit (-1, rz::numPads - 1, (int) root.getProperty ("chromaticPad", -1));
     currentBank = juce::jlimit (0, rz::numBanks - 1, (int) root.getProperty ("bank", 0));
 
     auto pads = root.getChildWithName ("PADS");
@@ -1283,7 +1425,11 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
             sequencer.length[(size_t) i] = juce::jlimit (1, rz::Sequencer::maxSteps, (int) pat.getProperty ("length", 16));
             juce::MemoryBlock mb;
             mb.fromBase64Encoding (pat.getProperty ("steps").toString());
-            sequencer.setPatternData (i, mb);
+            sequencer.setPatternData (i, mb, (int) pat.getProperty ("stride", 32));
+            if (auto clip = pat.getChildWithName ("CLIP"); clip.isValid())
+                sequencer.setClip (i, rz::NoteClip::fromValueTree (clip, sequencer.noteIdCounter()));
+            else
+                sequencer.setClip (i, new rz::NoteClip());
         }
     }
 

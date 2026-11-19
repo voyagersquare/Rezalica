@@ -3,6 +3,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <vector>
 #include <cmath>
+#include <functional>
 
 /** Offline time stretching (pitch stays the same).
 
@@ -15,6 +16,9 @@
               which keeps tones smooth and attacks reasonably sharp. */
 namespace rz::stretch
 {
+/** Maps an input sample position to an output sample position (monotonic). */
+using TimeMap = std::function<double (double)>;
+
 /** Onset positions in samples (always starts with 0), refined to the start of each attack. */
 inline std::vector<int> findOnsets (const juce::AudioBuffer<float>& in, double sampleRate)
 {
@@ -97,7 +101,8 @@ inline std::vector<int> findOnsets (const juce::AudioBuffer<float>& in, double s
 /** Beats mode. preserve: 0 transients, 1 = 1/8 grid, 2 = 1/16 grid.
     loopMode: 0 off, 1 forward, 2 back-and-forth. envelope: 0..100 (100 = no fade). */
 inline juce::AudioBuffer<float> beats (const juce::AudioBuffer<float>& in, double sampleRate, int outLen,
-                                       int preserve, int loopMode, float envelope, double lengthBeats)
+                                       int preserve, int loopMode, float envelope, double lengthBeats,
+                                       TimeMap outForIn = nullptr)
 {
     const int inLen = in.getNumSamples();
     juce::AudioBuffer<float> out (2, juce::jmax (1, outLen));
@@ -132,8 +137,8 @@ inline juce::AudioBuffer<float> beats (const juce::AudioBuffer<float>& in, doubl
         if (segLen <= 0)
             continue;
 
-        const int o0 = (int) std::llround (b0 * ratio);
-        const int o1 = (i + 2 == bounds.size()) ? outLen : (int) std::llround (b1 * ratio);
+        const int o0 = (int) std::llround (outForIn != nullptr ? outForIn ((double) b0) : b0 * ratio);
+        const int o1 = (i + 2 == bounds.size()) ? outLen : (int) std::llround (outForIn != nullptr ? outForIn ((double) b1) : b1 * ratio);
         const int outSeg = juce::jmin (o1, outLen) - o0;
         if (outSeg <= 0)
             continue;
@@ -210,7 +215,8 @@ inline juce::AudioBuffer<float> beats (const juce::AudioBuffer<float>& in, doubl
 /** Complex mode: phase vocoder with identity phase locking.
     The phases are computed once on the mid signal; left and right are rotated by the same
     amount, which keeps the stereo image intact and only needs one phase calculation. */
-inline juce::AudioBuffer<float> complex (const juce::AudioBuffer<float>& in, double sampleRate, int outLen)
+inline juce::AudioBuffer<float> complex (const juce::AudioBuffer<float>& in, double sampleRate, int outLen,
+                                        TimeMap inForOut = nullptr)
 {
     const int inLen = in.getNumSamples();
     juce::AudioBuffer<float> out (2, juce::jmax (1, outLen));
@@ -239,7 +245,15 @@ inline juce::AudioBuffer<float> complex (const juce::AudioBuffer<float>& in, dou
         xr[(size_t) (pad + i)] = in.getSample (juce::jmin (1, in.getNumChannels() - 1), i);
     }
 
-    const int outPadLen = (int) std::ceil (padLen * ratio) + N + hs;
+    const int outPadLen = outLen + 2 * pad + N;
+
+    // output position -> input position, both in the padded domains (padding keeps a 1:1 speed)
+    auto inputFor = [&] (double t)
+    {
+        if (t < pad) return t;
+        if (t < pad + outLen) return pad + (inForOut != nullptr ? inForOut (t - pad) : (t - pad) / ratio);
+        return pad + inLen + (t - pad - outLen);
+    };
     std::vector<float> yl ((size_t) outPadLen, 0.0f), yr ((size_t) outPadLen, 0.0f);
 
     // FFT round trip scale and the window overlap gain (sum of hann^2 at 87.5 % overlap = 3)
@@ -263,16 +277,17 @@ inline juce::AudioBuffer<float> complex (const juce::AudioBuffer<float>& in, dou
         return a - juce::MathConstants<float>::twoPi * std::floor ((a + juce::MathConstants<float>::pi) / juce::MathConstants<float>::twoPi);
     };
 
+    juce::ignoreUnused (ha);
     int prevStart = 0;
     float prevEnergy = 0.0f;
-    const int numFrames = (int) std::floor ((padLen - N) / ha) + 1;
 
-    for (int m = 0; m < numFrames; ++m)
+    for (int m = 0;; ++m)
     {
-        const int start = (int) std::llround (m * ha);
         const int ts = m * hs;
-        if (start + N > padLen || ts + N > outPadLen)
+        if (ts + N > outPadLen)
             break;
+        // the frame centre follows the time map, so the stretch can change from marker to marker
+        const int start = juce::jlimit (0, padLen - N, (int) std::llround (inputFor (ts + N * 0.5) - N * 0.5));
 
         // analysis: L and R spectra, mid = (L + R) / 2 in the frequency domain
         std::fill (bl.begin(), bl.end(), 0.0f);
@@ -307,11 +322,11 @@ inline juce::AudioBuffer<float> complex (const juce::AudioBuffer<float>& in, dou
         const bool onset = m > 0 && energy > 3.0f * prevEnergy && energy > 1.0e-3f;
         const int hopA = start - prevStart;
 
-        if (m == 0 || onset || hopA <= 0)
+        if (m == 0 || onset)
         {
             synPhase = phase; // phase reset keeps attacks sharp
         }
-        else if (peaks.empty())
+        else if (peaks.empty() || hopA <= 0)
         {
             for (int k = 0; k <= half; ++k)
                 synPhase[(size_t) k] = wrap (synPhase[(size_t) k] + juce::MathConstants<float>::twoPi * (float) k * (float) hs / (float) N);
@@ -372,7 +387,7 @@ inline juce::AudioBuffer<float> complex (const juce::AudioBuffer<float>& in, dou
         }
     }
 
-    const int offset = (int) std::llround (pad * ratio);
+    const int offset = pad;
     for (int i = 0; i < outLen; ++i)
     {
         const int j = offset + i;
