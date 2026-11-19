@@ -51,6 +51,9 @@ private:
     const WarpSettings& shownWarp() const { return warpPreview ? warpWorking : sample->warp; }
     float displayPos (float v) const;       // stored position -> position shown during a pending warp
     void startWarpDrag (float x);
+    bool beginPendingWarpMarker();          // creates the marker once the mouse really moves
+    bool ensureWarped();                    // switches WARP on if needed
+    juce::Rectangle<float> warpStrip() const { return waveArea().withHeight (18.0f); }
     void applyWarp();
     void drawWarpGrid (juce::Graphics&, juce::Rectangle<float> area);
 
@@ -78,6 +81,8 @@ private:
     WarpSettings warpWorking;
     bool warpPreview = false;  // drawing warpWorking while the stretched sample is being computed
     int warpDragIndex = -1;
+    bool warpPendingCreate = false, warpMoved = false, warpAwaiting = false;
+    float warpPendingX = 0.0f;
 
     juce::Slider zoomSlider;     // horizontal zoom, 0 = whole sample, 1 = maximum
     juce::ScrollBar scrollBar { false };

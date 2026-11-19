@@ -893,6 +893,52 @@ int main (int argc, char** argv)
     }
     check (std::isinf (p.getTailLengthSeconds()), "infinite tail: the DAW keeps the plugin running for the sequencer");
 
+    // ---- Warp strip: a plain drag on the diamond (no Ctrl) stretches the audio ----
+    {
+        RezalicaProcessor wp;
+        wp.prepareToPlay (48000.0, 512);
+        wp.getSequencer().syncToHost = false;
+        wp.getSequencer().bpm = 120.0f;
+        renderBlocks (wp, 2);
+        wp.chopFileToPads (file, RezalicaProcessor::chop8);
+        rz::WarpSettings w; w.enabled = true; w.lengthIndex = 3; w.markers = { { 0.25f, 0.25f } };
+        wp.setWarp (0, w);
+
+        rz::WaveformView wv (wp);
+        wv.setSize (900, 260);
+        wv.setPad (0);
+        auto src = juce::Desktop::getInstance().getMainMouseSource();
+        auto ev = [&] (float x, float y, juce::Point<float> downAt, bool dragged, int clicks = 1)
+        {
+            return juce::MouseEvent (src, { x, y }, juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                     &wv, &wv, juce::Time::getCurrentTime(), downAt, juce::Time::getCurrentTime(), clicks, dragged);
+        };
+        // the wave area starts at x = 6 and is (900 - 24 - 12) wide; the strip is its top 18 px (y 20..38)
+        const float areaW = 900.0f - 24.0f - 12.0f;
+        const float x0 = 6.0f + 0.25f * areaW, x1 = 6.0f + 0.4f * areaW, y = 28.0f;
+        wv.mouseDown (ev (x0, y, { x0, y }, false));
+        wv.mouseDrag (ev (x1, y, { x0, y }, true));
+        wv.mouseUp (ev (x1, y, { x0, y }, true));
+        for (int i = 0; i < 200 && wp.isWarpBusy(); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        auto ws = wp.getEngine().getPadSample (0);
+        const float v = ws->isWarped() && ! ws->warp.markers.empty() ? ws->warp.markers[0].second : -1.0f;
+        std::cout << "       warp strip drag: marker moved to " << v << "\n";
+        check (std::abs (v - 0.4f) < 0.02f, "dragging the diamond in the warp strip moves the warp marker (no Ctrl needed)");
+
+        // below the strip a plain drag does NOT warp (it moves chop markers / pad handles as before)
+        const float yBelow = 150.0f;
+        const auto before = ws->warp.markers;
+        wv.mouseDown (ev (x1, yBelow, { x1, yBelow }, false));
+        wv.mouseDrag (ev (x1 + 60.0f, yBelow, { x1, yBelow }, true));
+        wv.mouseUp (ev (x1 + 60.0f, yBelow, { x1, yBelow }, true));
+        for (int i = 0; i < 50 && wp.isWarpBusy(); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        check (wp.getEngine().getPadSample (0)->warp.markersToString() == ws->warp.markersToString(), "below the warp strip the mouse does its normal job");
+        juce::ignoreUnused (before);
+        for (int i = 0; i < 40; ++i) juce::Thread::sleep (25);
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);

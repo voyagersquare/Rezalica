@@ -105,6 +105,7 @@ void WaveformView::refresh()
                              && (s->warpSource == sample || s->warpSource == sample->warpSource || sample->warpSource == s);
         sample = s;
         warpPreview = false; // the stretched result arrived
+        warpAwaiting = false;
         if (! sameSource)
             setView (0.0, 1.0); // keep the zoom while warping the same sample
         else
@@ -276,6 +277,21 @@ void WaveformView::paint (juce::Graphics& g)
         }
     }
 
+    // warp strip along the top: the yellow diamonds live here, dragging in it stretches the audio
+    {
+        auto strip = warpStrip();
+        g.setColour (juce::Colour (0xff1d1e23));
+        g.fillRect (strip);
+        g.setColour (juce::Colour (0x55ffc94a));
+        g.drawHorizontalLine ((int) strip.getBottom(), strip.getX(), strip.getRight());
+        if (! isWarpView())
+        {
+            g.setColour (dim.withAlpha (0.6f));
+            g.setFont (juce::FontOptions (9.0f, juce::Font::bold));
+            g.drawText ("WARP: drag here to stretch", strip.reduced (6.0f, 0.0f), juce::Justification::centredRight);
+        }
+    }
+
     if (isWarpView())
         drawWarpGrid (g, area);
 
@@ -296,7 +312,7 @@ void WaveformView::paint (juce::Graphics& g)
             handle.addTriangle (x - 5.0f, area.getBottom(), x + 5.0f, area.getBottom(), x, area.getBottom() - 7.0f);
             g.fillPath (handle);
             g.setColour (text.withAlpha (0.55f));
-            g.drawText (padLabel (i), juce::Rectangle<float> (x + 2.0f, area.getY() + 2.0f, 28.0f, 14.0f), juce::Justification::left);
+            g.drawText (padLabel (i), juce::Rectangle<float> (x + 2.0f, warpStrip().getBottom() + 2.0f, 28.0f, 14.0f), juce::Justification::left);
         }
     }
     else
@@ -310,7 +326,7 @@ void WaveformView::paint (juce::Graphics& g)
             const float x = normToX (processor.getEngine().getPad (i).start.load());
             g.setColour (text.withAlpha (0.35f));
             g.drawVerticalLine ((int) x, area.getY(), area.getBottom());
-            g.drawText (padLabel (i), juce::Rectangle<float> (x + 2.0f, area.getY() + 2.0f, 28.0f, 14.0f), juce::Justification::left);
+            g.drawText (padLabel (i), juce::Rectangle<float> (x + 2.0f, warpStrip().getBottom() + 2.0f, 28.0f, 14.0f), juce::Justification::left);
         }
     }
 
@@ -383,7 +399,7 @@ void WaveformView::paintOverChildren (juce::Graphics& g)
         else if (isWarpView())
         {
             g.setColour (juce::Colour (0xffffc94a));
-            g.drawText (warpPreview ? "warping..." : "WARP: Ctrl+drag marker to grid   Ctrl+dbl-click: remove",
+            g.drawText (warpPreview ? "warping..." : "WARP: drag in the top strip (or Ctrl+drag) onto the grid   dbl-click strip: add / remove",
                         hint, juce::Justification::left, true);
         }
         else if (isChopSource())
@@ -409,6 +425,11 @@ void WaveformView::paintOverChildren (juce::Graphics& g)
 void WaveformView::mouseMove (const juce::MouseEvent& e)
 {
     if (sample == nullptr) { setMouseCursor (juce::MouseCursor::NormalCursor); return; }
+    if (warpStrip().contains (e.position))
+    {
+        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor); // warp strip: drag = stretch the audio
+        return;
+    }
     auto& ps = processor.getEngine().getPad (pad);
     const float x = (float) e.x;
     const bool nearMarker = warpMarkerNear (x) >= 0 || sliceMarkerNear (x) >= 0
@@ -475,8 +496,8 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Ctrl (Cmd) + drag: warp the sample at this marker
-    if (e.mods.isCommandDown())
+    // the warp strip at the top (with the yellow diamonds), or Ctrl + drag anywhere: warp the audio
+    if (e.mods.isCommandDown() || warpStrip().contains (e.position))
     {
         startWarpDrag (x);
         return;
@@ -545,6 +566,17 @@ void WaveformView::mouseDrag (const juce::MouseEvent& e)
 
     if (dragging == DragWarp)
     {
+        if (warpPendingCreate)
+        {
+            if (e.getDistanceFromDragStart() < 3)
+                return;
+            if (! beginPendingWarpMarker())
+            {
+                dragging = DragNone;
+                return;
+            }
+        }
+        warpMoved = true;
         auto& m = warpWorking.markers;
         if (warpDragIndex < 0 || warpDragIndex >= (int) m.size())
             return;
@@ -578,7 +610,14 @@ void WaveformView::mouseDrag (const juce::MouseEvent& e)
 void WaveformView::mouseUp (const juce::MouseEvent&)
 {
     if (dragging == DragWarp)
-        applyWarp();
+    {
+        if (warpMoved)
+            applyWarp();
+        else if (! warpAwaiting)
+            warpPreview = false; // just a click on a marker: nothing changed
+        warpPendingCreate = false;
+        repaint();
+    }
     dragging = DragNone;
     dragSlice = -1;
     warpDragIndex = -1;
@@ -628,42 +667,68 @@ int WaveformView::warpMarkerNear (float x) const
     return best;
 }
 
+bool WaveformView::ensureWarped()
+{
+    // not warped yet: switch WARP on (whole sample, length that fits the current tempo)
+    if (isWarpView())
+        return true;
+    if (processor.getEngine().getPadSample (pad) == nullptr)
+        return false;
+    processor.setWarp (pad, processor.suggestWarpSettings (pad));
+    refresh();
+    return isWarpView();
+}
+
 void WaveformView::startWarpDrag (float x)
 {
-    processor.pushUndo ("Warp marker");
-    // not warped yet: switch WARP on (whole sample, length that fits the current tempo)
-    if (! isWarpView())
+    dragging = DragWarp;
+    warpMoved = false;
+    warpDragIndex = -1;
+    warpPendingCreate = false;
+
+    // grab an existing warp marker (the yellow diamond)
+    if (isWarpView())
     {
-        if (processor.getEngine().getPadSample (pad) == nullptr)
+        if (! warpPreview)
+            warpWorking = sample->warp;
+        if (const int wm = warpMarkerNear (x); wm >= 0)
+        {
+            processor.pushUndo ("Warp marker");
+            warpDragIndex = wm;
+            warpPreview = true;
+            repaint();
             return;
-        processor.setWarp (pad, processor.suggestWarpSettings (pad));
-        refresh();
-        if (! isWarpView())
-            return;
+        }
     }
 
+    // otherwise a new warp marker is made as soon as the mouse moves
+    // (at the transient / chop marker under the mouse, or right there)
+    warpPendingCreate = true;
+    warpPendingX = x;
+}
+
+bool WaveformView::beginPendingWarpMarker()
+{
+    warpPendingCreate = false;
+    processor.pushUndo ("Warp marker");
+    if (! ensureWarped())
+        return false;
     if (! warpPreview)
         warpWorking = sample->warp;
 
-    int wm = warpMarkerNear (x);
-    if (wm < 0)
-    {
-        // grab the chop / transient marker under the mouse, or the clicked position
-        float v = xToNorm (x);
-        if (const int cm = sliceMarkerNear (x); cm >= 0)
-            v = displayPos (processor.getSlicePoints()[(size_t) cm]);
-        if (v <= 0.0005f || v >= 0.9995f)
-            return; // the start and the end stay where they are
-        const float u = warpWorking.dstToSrc (v);
-        auto& m = warpWorking.markers;
-        auto it = std::lower_bound (m.begin(), m.end(), u, [] (const std::pair<float, float>& a, float val) { return a.first < val; });
-        wm = (int) std::distance (m.begin(), m.insert (it, { u, v }));
-    }
+    float v = xToNorm (warpPendingX);
+    if (const int cm = sliceMarkerNear (warpPendingX); cm >= 0)
+        v = displayPos (processor.getSlicePoints()[(size_t) cm]);
+    if (v <= 0.0005f || v >= 0.9995f)
+        return false; // the start and the end stay where they are
 
-    warpDragIndex = wm;
+    const float u = warpWorking.dstToSrc (v);
+    auto& m = warpWorking.markers;
+    auto it = std::lower_bound (m.begin(), m.end(), u, [] (const std::pair<float, float>& a, float val) { return a.first < val; });
+    warpDragIndex = (int) std::distance (m.begin(), m.insert (it, { u, v }));
     warpPreview = true;
-    dragging = DragWarp;
     repaint();
+    return true;
 }
 
 void WaveformView::applyWarp()
@@ -672,6 +737,7 @@ void WaveformView::applyWarp()
         return;
     auto s = warpWorking;
     s.enabled = true;
+    warpAwaiting = true;
     processor.requestWarp (pad, s); // stretched in the background; refresh() ends the preview
     repaint();
 }
@@ -711,7 +777,7 @@ void WaveformView::drawWarpGrid (juce::Graphics& g, juce::Rectangle<float> area)
         g.fillRect (x - 0.75f, area.getY(), 1.5f, area.getHeight());
         juce::Path d;
         d.addRectangle (-4.5f, -4.5f, 9.0f, 9.0f);
-        g.fillPath (d, juce::AffineTransform::rotation (juce::MathConstants<float>::pi * 0.25f).translated (x, area.getY() + 7.0f));
+        g.fillPath (d, juce::AffineTransform::rotation (juce::MathConstants<float>::pi * 0.25f).translated (x, warpStrip().getCentreY()));
     }
 }
 
@@ -720,8 +786,18 @@ void WaveformView::mouseDoubleClick (const juce::MouseEvent& e)
     if (sample == nullptr || e.mods.isPopupMenu())
         return;
 
-    // Ctrl + double-click: remove a warp marker
-    if (e.mods.isCommandDown())
+    // warp strip: double-click adds a warp marker, double-click on a diamond removes it
+    if (warpStrip().contains (e.position) && warpMarkerNear ((float) e.x) < 0)
+    {
+        dragging = DragNone;
+        warpPendingX = (float) e.x;
+        if (beginPendingWarpMarker())
+            applyWarp();
+        return;
+    }
+
+    // Ctrl + double-click (or double-click on a diamond): remove a warp marker
+    if (e.mods.isCommandDown() || warpStrip().contains (e.position))
     {
         if (! isWarpView()) return;
         const int wm = warpMarkerNear ((float) e.x);

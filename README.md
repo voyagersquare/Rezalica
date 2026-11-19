@@ -73,8 +73,10 @@
     - Strelice: transpozicija (Shift = oktava) i pomicanje lijevo-desno
     - Kotačić: pomicanje, Ctrl + kotačić: zoom, Alt + kotačić: visina redova
     - Klik na klavijaturu preslušava ton, a `Space` pokreće i zaustavlja.
-- **Warp markeri (Ctrl + klik i povlačenje na valnom obliku)**, kao u Abletonu:
-  - Uhvati marker (transient ili ručni) s Ctrl i povuci ga lijevo ili desno po gridu. Sample se između markera rasteže i skuplja tako da udarac padne na grid.
+- **Warp markeri**, kao u Abletonu:
+  - **Warp traka** je tamna traka na vrhu valnog oblika sa žutim dijamantima. Kad je miš u njoj, **obično povlačenje** (bez Ctrl) rasteže audio: uhvatiš dijamant ili povučeš s mjesta transient markera, pa se stvori novi warp marker. Dvoklik u traci dodaje warp marker, a dvoklik na dijamant ga briše. Ispod trake miš radi kao i prije.
+  - Ctrl + povlačenje radi bilo gdje na valnom obliku.
+  - Uhvati marker (transient ili ručni) u warp traci ili s Ctrl i povuci ga lijevo ili desno po gridu. Sample se između markera rasteže i skuplja tako da udarac padne na grid.
   - Grid je visoke rezolucije: s jačim zoomom ide sve do 1/64 doba. Alt isključuje snap.
   - Ako WARP nije uključen, Ctrl+klik ga sam uključi s duljinom koja najbolje odgovara sampleu.
   - Isječci (padovi) prate zvuk. Ctrl + dvoklik ili desni klik uklanja warp marker.
