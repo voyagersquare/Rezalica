@@ -7,6 +7,7 @@
 #include "SequencerWindow.h"
 #include "StretchWindow.h"
 #include "PianoRollWindow.h"
+#include "BankControls.h"
 
 class RezalicaEditor : public juce::AudioProcessorEditor,
                        private juce::Timer,
@@ -52,7 +53,9 @@ private:
     juce::ComboBox chopModeBox;
     juce::Slider sensitivitySlider;
     juce::Label sliceCountLabel;
-    std::array<juce::TextButton, rz::numBanks> bankButtons;
+    std::array<rz::BankButton, rz::numBanks> bankButtons;
+    void showBankVolume (int bank);
+    void showBankMenu (int bank);
     int lastPlayedCounter = 0;
     rz::Knob masterKnob { "MASTER" };
 

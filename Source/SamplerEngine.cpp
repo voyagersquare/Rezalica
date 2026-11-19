@@ -9,6 +9,7 @@ void Voice::start (int padIndex, SampleData::Ptr s, const PadSettings& ps, float
 {
     transpose = transposeSemitones;
     tag = noteTag;
+    lastBankGain = -1.0f;
     sample = std::move (s);
     settings = &ps;
     pad = padIndex;
@@ -66,7 +67,8 @@ float Voice::getNormalisedPosition() const noexcept
     return (float) (pos / (double) juce::jmax (1, sample->buffer.getNumSamples()));
 }
 
-void Voice::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& padBus, int startSample, int numSamples)
+void Voice::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& padBus, int startSample, int numSamples,
+                    float bankGain)
 {
     if (! active)
         return;
@@ -86,8 +88,14 @@ void Voice::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& pad
     float* oL = out.getWritePointer (0, startSample);
     float* oR = out.getWritePointer (1, startSample);
 
+    if (lastBankGain < 0.0f) lastBankGain = bankGain;
+    const float bankStep = (bankGain - lastBankGain) / (float) juce::jmax (1, numSamples);
+    float bank = lastBankGain;
+    lastBankGain = bankGain;
+
     for (int i = 0; i < numSamples; ++i)
     {
+        bank += bankStep;
         if (! reverse && pos >= (double) s1)
         {
             if (! loop) { stop(); return; }
@@ -130,7 +138,7 @@ void Voice::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& pad
                 edge = (float) juce::jmax (0.0, remain / 48.0);
         }
 
-        const float e = env * edge;
+        const float e = env * edge * bank;
         oL[i] += l * gl * e;
         oR[i] += r * gr * e;
 
@@ -141,6 +149,8 @@ void Voice::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& pad
 //==============================================================================
 SamplerEngine::SamplerEngine()
 {
+    for (auto& g : bankGain) g = 1.0f;
+    for (auto& m : bankMute) m = false;
     previewSettings.attackMs = 0.5f;
     previewSettings.releaseMs = 15.0f;
     for (auto& h : hitCounter) h = 0;
@@ -229,7 +239,7 @@ void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer, float t
         ++playedCounter;
     }
 
-    if (s == nullptr || ps.mute.load())
+    if (s == nullptr || ps.mute.load() || bankMute[(size_t) (pad / padsPerBank)].load())
         return;
 
     // A pad is monophonic (retriggering cuts the previous voice), unless it is played
@@ -295,7 +305,12 @@ void SamplerEngine::render (juce::AudioBuffer<float>& dry, std::array<juce::Audi
 
     for (auto& v : voices)
         if (v.isActive())
-            v.render (dry, padBuses[(size_t) v.getPad()], startSample, numSamples);
+        {
+            const int bank = v.getPad() / padsPerBank;
+            if (bankMute[(size_t) bank].load() && ! v.isReleasing())
+                v.fastStop(); // muting a bank also silences what is playing in it
+            v.render (dry, padBuses[(size_t) v.getPad()], startSample, numSamples, bankGain[(size_t) bank].load());
+        }
     previewVoice.render (dry, dry, startSample, numSamples);
 }
 

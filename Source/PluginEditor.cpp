@@ -59,8 +59,13 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         bb.setClickingTogglesState (true);
         bb.setRadioGroupId (4711);
         bb.setWantsKeyboardFocus (false);
-        bb.setTooltip ("Bank " + bb.getButtonText() + " (pads " + rz::padLabel (b * rz::padsPerBank) + "-" + rz::padLabel (b * rz::padsPerBank + 15) + ")");
+        bb.setTooltip ("Bank " + bb.getButtonText() + " (pads " + rz::padLabel (b * rz::padsPerBank) + "-" + rz::padLabel (b * rz::padsPerBank + 15) + ")"
+                       "   Ctrl+click: bank volume   right-click: mute / copy / paste");
         bb.onClick = [this, b] { if (bankButtons[(size_t) b].getToggleState()) setBank (b); };
+        bb.processor = &processor;
+        bb.bank = b;
+        bb.onCtrlClick = [this, b] { showBankVolume (b); };
+        bb.onRightClick = [this, b] { showBankMenu (b); };
         addAndMakeVisible (bb);
     }
     seqButton.onClick = [this] { toggleSequencerWindow(); };
@@ -482,7 +487,11 @@ void RezalicaEditor::refreshPadNames()
         for (int i = 0; i < rz::padsPerBank && ! used; ++i)
             used = processor.getEngine().getPadSample (b * rz::padsPerBank + i) != nullptr;
         const auto letter = juce::String::charToString ((juce::juce_wchar) ('A' + b));
-        bankButtons[(size_t) b].setButtonText (used ? letter + " *" : letter);
+        const bool muted = processor.isBankMuted (b);
+        bankButtons[(size_t) b].setButtonText (letter + (used ? " *" : "") + (muted ? " M" : ""));
+        bankButtons[(size_t) b].setColour (juce::TextButton::buttonColourId, muted ? juce::Colour (0xff8a2a26) : rz::colours::panelLight);
+        bankButtons[(size_t) b].setColour (juce::TextButton::buttonOnColourId, muted ? juce::Colour (0xffe0413a) : rz::colours::accent);
+        bankButtons[(size_t) b].repaint();
     }
 }
 
@@ -593,6 +602,46 @@ void RezalicaEditor::chooseChopFile()
             selectPad (processor.selectedPad.load());
             refreshChopControls();
         }
+    });
+}
+
+void RezalicaEditor::showBankVolume (int bank)
+{
+    auto popup = std::make_unique<rz::BankVolumePopup> (processor, bank, [this, bank] { bankButtons[(size_t) bank].repaint(); });
+    juce::CallOutBox::launchAsynchronously (std::move (popup), bankButtons[(size_t) bank].getBounds(), this);
+}
+
+void RezalicaEditor::showBankMenu (int bank)
+{
+    const auto letter = juce::String::charToString ((juce::juce_wchar) ('A' + bank));
+    juce::PopupMenu m;
+    m.addSectionHeader ("BANK " + letter);
+    m.addItem (1, "Mute bank " + letter, ! processor.isBankMuted (bank));
+    m.addItem (2, "Unmute bank " + letter, processor.isBankMuted (bank));
+    m.addSeparator();
+    m.addItem (3, "Copy bank " + letter);
+    m.addItem (4, "Paste bank to " + letter, processor.canPasteBank());
+    m.addSeparator();
+    m.addItem (5, "Bank volume...");
+    m.addItem (6, "Reset bank volume (0 dB)", std::abs (processor.getBankGainDb (bank)) > 0.01f);
+
+    juce::Component::SafePointer<RezalicaEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&bankButtons[(size_t) bank]), [safe, bank] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        auto& proc = safe->processor;
+        switch (r)
+        {
+            case 1: proc.pushUndo ("Mute bank");   proc.setBankMute (bank, true);  break;
+            case 2: proc.pushUndo ("Unmute bank"); proc.setBankMute (bank, false); break;
+            case 3: proc.copyBank (bank); break;
+            case 4: proc.pushUndo ("Paste bank");  proc.pasteBank (bank); break;
+            case 5: safe->showBankVolume (bank); return;
+            case 6: proc.pushUndo ("Bank volume"); proc.setBankGainDb (bank, 0.0f); break;
+            default: break;
+        }
+        safe->refreshPadNames();
+        safe->selectPad (proc.selectedPad.load());
     });
 }
 
@@ -809,7 +858,7 @@ void RezalicaEditor::resized()
         auto bankRow = p.removeFromTop (24);
         for (int bi = rz::numBanks; --bi >= 0;)
         {
-            bankButtons[(size_t) bi].setBounds (bankRow.removeFromRight (40));
+            bankButtons[(size_t) bi].setBounds (bankRow.removeFromRight (50));
             bankRow.removeFromRight (4);
         }
         p.removeFromTop (6);

@@ -73,6 +73,10 @@
   - Ako WARP nije uključen, Ctrl+klik ga sam uključi s duljinom koja najbolje odgovara sampleu.
   - Isječci (padovi) prate zvuk. Ctrl + dvoklik ili desni klik uklanja warp marker.
 
+- **Banke A–D**:
+  - **Ctrl + klik** na banku otvara vertikalni kliznik za glasnoću cijele banke (+6 dB do potpuno tiho). Žuta linija pokazuje trenutnu glasnoću, a dvoklik vraća 0 dB. Žuta crtica na gumbu banke također pokazuje glasnoću.
+  - **Desni klik** na banku otvara izbornik: Mute bank, Unmute bank, Copy bank, Paste bank, Reset volume. Utišana banka je crvena i označena s „M”.
+  - Paste bank kopira svih 16 padova (samplove kao samostalne kopije, postavke, efekte i glasnoću banke).
 - **UNDO / REDO** (gumbi u gornjoj traci, Ctrl+Z / Ctrl+Y ili Ctrl+Shift+Z):
   - poništava i vraća zadnje radnje: učitavanje, rezanje, markere, Trim, Warp, warp markere, Render, Clear, Paste pada, kotačiće i gumbe pada te efekte
   - pamti zadnjih 40 koraka, a uputa na gumbu pokazuje što će se poništiti

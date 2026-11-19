@@ -732,6 +732,60 @@ int main (int argc, char** argv)
         rendered40->file.deleteFile();
     }
 
+    // ---- Bank volume, mute, copy / paste ----
+    {
+        p.chopFileToPads (file, RezalicaProcessor::chop8);
+        auto hitPeak = [&] (int pad)
+        {
+            p.getEngine().allNotesOff();
+            renderBlocks (p, 40);
+            juce::MidiBuffer m;
+            m.addEvent (juce::MidiMessage::noteOn (1, RezalicaProcessor::midiBaseNote + pad, (juce::uint8) 100), 0);
+            return renderBlocks (p, 20, m);
+        };
+        const float full = hitPeak (2);
+        p.setBankGainDb (0, -6.0f);
+        const float quieter = hitPeak (2);
+        std::cout << "       bank A at -6 dB: level ratio " << quieter / full << "\n";
+        check (std::abs (quieter / full - 0.501f) < 0.03f, "bank volume -6 dB halves the level");
+        p.setBankGainDb (0, 0.0f);
+
+        p.setBankMute (0, true);
+        check (hitPeak (2) < 1.0e-5f, "muted bank stays silent");
+        p.setBankMute (0, false);
+        check (hitPeak (2) > 0.1f, "unmuted bank plays again");
+
+        // copy bank A to bank C: independent copies, slices still share among themselves
+        p.getEngine().getPad (3).gainDb = -3.0f;
+        p.setBankGainDb (0, -2.0f);
+        p.copyBank (0);
+        p.pasteBank (2);
+        auto c1 = p.getEngine().getPadSample (32), c2 = p.getEngine().getPadSample (33);
+        check (c1 != nullptr && c1 != p.getEngine().getPadSample (0) && c1 == c2
+               && std::abs (p.getEngine().getPad (35).gainDb.load() + 3.0f) < 1.0e-4f
+               && std::abs (p.getEngine().getPad (34).start.load() - p.getEngine().getPad (2).start.load()) < 1.0e-6f
+               && std::abs (p.getBankGainDb (2) + 2.0f) < 1.0e-4f,
+               "paste bank: pads, settings, slices and bank volume copied as independent samples");
+
+        // saved with the project, and undo-able
+        p.setBankMute (1, true);
+        juce::MemoryBlock st;
+        p.getStateInformation (st);
+        RezalicaProcessor r4;
+        r4.setStateInformation (st.getData(), (int) st.getSize());
+        check (std::abs (r4.getBankGainDb (0) + 2.0f) < 1.0e-4f && r4.isBankMuted (1) && ! r4.isBankMuted (0), "bank volume / mute saved with the project");
+        p.pushUndo ("Mute bank");
+        p.setBankMute (3, true);
+        p.undo();
+        check (! p.isBankMuted (3), "bank mute can be undone");
+
+        p.setBankMute (1, false);
+        p.setBankGainDb (0, 0.0f);
+        p.setBankGainDb (2, 0.0f);
+        p.getEngine().getPad (3).gainDb = 0.0f;
+        for (int i = 32; i < 48; ++i) p.clearPad (i);
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);
@@ -783,7 +837,18 @@ int main (int argc, char** argv)
             juce::PNGImageFormat().writeImageToStream (img, os);
             std::cout << "       wrote " << f.getFullPathName() << "\n";
         };
+        q.setBankGainDb (0, -4.5f);
+        q.setBankMute (1, true);
+        ed->resized();
+        if (auto* e2 = dynamic_cast<RezalicaEditor*> (ed.get())) juce::ignoreUnused (e2);
         save (*ed, "editor.png");
+        {
+            rz::RezalicaLookAndFeel bl;
+            rz::BankVolumePopup bp (q, 0, nullptr);
+            bp.setLookAndFeel (&bl);
+            save (bp, "bankvolume.png");
+            bp.setLookAndFeel (nullptr);
+        }
         rz::SequencerPanel panel (q);
         rz::RezalicaLookAndFeel lnf;
         panel.setLookAndFeel (&lnf);

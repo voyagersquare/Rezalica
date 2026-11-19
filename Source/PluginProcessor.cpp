@@ -1277,6 +1277,11 @@ RezalicaProcessor::UndoState RezalicaProcessor::captureUndoState (const juce::St
     u.chopMode = chopMode;
     u.sensitivity = transientSensitivity;
     u.slicePoints = slicePoints;
+    for (int b = 0; b < rz::numBanks; ++b)
+    {
+        u.bankDb[(size_t) b] = bankDb[(size_t) b];
+        u.bankMuted[(size_t) b] = engine.bankMute[(size_t) b].load();
+    }
     return u;
 }
 
@@ -1296,6 +1301,11 @@ void RezalicaProcessor::restoreUndoState (const UndoState& u)
     chopMode = u.chopMode;
     transientSensitivity = u.sensitivity;
     slicePoints = u.slicePoints;
+    for (int b = 0; b < rz::numBanks; ++b)
+    {
+        setBankGainDb (b, u.bankDb[(size_t) b]);
+        engine.bankMute[(size_t) b] = u.bankMuted[(size_t) b];
+    }
     padsChanged.sendChangeMessage();
 }
 
@@ -1308,6 +1318,7 @@ void RezalicaProcessor::pushUndo (const juce::String& actionName)
     {
         const auto& t = undoStack.back();
         bool same = t.chopSource == u.chopSource && t.chopMode == u.chopMode && t.slicePoints == u.slicePoints
+                 && t.bankDb == u.bankDb && t.bankMuted == u.bankMuted
                  && std::abs (t.sensitivity - u.sensitivity) < 1.0e-6f && t.missing == u.missing;
         for (int i = 0; i < rz::numPads && same; ++i)
             same = t.samples[(size_t) i] == u.samples[(size_t) i] && t.settings[(size_t) i].isEquivalentTo (u.settings[(size_t) i]);
@@ -1344,6 +1355,67 @@ bool RezalicaProcessor::redo()
     undoStack.push_back (captureUndoState (r.name));
     restoreUndoState (r);
     return true;
+}
+
+void RezalicaProcessor::setBankGainDb (int bank, float db)
+{
+    bank = juce::jlimit (0, rz::numBanks - 1, bank);
+    db = juce::jlimit (-60.0f, 6.0f, db);
+    bankDb[(size_t) bank] = db;
+    engine.bankGain[(size_t) bank] = db <= -59.9f ? 0.0f : juce::Decibels::decibelsToGain (db);
+}
+
+float RezalicaProcessor::getBankGainDb (int bank) const
+{
+    return bankDb[(size_t) juce::jlimit (0, rz::numBanks - 1, bank)];
+}
+
+void RezalicaProcessor::copyBank (int bank)
+{
+    for (int i = 0; i < rz::padsPerBank; ++i)
+    {
+        const int pad = bank * rz::padsPerBank + i;
+        bankClipboard.samples[(size_t) i] = engine.getPadSample (pad);
+        bankClipboard.settings[(size_t) i] = padToValueTree (pad);
+    }
+    bankClipboard.db = getBankGainDb (bank);
+    bankClipboard.valid = true;
+}
+
+void RezalicaProcessor::pasteBank (int bank)
+{
+    if (! bankClipboard.valid)
+        return;
+
+    // independent copies; pads that shared a sample (slices) share its copy
+    std::map<rz::SampleData*, rz::SampleData::Ptr> copies;
+    for (int i = 0; i < rz::padsPerBank; ++i)
+    {
+        const int pad = bank * rz::padsPerBank + i;
+        rz::SampleData::Ptr c;
+        if (auto* src = bankClipboard.samples[(size_t) i].get())
+        {
+            auto it = copies.find (src);
+            if (it == copies.end())
+            {
+                c = src->clone();
+                samplePool.add (c);
+                if (c->warpSource != nullptr)
+                    samplePool.add (c->warpSource);
+                copies[src] = c;
+            }
+            else
+            {
+                c = it->second;
+            }
+        }
+        padFromValueTree (pad, bankClipboard.settings[(size_t) i]);
+        engine.setPadSample (pad, c);
+        const juce::ScopedLock sl (missingPathLock);
+        missingPaths[(size_t) pad] = {};
+    }
+    setBankGainDb (bank, bankClipboard.db);
+    padsChanged.sendChangeMessage();
 }
 
 void RezalicaProcessor::copyPad (int pad)
@@ -1393,6 +1465,11 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
     root.setProperty ("selectedPad", selectedPad.load(), nullptr);
     root.setProperty ("chromaticPad", chromaticPad.load(), nullptr);
     root.setProperty ("bank", currentBank.load(), nullptr);
+    for (int b = 0; b < rz::numBanks; ++b)
+    {
+        root.setProperty ("bankDb" + juce::String (b), bankDb[(size_t) b], nullptr);
+        root.setProperty ("bankMute" + juce::String (b), engine.bankMute[(size_t) b].load(), nullptr);
+    }
     root.appendChild (apvts.copyState(), nullptr);
 
     juce::ValueTree pads ("PADS");
@@ -1502,6 +1579,11 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
     selectedPad = juce::jlimit (0, rz::numPads - 1, (int) root.getProperty ("selectedPad", 0));
     chromaticPad = juce::jlimit (-1, rz::numPads - 1, (int) root.getProperty ("chromaticPad", -1));
     currentBank = juce::jlimit (0, rz::numBanks - 1, (int) root.getProperty ("bank", 0));
+    for (int b = 0; b < rz::numBanks; ++b)
+    {
+        setBankGainDb (b, (float) root.getProperty ("bankDb" + juce::String (b), 0.0f));
+        engine.bankMute[(size_t) b] = (bool) root.getProperty ("bankMute" + juce::String (b), false);
+    }
 
     auto pads = root.getChildWithName ("PADS");
     std::map<int, rz::SampleData::Ptr> restoredById;

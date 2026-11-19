@@ -257,7 +257,8 @@ public:
     void release();
     void fastStop();
     /** Writes into padBus when the pad has effects switched on, else into dry. */
-    void render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& padBus, int startSample, int numSamples);
+    void render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& padBus, int startSample, int numSamples,
+                 float bankGain = 1.0f);
 
     bool isActive() const noexcept     { return active; }
     bool isReleasing() const noexcept  { return stage == Stage::release; }
@@ -277,6 +278,7 @@ private:
     bool active = false, reverse = false, loop = false;
     float transpose = 0.0f;
     int tag = -1;
+    float lastBankGain = -1.0f; // ramps bank volume changes smoothly
     int s0 = 0, s1 = 0;
     double pos = 0.0, baseRatio = 1.0, sr = 44100.0;
     float vel = 1.0f, env = 0.0f, attackInc = 1.0f, releaseDec = 0.001f;
@@ -320,6 +322,10 @@ public:
     // ---- for the UI ----
     std::array<std::atomic<int>, numPads> hitCounter;
     std::array<std::atomic<float>, numPads> playPosition; // -1 when not playing
+    // whole-bank volume (linear) and mute
+    std::array<std::atomic<float>, numBanks> bankGain;
+    std::array<std::atomic<bool>, numBanks> bankMute;
+
     std::atomic<int> lastPlayedPad { -1 };   // last pad hit by MIDI / keyboard / mouse (not the sequencer)
     std::atomic<int> playedCounter { 0 };
 

@@ -74,6 +74,15 @@ public:
     juce::String getUndoName() const { return undoStack.empty() ? juce::String() : undoStack.back().name; }
     juce::String getRedoName() const { return redoStack.empty() ? juce::String() : redoStack.back().name; }
 
+    // ---- banks ----
+    void setBankGainDb (int bank, float db);
+    float getBankGainDb (int bank) const;
+    void setBankMute (int bank, bool mute) { engine.bankMute[(size_t) bank] = mute; }
+    bool isBankMuted (int bank) const { return engine.bankMute[(size_t) bank].load(); }
+    void copyBank (int bank);
+    bool canPasteBank() const noexcept { return bankClipboard.valid; }
+    void pasteBank (int bank);
+
     // copy / paste a whole pad (sample, markers, settings, effects)
     void copyPad (int pad);
     bool canPastePad() const noexcept { return padClipboard.valid; }
@@ -203,6 +212,14 @@ private:
     rz::WarpSettings lastWarpSettings;
 
     struct PadClipboard { rz::SampleData::Ptr sample; juce::ValueTree settings; bool valid = false; } padClipboard;
+    struct BankClipboard
+    {
+        std::array<rz::SampleData::Ptr, rz::padsPerBank> samples;
+        std::array<juce::ValueTree, rz::padsPerBank> settings;
+        float db = 0.0f;
+        bool valid = false;
+    } bankClipboard;
+    std::array<float, rz::numBanks> bankDb {}; // bank volume in dB (the engine holds the linear gain)
 
     struct UndoState
     {
@@ -214,6 +231,8 @@ private:
         int chopMode = 0;
         float sensitivity = 0.5f;
         std::vector<float> slicePoints;
+        std::array<float, rz::numBanks> bankDb {};
+        std::array<bool, rz::numBanks> bankMuted {};
     };
     UndoState captureUndoState (const juce::String& name) const;
     void restoreUndoState (const UndoState& s);
