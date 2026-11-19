@@ -31,6 +31,11 @@ RezalicaProcessor::RezalicaProcessor()
     pDelayTime = apvts.getRawParameterValue ("delayTime");
     pFeedback = apvts.getRawParameterValue ("feedback");
     pDelayMix = apvts.getRawParameterValue ("delayMix");
+    pReverbOn = apvts.getRawParameterValue ("reverbOn");
+    pReverbSize = apvts.getRawParameterValue ("reverbSize");
+    pReverbDamp = apvts.getRawParameterValue ("reverbDamp");
+    pReverbWidth = apvts.getRawParameterValue ("reverbWidth");
+    pReverbMix = apvts.getRawParameterValue ("reverbMix");
 
     startTimer (1000);
 }
@@ -66,6 +71,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout RezalicaProcessor::createLay
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "delayTime", 1 }, "Delay Time", NormalisableRange<float> (10.0f, 2000.0f, 1.0f, 0.5f), 375.0f, ms));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "feedback", 1 }, "Feedback", NormalisableRange<float> (0.0f, 0.95f), 0.35f));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "delayMix", 1 }, "Delay Mix", NormalisableRange<float> (0.0f, 1.0f), 0.3f));
+
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "reverbOn", 1 }, "Reverb On", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "reverbSize", 1 }, "Reverb Size", NormalisableRange<float> (0.0f, 1.0f), 0.6f));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "reverbDamp", 1 }, "Reverb Damping", NormalisableRange<float> (0.0f, 1.0f), 0.4f));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "reverbWidth", 1 }, "Reverb Width", NormalisableRange<float> (0.0f, 1.0f), 1.0f));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "reverbMix", 1 }, "Reverb Mix", NormalisableRange<float> (0.0f, 1.0f), 0.3f));
 
     return layout;
 }
@@ -107,6 +118,11 @@ rz::FxChain::Params RezalicaProcessor::readFxParams() const
     p.delayOn = pDelayOn->load() > 0.5f;
     p.feedback = pFeedback->load();
     p.mix = pDelayMix->load();
+    p.reverbOn = pReverbOn->load() > 0.5f;
+    p.reverbSize = pReverbSize->load();
+    p.reverbDamping = pReverbDamp->load();
+    p.reverbWidth = pReverbWidth->load();
+    p.reverbMix = pReverbMix->load();
 
     const int div = juce::jlimit (0, delayDivisions.size() - 1, (int) pDelayDiv->load());
     if (div == 0)
@@ -276,7 +292,7 @@ rz::SampleData::Ptr RezalicaProcessor::loadSample (const juce::File& file)
     return s;
 }
 
-std::vector<float> RezalicaProcessor::findSlicePoints (const rz::SampleData& s, int mode)
+std::vector<float> RezalicaProcessor::findSlicePoints (const rz::SampleData& s, int mode, float sensitivity)
 {
     std::vector<float> points;
     const int len = s.buffer.getNumSamples();
@@ -288,7 +304,8 @@ std::vector<float> RezalicaProcessor::findSlicePoints (const rz::SampleData& s, 
         return points;
     }
 
-    // Simple energy-flux onset detection.
+    // Energy-flux onset detection. Sensitivity 0..1 lowers the threshold and the
+    // minimum distance between slices, giving anywhere from a few up to 64 slices.
     const int hop = 512;
     const int frames = len / hop;
     if (frames < 4)
@@ -309,17 +326,17 @@ std::vector<float> RezalicaProcessor::findSlicePoints (const rz::SampleData& s, 
     }
 
     std::vector<float> flux ((size_t) frames, 0.0f);
-    float mean = 0.0f;
+    float maxFlux = 0.0f;
     for (int f = 1; f < frames; ++f)
     {
         flux[(size_t) f] = juce::jmax (0.0f, energy[(size_t) f] - energy[(size_t) f - 1]);
-        mean += flux[(size_t) f];
+        maxFlux = juce::jmax (maxFlux, flux[(size_t) f]);
     }
-    mean /= (float) frames;
+    if (maxFlux <= 0.0f)
+        return { 0.0f };
 
-    float var = 0.0f;
-    for (auto v : flux) var += (v - mean) * (v - mean);
-    const float threshold = mean + 1.0f * std::sqrt (var / (float) frames);
+    const float sens = juce::jlimit (0.0f, 1.0f, sensitivity);
+    const float threshold = maxFlux * (0.01f + 0.6f * (1.0f - sens) * (1.0f - sens));
 
     std::vector<std::pair<float, int>> candidates;
     for (int f = 1; f < frames - 1; ++f)
@@ -328,11 +345,12 @@ std::vector<float> RezalicaProcessor::findSlicePoints (const rz::SampleData& s, 
 
     std::sort (candidates.begin(), candidates.end(), [] (auto& a, auto& b) { return a.first > b.first; });
 
-    const int minGap = juce::jmax (4, (int) (s.sampleRate * 0.06 / hop));
+    const double minGapSeconds = juce::jmap ((double) sens, 0.12, 0.025);
+    const int minGap = juce::jmax (2, (int) (s.sampleRate * minGapSeconds / hop));
     std::vector<int> chosen { 0 };
     for (auto& c : candidates)
     {
-        if ((int) chosen.size() >= rz::numPads) break;
+        if ((int) chosen.size() >= maxSlices) break;
         bool ok = true;
         for (auto f : chosen)
             if (std::abs (f - c.second) < minGap) { ok = false; break; }
@@ -343,25 +361,55 @@ std::vector<float> RezalicaProcessor::findSlicePoints (const rz::SampleData& s, 
     for (auto f : chosen)
         points.push_back (juce::jmax (0.0f, (float) (f * hop - hop / 4) / (float) len));
 
-    if (points.size() < 2)
-        return findSlicePoints (s, chop16);
-
     return points;
 }
 
-void RezalicaProcessor::applySlices (const rz::SampleData::Ptr& s, const std::vector<float>& points, int firstPad)
+void RezalicaProcessor::setChopSource (rz::SampleData::Ptr s)
 {
-    for (size_t k = 0; k < points.size(); ++k)
+    if (s != chopSource)
     {
-        const int pad = firstPad + (int) k;
-        if (pad >= rz::numPads) break;
-        auto& ps = engine.getPad (pad);
-        ps.start = points[k];
-        ps.end = (k + 1 < points.size()) ? points[k + 1] : 1.0f;
-        engine.setPadSample (pad, s);
-        const juce::ScopedLock sl (missingPathLock);
-        missingPaths[(size_t) pad] = {};
+        previousChopSource = chopSource;
+        chopSource = std::move (s);
     }
+}
+
+void RezalicaProcessor::rechop()
+{
+    if (chopSource == nullptr)
+    {
+        slicePoints.clear();
+        return;
+    }
+
+    slicePoints = findSlicePoints (*chopSource, chopMode, transientSensitivity);
+    if (slicePoints.empty())
+        slicePoints.push_back (0.0f);
+    applySlices();
+}
+
+void RezalicaProcessor::applySlices()
+{
+    // slice k goes to pad k: slices 1-16 -> bank A, 17-32 -> bank B, ...
+    const int n = (int) slicePoints.size();
+
+    for (int pad = 0; pad < rz::numPads; ++pad)
+    {
+        const int k = pad;
+        if (k < n)
+        {
+            auto& ps = engine.getPad (pad);
+            ps.start = slicePoints[(size_t) k];
+            ps.end = (k + 1 < n) ? slicePoints[(size_t) k + 1] : 1.0f;
+            engine.setPadSample (pad, chopSource);
+            const juce::ScopedLock sl (missingPathLock);
+            missingPaths[(size_t) pad] = {};
+        }
+        else if (const auto old = engine.getPadSample (pad); old != nullptr && (old == chopSource || old == previousChopSource))
+        {
+            engine.setPadSample (pad, nullptr); // leftover slice from a previous chop
+        }
+    }
+    previousChopSource = nullptr;
     padsChanged.sendChangeMessage();
 }
 
@@ -389,19 +437,48 @@ bool RezalicaProcessor::chopFileToPads (const juce::File& file, int mode)
     if (s == nullptr)
         return false;
 
-    applySlices (s, findSlicePoints (*s, mode), 0);
+    setChopSource (s);
+    chopMode = mode;
+    rechop();
     return true;
 }
 
 void RezalicaProcessor::chopPadSample (int pad, int mode)
 {
     if (auto s = engine.getPadSample (pad))
-        applySlices (s, findSlicePoints (*s, mode), 0);
+    {
+        setChopSource (s);
+        chopMode = mode;
+        rechop();
+    }
+}
+
+void RezalicaProcessor::setChopMode (int mode)
+{
+    chopMode = mode;
+    if (auto s = engine.getPadSample (selectedPad.load()))
+        setChopSource (s);
+    rechop();
+}
+
+void RezalicaProcessor::setTransientSensitivity (float sensitivity01)
+{
+    transientSensitivity = juce::jlimit (0.0f, 1.0f, sensitivity01);
+    if (chopMode == chopTransients)
+        rechop();
 }
 
 void RezalicaProcessor::clearPad (int pad)
 {
+    const bool wasChopSource = chopSource != nullptr && engine.getPadSample (pad) == chopSource;
     engine.setPadSample (pad, nullptr);
+    if (wasChopSource)
+    {
+        bool stillUsed = false;
+        for (int i = 0; i < rz::numPads; ++i)
+            stillUsed = stillUsed || engine.getPadSample (i) == chopSource;
+        if (! stillUsed) { chopSource = nullptr; slicePoints.clear(); }
+    }
     engine.getPad (pad).resetPlayback();
     engine.getPad (pad).start = 0.0f;
     engine.getPad (pad).end = 1.0f;
@@ -437,6 +514,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
     juce::ValueTree root ("REZALICA");
     root.setProperty ("version", 1, nullptr);
     root.setProperty ("selectedPad", selectedPad.load(), nullptr);
+    root.setProperty ("bank", currentBank.load(), nullptr);
     root.appendChild (apvts.copyState(), nullptr);
 
     juce::ValueTree pads ("PADS");
@@ -487,6 +565,12 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
     }
     root.appendChild (seq, nullptr);
 
+    juce::ValueTree chop ("CHOP");
+    chop.setProperty ("mode", chopMode, nullptr);
+    chop.setProperty ("sensitivity", transientSensitivity, nullptr);
+    chop.setProperty ("source", chopSource != nullptr ? chopSource->file.getFullPathName() : juce::String(), nullptr);
+    root.appendChild (chop, nullptr);
+
     if (auto xml = root.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -506,6 +590,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         apvts.replaceState (params);
 
     selectedPad = juce::jlimit (0, rz::numPads - 1, (int) root.getProperty ("selectedPad", 0));
+    currentBank = juce::jlimit (0, rz::numBanks - 1, (int) root.getProperty ("bank", 0));
 
     auto pads = root.getChildWithName ("PADS");
     for (auto p : pads)
@@ -559,6 +644,22 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
             juce::MemoryBlock mb;
             mb.fromBase64Encoding (pat.getProperty ("steps").toString());
             sequencer.setPatternData (i, mb);
+        }
+    }
+
+    auto chop = root.getChildWithName ("CHOP");
+    chopSource = nullptr;
+    slicePoints.clear();
+    if (chop.isValid())
+    {
+        chopMode = (int) chop.getProperty ("mode", (int) chop16);
+        transientSensitivity = (float) chop.getProperty ("sensitivity", 0.5f);
+        juce::File src (chop.getProperty ("source").toString());
+        if (src.existsAsFile())
+        {
+            chopSource = loadSample (src);
+            if (chopSource != nullptr) // restore slice list without touching the (possibly edited) pads
+                slicePoints = findSlicePoints (*chopSource, chopMode, transientSensitivity);
         }
     }
 

@@ -113,6 +113,14 @@ void WaveformView::paint (juce::Graphics& g)
         g.drawVerticalLine ((int) px, mid - peaks[x].second * half, mid - peaks[x].first * half + 1.0f);
     }
 
+    // every slice of the chop source (there can be more slices than pads)
+    if (sample == processor.getChopSource())
+    {
+        g.setColour (text.withAlpha (0.12f));
+        for (auto pt : processor.getSlicePoints())
+            g.drawVerticalLine ((int) normToX (pt), area.getY(), area.getBottom());
+    }
+
     // other pads that use the same sample
     g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
     for (int i = 0; i < numPads; ++i)
@@ -122,7 +130,7 @@ void WaveformView::paint (juce::Graphics& g)
         const float x = normToX (processor.getEngine().getPad (i).start.load());
         g.setColour (text.withAlpha (0.35f));
         g.drawVerticalLine ((int) x, area.getY(), area.getBottom());
-        g.drawText (juce::String (i + 1), juce::Rectangle<float> (x + 2.0f, bounds.getY() + 2.0f, 20.0f, 14.0f), juce::Justification::left);
+        g.drawText (padLabel (i), juce::Rectangle<float> (x + 2.0f, bounds.getY() + 2.0f, 28.0f, 14.0f), juce::Justification::left);
     }
 
     // start / end markers
@@ -150,7 +158,7 @@ void WaveformView::paint (juce::Graphics& g)
     const double secs = sample->buffer.getNumSamples() / sample->sampleRate;
     g.drawText (sample->name + "   " + juce::String (secs, 2) + " s   " + juce::String ((int) sample->sampleRate) + " Hz",
                 juce::Rectangle<float> (area.getX(), area.getBottom() + 1.0f, area.getWidth(), 16.0f), juce::Justification::left);
-    g.drawText ("Pad " + juce::String (pad + 1) + "  " + juce::String (st * secs, 3) + " - " + juce::String (en * secs, 3) + " s",
+    g.drawText ("Pad " + padLabel (pad) + "  " + juce::String (st * secs, 3) + " - " + juce::String (en * secs, 3) + " s",
                 juce::Rectangle<float> (area.getX(), area.getBottom() + 1.0f, area.getWidth(), 16.0f), juce::Justification::right);
 }
 

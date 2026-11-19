@@ -21,6 +21,8 @@ public:
     std::function<void (int)> onClear;
     std::function<void (int, int)> onChop; // pad, mode
 
+    void setIndex (int i)                    { if (i != index) { index = i; flashLevel = 0.0f; held = false; repaint(); } }
+    int getIndex() const noexcept            { return index; }
     void setSelected (bool s)                { if (s != selected) { selected = s; repaint(); } }
     void setSampleName (const juce::String& n) { if (n != name) { name = n; repaint(); } }
     void flash()                             { flashLevel = 1.0f; repaint(); }
@@ -50,7 +52,7 @@ public:
         auto inner = b.reduced (8.0f, 6.0f);
         g.setColour (flashLevel > 0.5f ? juce::Colours::black : text);
         g.setFont (juce::FontOptions (22.0f, juce::Font::bold));
-        g.drawText (juce::String (index + 1), inner.removeFromTop (26.0f), juce::Justification::topLeft);
+        g.drawText (padLabel (index), inner.removeFromTop (26.0f), juce::Justification::topLeft);
 
         g.setFont (juce::FontOptions (11.0f));
         g.setColour (flashLevel > 0.5f ? juce::Colours::black : dim);
@@ -64,6 +66,7 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (onSelect) onSelect (index);
+        heldIndex = index;
 
         if (e.mods.isPopupMenu())
         {
@@ -83,7 +86,7 @@ public:
         if (held)
         {
             held = false;
-            processor.triggerPadFromUi (index, 0.0f, false);
+            processor.triggerPadFromUi (heldIndex, 0.0f, false);
             repaint();
         }
     }
@@ -112,6 +115,7 @@ private:
         m.addItem (2, "Clear pad", name.isNotEmpty());
         m.addSeparator();
         juce::PopupMenu chop;
+        chop.addItem (9, "2 equal slices");
         chop.addItem (10, "4 equal slices");
         chop.addItem (11, "8 equal slices");
         chop.addItem (12, "16 equal slices");
@@ -122,15 +126,16 @@ private:
         {
             if (r == 1 && onLoadRequest) onLoadRequest (index);
             if (r == 2 && onClear) onClear (index);
-            if (r >= 10 && r <= 13 && onChop)
-                onChop (index, r == 10 ? 4 : r == 11 ? 8 : r == 12 ? 16 : 0);
+            if (r >= 9 && r <= 13 && onChop)
+                onChop (index, r == 9 ? 2 : r == 10 ? 4 : r == 11 ? 8 : r == 12 ? 16 : 0);
         });
     }
 
     RezalicaProcessor& processor;
-    const int index;
+    int index;
     const juce::String key;
     juce::String name;
+    int heldIndex = 0;
     bool selected = false, held = false, dragOver = false;
     float flashLevel = 0.0f;
 };

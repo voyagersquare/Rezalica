@@ -1,11 +1,14 @@
 # Rezalica
 
-**Rezalica** je VST3 sampler za Windows (radi i kao samostalna aplikacija) u kojem režeš samplove na 16 padova i sviraš ih MIDI kontrolerom ili tipkovnicom računala. Ima i jednostavan sekvencer u zasebnom prozoru. Funkcije su inspirirane klasičnim hardverskim phrase samplerima.
+**Rezalica** je VST3 sampler za Windows (radi i kao samostalna aplikacija) u kojem režeš samplove na 64 pada (4 banke × 16) i sviraš ih MIDI kontrolerom ili tipkovnicom računala. Ima i jednostavan sekvencer u zasebnom prozoru. Funkcije su inspirirane klasičnim hardverskim phrase samplerima.
 
 ## Mogućnosti
 
-- **16 padova** (4×4). Svaki pad ima svoj sample ili isječak (slice) zajedničkog samplea.
-- **Rezanje (chop)**: učitaj zvuk i automatski ga izreži na **4, 8 ili 16 jednakih dijelova** ili **po tranzijentima** (udarcima).
+- **4 banke (A–D) × 16 padova = 64 pada.** Svaki pad ima svoj sample ili isječak (slice) zajedničkog samplea.
+- **Automatsko rezanje (chop)**: odaberi **2, 4, 8 ili 16 jednakih dijelova** ili **Transients** i sample se odmah ponovno izreže (reže se sample odabranog pada).
+  - U modu **Transients** kliznik **Sens** određuje osjetljivost: što je veća, to je više isječaka (do **64**).
+  - Isječci 1–16 idu u banku A, 17–32 u banku B, 33–48 u C i 49–64 u D. Banku biraš gumbima **A B C D** iznad padova.
+- Kad sviraš MIDI kontrolerom ili tipkovnicom, valni oblik prati pad koji si zadnji udario.
 - **Valni oblik**: vidiš sample, sve isječke i markere početka/kraja. Markere povlačiš mišem (Shift+klik pomiče najbliži marker), a klik na isječak odabire njegov pad.
 - **Postavke po padu**: Gain, Pan, Pitch (±24 polutona), Attack, Release, Start, End.
 - **Modovi pada**: `LOOP`, `REVERSE`, `GATE` (svira samo dok držiš), `FX` (šalje pad kroz efekte), `MUTE`.
@@ -14,8 +17,11 @@
   - **Filter + Drive**: niskopropusni filtar s rezonancijom i saturacijom
   - **Lo-Fi / Vinyl**: bit-crusher, smanjenje sample ratea i pucketanje ploče
   - **Delay**: slobodno vrijeme u ms ili sinkronizirano s tempom (1/4, 1/8, 1/8 s točkom, 1/16, triole)
+  - **Reverb**: Size, Damp, Width, Mix
+  - Efekti djeluju na svaki pad kojem je uključen `FX`.
 - **Sekvencer** (gumb `SEQUENCER` otvara zaseban prozor):
   - 8 patterna, duljina 4–32 koraka (šesnaestinke), swing
+  - gumbi A–D prikazuju redove banke koju uređuješ, a pattern svira svih 64 padova
   - `SYNC HOST`: prati transport i tempo DAW-a, a bez toga ima vlastiti BPM i `PLAY`
   - `REC`: snima ono što sviraš na padovima izravno u pattern
   - Shift+klik dodaje naglašeni korak, desni klik ili povlačenje briše
@@ -23,9 +29,17 @@
 
 ## Sviranje
 
+| Banka | MIDI note |
+|---|---|
+| A (A1–A16) | C1–D#2 (36–51) |
+| B (B1–B16) | E2–G3 (52–67) |
+| C (C1–C16) | G#3–B4 (68–83) |
+| D (D1–D16) | C5–D#6 (84–99) |
+
+Tipkovnica računala svira trenutno odabranu banku:
+
 | Pad | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| MIDI nota | C1 (36) | C#1 | D1 | D#1 | E1 | F1 | F#1 | G1 | G#1 | A1 | A#1 | B1 | C2 | C#2 | D2 | D#2 (51) |
 | Tipka | 1 | 2 | 3 | 4 | Q | W | E | R | A | S | D | F | Z | X | C | V |
 
 - `Space` pokreće i zaustavlja interni sekvencer, a `Esc` zaustavlja sve.
@@ -70,7 +84,7 @@ cmake --build build --config Release --target RezalicaTests
 |---|---|
 | `Source/SamplerEngine.*` | Glasovi, reprodukcija padova, loop, reverse, gate, envelope |
 | `Source/Sequencer.h` | Step sekvencer (sinkronizacija s DAW-om, swing, snimanje) |
-| `Source/FxChain.h` | Filter + Drive, Lo-Fi, Delay |
+| `Source/FxChain.h` | Filter + Drive, Lo-Fi, Delay, Reverb |
 | `Source/PluginProcessor.*` | Glavni procesor: MIDI, rezanje, detekcija tranzijenata, spremanje stanja |
 | `Source/PluginEditor.*` | Glavni prozor |
 | `Source/WaveformView.*`, `PadButton.h` | Valni oblik i padovi |

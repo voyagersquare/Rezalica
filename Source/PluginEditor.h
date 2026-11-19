@@ -29,7 +29,9 @@ private:
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
-    void selectPad (int pad);
+    void selectPad (int pad, bool grabFocus = true);
+    void setBank (int bank);
+    void refreshChopControls();
     void refreshPadControls();
     void refreshPadNames();
     void choosePadFile (int pad);
@@ -41,8 +43,12 @@ private:
     rz::RezalicaLookAndFeel lnf;
 
     // header
-    juce::TextButton loadChopButton { "LOAD & CHOP" }, rechopButton { "RE-CHOP" }, seqButton { "SEQUENCER" }, stopButton { "STOP ALL" };
+    juce::TextButton loadChopButton { "LOAD & CHOP" }, seqButton { "SEQUENCER" }, stopButton { "STOP ALL" };
     juce::ComboBox chopModeBox;
+    juce::Slider sensitivitySlider;
+    juce::Label sliceCountLabel;
+    std::array<juce::TextButton, rz::numBanks> bankButtons;
+    int lastPlayedCounter = 0;
     rz::Knob masterKnob { "MASTER" };
 
     // sample view + selected pad
@@ -56,10 +62,12 @@ private:
     // pads
     std::vector<std::unique_ptr<rz::PadButton>> pads;
     std::array<int, rz::numPads> lastHits {};
-    std::array<bool, rz::numPads> keyDown {};
+    std::array<bool, rz::padsPerBank> keyDown {};
+    std::array<int, rz::padsPerBank> keyPad {};   // which pad each held key started
 
     // effects
-    juce::TextButton filterOnButton { "FILTER + DRIVE" }, lofiOnButton { "LO-FI / VINYL" }, delayOnButton { "DELAY" };
+    juce::TextButton filterOnButton { "FILTER + DRIVE" }, lofiOnButton { "LO-FI / VINYL" }, delayOnButton { "DELAY" }, reverbOnButton { "REVERB" };
+    rz::Knob reverbSizeKnob { "SIZE" }, reverbDampKnob { "DAMP" }, reverbWidthKnob { "WIDTH" }, reverbMixKnob { "MIX" };
     rz::Knob cutoffKnob { "CUTOFF" }, resoKnob { "RESONANCE" }, driveKnob { "DRIVE" },
              bitsKnob { "BITS" }, rateKnob { "RATE" }, noiseKnob { "NOISE" },
              timeKnob { "TIME" }, feedbackKnob { "FEEDBACK" }, mixKnob { "MIX" };
@@ -74,7 +82,7 @@ private:
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::Rectangle<int> headerArea, sampleArea, padArea, fxArea;
-    juce::Rectangle<int> filterArea, lofiArea, delayArea;
+    juce::Rectangle<int> filterArea, lofiArea, delayArea, reverbArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RezalicaEditor)
 };

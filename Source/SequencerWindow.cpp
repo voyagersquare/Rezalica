@@ -12,13 +12,14 @@ int SequencerGrid::numSteps() const
 juce::Rectangle<float> SequencerGrid::cellBounds (int pad, int step) const
 {
     const float w = (float) (getWidth() - labelWidth) / (float) numSteps();
-    const float h = (float) getHeight() / (float) numPads;
+    const float h = (float) getHeight() / (float) padsPerBank;
     return { (float) labelWidth + (float) step * w, (float) pad * h, w, h };
 }
 
 bool SequencerGrid::cellAt (juce::Point<int> pos, int& pad, int& step) const
 {
-    pad = juce::jlimit (0, numPads - 1, pos.y * numPads / juce::jmax (1, getHeight()));
+    pad = processor.currentBank.load() * padsPerBank
+        + juce::jlimit (0, padsPerBank - 1, pos.y * padsPerBank / juce::jmax (1, getHeight()));
     if (pos.x < labelWidth)
     {
         step = -1;
@@ -35,23 +36,25 @@ void SequencerGrid::paint (juce::Graphics& g)
     const int pattern = seq.currentPattern.load();
     const int steps = numSteps();
     const int current = seq.currentStep.load();
-    const float rowH = (float) getHeight() / (float) numPads;
+    const float rowH = (float) getHeight() / (float) padsPerBank;
+    const int bankBase = processor.currentBank.load() * padsPerBank;
 
-    for (int pad = 0; pad < numPads; ++pad)
+    for (int row = 0; row < padsPerBank; ++row)
     {
-        auto label = juce::Rectangle<float> (0.0f, (float) pad * rowH, (float) labelWidth - 4.0f, rowH).reduced (1.0f);
+        const int pad = bankBase + row;
+        auto label = juce::Rectangle<float> (0.0f, (float) row * rowH, (float) labelWidth - 4.0f, rowH).reduced (1.0f);
         g.setColour (pad == processor.selectedPad.load() ? panelLight.brighter (0.1f) : panel);
         g.fillRoundedRectangle (label, 3.0f);
         g.setColour (text);
         g.setFont (juce::FontOptions (juce::jmin (13.0f, rowH * 0.6f), juce::Font::bold));
-        g.drawText (juce::String (pad + 1), label.reduced (6.0f, 0.0f), juce::Justification::centredLeft);
+        g.drawText (padLabel (pad), label.reduced (6.0f, 0.0f), juce::Justification::centredLeft);
         g.setColour (dim);
         g.setFont (juce::FontOptions (juce::jmin (11.0f, rowH * 0.55f)));
-        g.drawText (processor.getPadName (pad), label.reduced (6.0f, 0.0f).withTrimmedLeft (20.0f), juce::Justification::centredLeft, true);
+        g.drawText (processor.getPadName (pad), label.reduced (6.0f, 0.0f).withTrimmedLeft (30.0f), juce::Justification::centredLeft, true);
 
         for (int s = 0; s < steps; ++s)
         {
-            auto cell = cellBounds (pad, s).reduced (1.5f);
+            auto cell = cellBounds (row, s).reduced (1.5f);
             const bool beatStart = (s / 4) % 2 == 0;
             juce::Colour c = beatStart ? juce::Colour (0xff2b2e35) : juce::Colour (0xff24262c);
             if (s == current) c = c.brighter (0.25f);
@@ -199,6 +202,17 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p) : processor (p), grid (p)
         addAndMakeVisible (*s);
     }
 
+    for (int b = 0; b < numBanks; ++b)
+    {
+        auto& bb = bankButtons[(size_t) b];
+        bb.setButtonText (juce::String::charToString ((juce::juce_wchar) ('A' + b)));
+        bb.setClickingTogglesState (true);
+        bb.setRadioGroupId (4712);
+        bb.setWantsKeyboardFocus (false);
+        bb.onClick = [this, b] { if (bankButtons[(size_t) b].getToggleState()) { processor.currentBank = b; grid.repaint(); } };
+        addAndMakeVisible (bb);
+    }
+
     infoLabel.setText ("Click = step on/off   Shift+click = accent   Right-click/drag = erase   Click a pad name = audition. "
                        "With SYNC HOST on, the pattern follows your DAW transport.",
                        juce::dontSendNotification);
@@ -207,7 +221,7 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p) : processor (p), grid (p)
     addAndMakeVisible (grid);
 
     syncControls();
-    setSize (980, 600);
+    setSize (1000, 640);
     startTimerHz (30);
 }
 
@@ -223,6 +237,8 @@ void SequencerPanel::syncControls()
     recButton.setToggleState (s.recording.load(), juce::dontSendNotification);
     syncButton.setToggleState (s.syncToHost.load(), juce::dontSendNotification);
     patternBox.setSelectedId (s.currentPattern.load() + 1, juce::dontSendNotification);
+    for (int b = 0; b < numBanks; ++b)
+        bankButtons[(size_t) b].setToggleState (b == processor.currentBank.load(), juce::dontSendNotification);
     lengthBox.setSelectedId (s.length[(size_t) s.currentPattern.load()].load(), juce::dontSendNotification);
     if (! bpmSlider.isMouseButtonDown())
         bpmSlider.setValue (s.syncToHost.load() ? s.effectiveBpm.load() : s.bpm.load(), juce::dontSendNotification);
@@ -255,6 +271,14 @@ void SequencerPanel::resized()
     swingSlider.setBounds (top.removeFromLeft (110)); top.removeFromLeft (12);
     copyButton.setBounds (top.removeFromRight (110)); top.removeFromRight (6);
     clearButton.setBounds (top.removeFromRight (70));
+
+    b.removeFromTop (6);
+    auto bankRow = b.removeFromTop (26);
+    for (auto& bb : bankButtons)
+    {
+        bb.setBounds (bankRow.removeFromLeft (40));
+        bankRow.removeFromLeft (4);
+    }
 
     b.removeFromTop (6);
     infoLabel.setBounds (b.removeFromBottom (22));

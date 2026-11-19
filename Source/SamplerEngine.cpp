@@ -195,6 +195,12 @@ void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer)
 
     auto& ps = settings[(size_t) pad];
     auto s = audioPads[(size_t) pad];
+    if (! fromSequencer)
+    {
+        lastPlayedPad = pad;
+        ++playedCounter;
+    }
+
     if (s == nullptr || ps.mute.load())
         return;
 

@@ -6,8 +6,16 @@
 
 namespace rz
 {
-constexpr int numPads = 16;
+constexpr int padsPerBank = 16;
+constexpr int numBanks = 4;                       // banks A-D
+constexpr int numPads = padsPerBank * numBanks;   // 64 pads in total
 constexpr int maxVoices = 32;
+
+/** "A1" ... "D16" */
+inline juce::String padLabel (int pad)
+{
+    return juce::String::charToString ((juce::juce_wchar) ('A' + pad / padsPerBank)) + juce::String (pad % padsPerBank + 1);
+}
 
 /** One loaded audio file. Always stored as 2 channels at its original sample rate. */
 struct SampleData : public juce::ReferenceCountedObject
@@ -96,6 +104,8 @@ public:
     // ---- for the UI ----
     std::array<std::atomic<int>, numPads> hitCounter;
     std::array<std::atomic<float>, numPads> playPosition; // -1 when not playing
+    std::atomic<int> lastPlayedPad { -1 };   // last pad hit by MIDI / keyboard / mouse (not the sequencer)
+    std::atomic<int> playedCounter { 0 };
 
 private:
     bool isPadPlaying (int pad) const;

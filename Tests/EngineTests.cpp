@@ -46,7 +46,7 @@ int main (int argc, char** argv)
     RezalicaProcessor p;
     p.prepareToPlay (48000.0, 512);
 
-    check (renderBlocks (p, 4) == 0.0f, "silent with no samples");
+    check (renderBlocks (p, 4) < 1.0e-9f, "silent with no samples");
 
     check (p.chopFileToPads (file, RezalicaProcessor::chopTransients), "load & chop by transients");
     int slicesFound = 0;
@@ -55,6 +55,47 @@ int main (int argc, char** argv)
     std::cout << "       transient slices: " << slicesFound << "\n";
     check (slicesFound == 8, "8 transients detected");
     check (std::abs (p.getEngine().getPad (3).start.load() - 3.0f / 8.0f) < 0.01f, "slice 4 starts near 3/8");
+
+    // Equal chop modes re-chop automatically and clear leftovers
+    p.selectedPad = 0;
+    p.setChopMode (RezalicaProcessor::chop2);
+    check (p.getEngine().getPadSample (1) != nullptr && p.getEngine().getPadSample (2) == nullptr, "auto re-chop to 2 slices clears pads 3+");
+    p.setChopMode (RezalicaProcessor::chop16);
+    check (p.getNumSlices() == 16 && p.getEngine().getPadSample (15) != nullptr, "auto re-chop to 16 slices");
+
+    // Long sample: many transients spread over banks A-D
+    auto longFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_long.wav");
+    {
+        juce::AudioBuffer<float> b (1, 44100 * 20);
+        b.clear();
+        for (int k = 0; k < 70; ++k)  // 70 hits, ~0.28 s apart
+            for (int i = 0; i < 1500; ++i)
+                b.setSample (0, k * 12600 + i, (0.3f + 0.5f * (float) (k % 5) / 4.0f) * std::sin (i * 0.07f) * (1.0f - i / 1500.0f));
+        juce::WavAudioFormat wav;
+        longFile.deleteFile();
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (longFile), 44100, 1, 16, {}, 0));
+        w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+    }
+    p.setTransientSensitivity (0.1f);
+    p.chopFileToPads (longFile, RezalicaProcessor::chopTransients);
+    const int lowSens = p.getNumSlices();
+    p.setTransientSensitivity (1.0f);
+    const int highSens = p.getNumSlices();
+    std::cout << "       transient slices at 10% / 100% sensitivity: " << lowSens << " / " << highSens << "\n";
+    check (highSens == RezalicaProcessor::maxSlices, "max sensitivity gives 64 slices");
+    check (lowSens < highSens, "lower sensitivity gives fewer slices");
+    check (p.getEngine().getPadSample (63) != nullptr, "slice 64 lands on pad D16");
+
+    juce::MidiBuffer bankMidi;
+    bankMidi.addEvent (juce::MidiMessage::noteOn (1, RezalicaProcessor::midiBaseNote + 16, (juce::uint8) 100), 0);
+    const int bHits = p.getEngine().hitCounter[16].load();
+    renderBlocks (p, 4, bankMidi);
+    check (p.getEngine().hitCounter[16].load() == bHits + 1 && p.getEngine().lastPlayedPad.load() == 16, "MIDI E2 plays pad B1 and is tracked for the UI");
+    renderBlocks (p, 60);
+
+    p.chopFileToPads (file, RezalicaProcessor::chopTransients);
+    p.setTransientSensitivity (0.5f);
+    check (p.getNumSlices() == 8 && p.getEngine().getPadSample (8) == nullptr, "re-chopping a short sample clears banks B-D");
 
     juce::MidiBuffer midi;
     midi.addEvent (juce::MidiMessage::noteOn (1, RezalicaProcessor::midiBaseNote + 2, (juce::uint8) 100), 10);
@@ -81,6 +122,7 @@ int main (int argc, char** argv)
     *p.getApvts().getRawParameterValue ("filterOn") = 1.0f;
     *p.getApvts().getRawParameterValue ("lofiOn") = 1.0f;
     *p.getApvts().getRawParameterValue ("delayOn") = 1.0f;
+    *p.getApvts().getRawParameterValue ("reverbOn") = 1.0f;
     midi.clear();
     midi.addEvent (juce::MidiMessage::noteOn (1, RezalicaProcessor::midiBaseNote, (juce::uint8) 127), 0);
     peak = renderBlocks (p, 100, midi);
@@ -100,6 +142,7 @@ int main (int argc, char** argv)
         for (int s = 2; s < 16; s += 4) q.getSequencer().setStep (0, 4, s, 127);
         for (int s = 0; s < 16; s += 2) q.getSequencer().setStep (0, 7, s, 70);
         q.selectedPad = 2;
+        q.setTransientSensitivity (0.5f);
         q.getEngine().getPad (2).loop = true;
         std::unique_ptr<juce::AudioProcessorEditor> ed (q.createEditor());
         ed->setVisible (true);
@@ -121,6 +164,7 @@ int main (int argc, char** argv)
     }
 
     file.deleteFile();
+    longFile.deleteFile();
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

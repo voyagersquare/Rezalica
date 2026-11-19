@@ -5,7 +5,7 @@
 
 namespace rz
 {
-/** Effect chain for the FX bus: Filter+Drive -> Lo-Fi -> Delay. */
+/** Effect chain for the FX bus: Filter+Drive -> Lo-Fi -> Delay -> Reverb. */
 class FxChain
 {
 public:
@@ -17,6 +17,8 @@ public:
         float bits = 12.0f, rateDivide = 4.0f, noise = 0.2f;
         bool delayOn = false;
         float delaySamples = 10000.0f, feedback = 0.35f, mix = 0.3f;
+        bool reverbOn = false;
+        float reverbSize = 0.5f, reverbDamping = 0.4f, reverbWidth = 1.0f, reverbMix = 0.3f;
     };
 
     void prepare (double newSampleRate, int maxBlockSize)
@@ -27,12 +29,14 @@ public:
 
         delayBuffer.setSize (2, (int) (sampleRate * 2.5) + 4);
         delayTime.reset (sampleRate, 0.08);
+        reverb.setSampleRate (sampleRate);
         reset();
     }
 
     void reset()
     {
         filter.reset();
+        reverb.reset();
         delayBuffer.clear();
         writePos = 0;
         holdL = holdR = 0.0f;
@@ -121,6 +125,23 @@ public:
         {
             delayTime.setCurrentAndTargetValue (juce::jlimit (1.0f, (float) (delayBuffer.getNumSamples() - 2), p.delaySamples));
         }
+
+        if (p.reverbOn)
+        {
+            juce::Reverb::Parameters rp;
+            rp.roomSize = juce::jlimit (0.0f, 1.0f, p.reverbSize);
+            rp.damping = juce::jlimit (0.0f, 1.0f, p.reverbDamping);
+            rp.width = juce::jlimit (0.0f, 1.0f, p.reverbWidth);
+            rp.wetLevel = juce::jlimit (0.0f, 1.0f, p.reverbMix) * 0.6f;
+            rp.dryLevel = 1.0f - 0.5f * juce::jlimit (0.0f, 1.0f, p.reverbMix);
+            reverb.setParameters (rp);
+            reverb.processStereo (L, R, numSamples);
+        }
+        else if (reverbWasOn)
+        {
+            reverb.reset();
+        }
+        reverbWasOn = p.reverbOn;
     }
 
 private:
@@ -133,5 +154,8 @@ private:
     juce::AudioBuffer<float> delayBuffer;
     int writePos = 0;
     juce::SmoothedValue<float> delayTime { 10000.0f };
+
+    juce::Reverb reverb;
+    bool reverbWasOn = false;
 };
 } // namespace rz

@@ -47,6 +47,7 @@ private:
     juce::ComboBox patternBox, lengthBox;
     juce::Slider bpmSlider, swingSlider;
     juce::Label bpmLabel, swingLabel, patternLabel, lengthLabel, infoLabel;
+    std::array<juce::TextButton, numBanks> bankButtons;
     SequencerGrid grid;
 };
 

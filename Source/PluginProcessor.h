@@ -10,7 +10,7 @@ class RezalicaProcessor : public juce::AudioProcessor,
                           private juce::Timer
 {
 public:
-    static constexpr int midiBaseNote = 36; // C1 = pad 1 ... D#2 = pad 16
+    static constexpr int midiBaseNote = 36; // C1 = A1 ... D#2 = A16, E2 = B1 ... D#7 = D16
 
     RezalicaProcessor();
     ~RezalicaProcessor() override;
@@ -28,7 +28,7 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 2.5; }
+    double getTailLengthSeconds() const override { return 5.0; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -41,12 +41,21 @@ public:
 
     //==============================================================================
     // Message-thread API used by the editor
-    enum ChopMode { chop4 = 4, chop8 = 8, chop16 = 16, chopTransients = 0 };
+    enum ChopMode { chop2 = 2, chop4 = 4, chop8 = 8, chop16 = 16, chopTransients = 0 };
+    static constexpr int maxSlices = 64;
 
     bool loadFileToPad (int pad, const juce::File& file);
-    bool chopFileToPads (const juce::File& file, int mode);
-    void chopPadSample (int pad, int mode);
+    bool chopFileToPads (const juce::File& file, int mode);   // file becomes the chop source
+    void chopPadSample (int pad, int mode);                   // pad's sample becomes the chop source
+    void setChopMode (int mode);                              // re-chops the selected pad's sample automatically
+    void setTransientSensitivity (float sensitivity01);       // re-chops when in transient mode
     void clearPad (int pad);
+
+    int getChopMode() const noexcept               { return chopMode; }
+    float getTransientSensitivity() const noexcept { return transientSensitivity; }
+    int getNumSlices() const noexcept              { return (int) slicePoints.size(); }
+    rz::SampleData::Ptr getChopSource() const      { return chopSource; }
+    const std::vector<float>& getSlicePoints() const noexcept { return slicePoints; }
     juce::String getPadName (int pad) const;
 
     void triggerPadFromUi (int pad, float velocity, bool isNoteOn);
@@ -58,6 +67,7 @@ public:
     juce::AudioFormatManager& getFormatManager() noexcept { return formatManager; }
 
     std::atomic<int> selectedPad { 0 };
+    std::atomic<int> currentBank { 0 }; // bank shown in the UI and played by the computer keyboard
     juce::ChangeBroadcaster padsChanged; // pad samples / settings replaced
 
 private:
@@ -71,11 +81,12 @@ private:
     };
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
-    static std::vector<float> findSlicePoints (const rz::SampleData& s, int mode);
+    static std::vector<float> findSlicePoints (const rz::SampleData& s, int mode, float sensitivity);
 
     void timerCallback() override;
     rz::SampleData::Ptr loadSample (const juce::File& file);
-    void applySlices (const rz::SampleData::Ptr& s, const std::vector<float>& points, int firstPad);
+    void rechop();
+    void applySlices();
     void addEvent (int offset, int type, int pad, float velocity);
     rz::FxChain::Params readFxParams() const;
 
@@ -85,6 +96,13 @@ private:
     rz::SamplerEngine engine;
     rz::Sequencer sequencer;
     rz::FxChain fx;
+
+    // chop state (message thread)
+    rz::SampleData::Ptr chopSource, previousChopSource;
+    void setChopSource (rz::SampleData::Ptr s);
+    int chopMode = chop16;
+    float transientSensitivity = 0.5f;
+    std::vector<float> slicePoints;
 
     juce::ReferenceCountedArray<rz::SampleData> samplePool; // owns all loaded samples (message thread)
 
@@ -109,6 +127,9 @@ private:
     std::atomic<float>* pDelayOn = nullptr; std::atomic<float>* pDelayDiv = nullptr;
     std::atomic<float>* pDelayTime = nullptr; std::atomic<float>* pFeedback = nullptr;
     std::atomic<float>* pDelayMix = nullptr;
+    std::atomic<float>* pReverbOn = nullptr; std::atomic<float>* pReverbSize = nullptr;
+    std::atomic<float>* pReverbDamp = nullptr; std::atomic<float>* pReverbWidth = nullptr;
+    std::atomic<float>* pReverbMix = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RezalicaProcessor)
 };

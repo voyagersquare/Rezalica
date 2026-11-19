@@ -63,10 +63,9 @@ public:
     void setPatternData (int pattern, const juce::MemoryBlock& mb)
     {
         clearPattern (pattern);
-        if (mb.getSize() < (size_t) (numPads * maxSteps))
-            return;
+        const int padsInData = (int) (mb.getSize() / (size_t) maxSteps); // older versions stored 16 pads
         auto* d = static_cast<const juce::uint8*> (mb.getData());
-        for (int p = 0; p < numPads; ++p)
+        for (int p = 0; p < juce::jmin (numPads, padsInData); ++p)
             for (int s = 0; s < maxSteps; ++s)
                 setStep (pattern, p, s, d[p * maxSteps + s]);
     }

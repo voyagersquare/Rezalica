@@ -34,25 +34,54 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     };
 
     // ---- header ----
-    for (auto* b : { &loadChopButton, &rechopButton, &seqButton, &stopButton })
+    for (auto* b : { &loadChopButton, &seqButton, &stopButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (*b);
     }
     styleToggle (seqButton, rz::colours::accent2);
     loadChopButton.onClick = [this] { chooseChopFile(); };
-    rechopButton.onClick = [this] { processor.chopPadSample (processor.selectedPad.load(), chopModeFromBox()); };
+    sliceCountLabel.setJustificationType (juce::Justification::centredLeft);
+    sliceCountLabel.setColour (juce::Label::textColourId, rz::colours::dim);
+    addAndMakeVisible (sliceCountLabel);
+
+    for (int b = 0; b < rz::numBanks; ++b)
+    {
+        auto& bb = bankButtons[(size_t) b];
+        bb.setButtonText (juce::String::charToString ((juce::juce_wchar) ('A' + b)));
+        bb.setClickingTogglesState (true);
+        bb.setRadioGroupId (4711);
+        bb.setWantsKeyboardFocus (false);
+        bb.setTooltip ("Bank " + bb.getButtonText() + " (pads " + rz::padLabel (b * rz::padsPerBank) + "-" + rz::padLabel (b * rz::padsPerBank + 15) + ")");
+        bb.onClick = [this, b] { if (bankButtons[(size_t) b].getToggleState()) setBank (b); };
+        addAndMakeVisible (bb);
+    }
     seqButton.onClick = [this] { toggleSequencerWindow(); };
     stopButton.onClick = [this] { processor.stopAll(); };
     loadChopButton.setTooltip ("Load an audio file and slice it across the pads");
 
-    chopModeBox.addItem ("4 slices", 1);
-    chopModeBox.addItem ("8 slices", 2);
-    chopModeBox.addItem ("16 slices", 3);
-    chopModeBox.addItem ("Transients", 4);
-    chopModeBox.setSelectedId (3, juce::dontSendNotification);
+    chopModeBox.addItem ("2 slices", 1);
+    chopModeBox.addItem ("4 slices", 2);
+    chopModeBox.addItem ("8 slices", 3);
+    chopModeBox.addItem ("16 slices", 4);
+    chopModeBox.addItem ("Transients", 5);
     chopModeBox.setWantsKeyboardFocus (false);
+    chopModeBox.setTooltip ("Changing this re-chops the selected pad's sample automatically");
+    chopModeBox.onChange = [this] { processor.setChopMode (chopModeFromBox()); refreshChopControls(); };
     addAndMakeVisible (chopModeBox);
+
+    sensitivitySlider.setSliderStyle (juce::Slider::LinearBar);
+    sensitivitySlider.setRange (0.0, 100.0, 1.0);
+    sensitivitySlider.textFromValueFunction = [] (double v) { return "Sens " + juce::String ((int) v) + "%"; };
+    sensitivitySlider.setWantsKeyboardFocus (false);
+    sensitivitySlider.setColour (juce::Slider::trackColourId, rz::colours::accent2.withAlpha (0.5f));
+    sensitivitySlider.setTooltip ("Transient sensitivity: higher finds more slices (up to 64)");
+    sensitivitySlider.onValueChange = [this]
+    {
+        processor.setTransientSensitivity ((float) sensitivitySlider.getValue() / 100.0f);
+        refreshChopControls();
+    };
+    addAndMakeVisible (sensitivitySlider);
 
     attachSlider (masterKnob, "master");
     masterKnob.slider.setSliderStyle (juce::Slider::LinearBar);
@@ -64,7 +93,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     addAndMakeVisible (waveform);
     waveform.onPadSelected = [this] (int pad) { selectPad (pad); };
     waveform.onRegionChanged = [this] { refreshPadControls(); };
-    waveform.onFileDropped = [this] (const juce::File& f) { processor.chopFileToPads (f, chopModeFromBox()); selectPad (0); };
+    waveform.onFileDropped = [this] (const juce::File& f) { processor.chopFileToPads (f, chopModeFromBox()); selectPad (0); refreshChopControls(); };
 
     // ---- selected pad controls ----
     padTitle.setFont (juce::FontOptions (16.0f, juce::Font::bold));
@@ -120,17 +149,19 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     clearPadButton.onClick = [this] { processor.clearPad (processor.selectedPad.load()); };
 
     // ---- pads ----
-    for (int i = 0; i < rz::numPads; ++i)
+    const int startBank = juce::jlimit (0, rz::numBanks - 1, processor.currentBank.load());
+    for (int i = 0; i < rz::padsPerBank; ++i)
     {
-        auto pad = std::make_unique<rz::PadButton> (processor, i, juce::String::charToString ((juce::juce_wchar) padKeys[i]));
+        auto pad = std::make_unique<rz::PadButton> (processor, startBank * rz::padsPerBank + i, juce::String::charToString ((juce::juce_wchar) padKeys[i]));
         pad->onSelect = [this] (int idx) { selectPad (idx); };
         pad->onLoadRequest = [this] (int idx) { choosePadFile (idx); };
         pad->onClear = [this] (int idx) { processor.clearPad (idx); };
-        pad->onChop = [this] (int idx, int mode) { processor.chopPadSample (idx, mode); selectPad (0); };
+        pad->onChop = [this] (int idx, int mode) { processor.chopPadSample (idx, mode); selectPad (0); refreshChopControls(); };
         addAndMakeVisible (*pad);
         pads.push_back (std::move (pad));
-        lastHits[(size_t) i] = processor.getEngine().hitCounter[(size_t) i].load();
     }
+    for (int i = 0; i < rz::numPads; ++i)
+        lastHits[(size_t) i] = processor.getEngine().hitCounter[(size_t) i].load();
 
     // ---- effects ----
     attachButton (filterOnButton, "filterOn");
@@ -149,6 +180,11 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     cutoffKnob.slider.setTextValueSuffix (" Hz");
     attachSlider (feedbackKnob, "feedback");
     attachSlider (mixKnob, "delayMix");
+    attachButton (reverbOnButton, "reverbOn");
+    attachSlider (reverbSizeKnob, "reverbSize");
+    attachSlider (reverbDampKnob, "reverbDamp");
+    attachSlider (reverbWidthKnob, "reverbWidth");
+    attachSlider (reverbMixKnob, "reverbMix");
 
     delayDivBox.addItemList (processor.getApvts().getParameter ("delayDiv")->getAllValueStrings(), 1);
     delayDivBox.setWantsKeyboardFocus (false);
@@ -161,9 +197,13 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     processor.padsChanged.addChangeListener (this);
 
-    setSize (1080, 720);
+    lastPlayedCounter = processor.getEngine().playedCounter.load();
+
+    setSize (1180, 720);
+    setBank (startBank);
     selectPad (juce::jlimit (0, rz::numPads - 1, processor.selectedPad.load()));
     refreshPadNames();
+    refreshChopControls();
     startTimerHz (30);
 }
 
@@ -176,14 +216,52 @@ RezalicaEditor::~RezalicaEditor()
 }
 
 //==============================================================================
-void RezalicaEditor::selectPad (int pad)
+void RezalicaEditor::setBank (int bank)
+{
+    bank = juce::jlimit (0, rz::numBanks - 1, bank);
+    processor.currentBank = bank;
+    for (int i = 0; i < (int) pads.size(); ++i)
+        pads[(size_t) i]->setIndex (bank * rz::padsPerBank + i);
+    for (int b = 0; b < rz::numBanks; ++b)
+        bankButtons[(size_t) b].setToggleState (b == bank, juce::dontSendNotification);
+    refreshPadNames();
+    for (auto& p : pads)
+        p->setSelected (p->getIndex() == processor.selectedPad.load());
+    repaint (padArea);
+}
+
+void RezalicaEditor::selectPad (int pad, bool grabFocus)
 {
     processor.selectedPad = pad;
-    for (int i = 0; i < (int) pads.size(); ++i)
-        pads[(size_t) i]->setSelected (i == pad);
+    if (pad / rz::padsPerBank != processor.currentBank.load())
+        setBank (pad / rz::padsPerBank);
+    for (auto& p : pads)
+        p->setSelected (p->getIndex() == pad);
     waveform.setPad (pad);
     refreshPadControls();
-    grabKeyboardFocus();
+    if (grabFocus)
+        grabKeyboardFocus();
+}
+
+void RezalicaEditor::refreshChopControls()
+{
+    const int mode = processor.getChopMode();
+    const int id = mode == RezalicaProcessor::chop2 ? 1 : mode == RezalicaProcessor::chop4 ? 2
+                 : mode == RezalicaProcessor::chop8 ? 3 : mode == RezalicaProcessor::chopTransients ? 5 : 4;
+    chopModeBox.setSelectedId (id, juce::dontSendNotification);
+
+    const bool transient = mode == RezalicaProcessor::chopTransients;
+    sensitivitySlider.setVisible (transient);
+    if (! sensitivitySlider.isMouseButtonDown())
+        sensitivitySlider.setValue (processor.getTransientSensitivity() * 100.0, juce::dontSendNotification);
+
+    const int n = processor.getNumSlices();
+    juce::String text;
+    if (n > rz::padsPerBank)
+        text = juce::String (n) + " slices (banks A-" + juce::String::charToString ((juce::juce_wchar) ('A' + (n - 1) / rz::padsPerBank)) + ")";
+    else if (n > 0)
+        text = juce::String (n) + " slices";
+    sliceCountLabel.setText (text, juce::dontSendNotification);
 }
 
 void RezalicaEditor::refreshPadControls()
@@ -192,7 +270,7 @@ void RezalicaEditor::refreshPadControls()
     auto& s = processor.getEngine().getPad (pad);
 
     auto name = processor.getPadName (pad);
-    padTitle.setText ("PAD " + juce::String (pad + 1) + (name.isNotEmpty() ? "  -  " + name : juce::String ("  -  empty")),
+    padTitle.setText ("PAD " + rz::padLabel (pad) + (name.isNotEmpty() ? "  -  " + name : juce::String ("  -  empty")),
                       juce::dontSendNotification);
 
     gainKnob.slider.setValue (s.gainDb.load(), juce::dontSendNotification);
@@ -212,17 +290,29 @@ void RezalicaEditor::refreshPadControls()
 
 void RezalicaEditor::refreshPadNames()
 {
-    for (int i = 0; i < (int) pads.size(); ++i)
-        pads[(size_t) i]->setSampleName (processor.getPadName (i));
+    for (auto& p : pads)
+        p->setSampleName (processor.getPadName (p->getIndex()));
+
+    for (int b = 0; b < rz::numBanks; ++b)
+    {
+        bool used = false;
+        for (int i = 0; i < rz::padsPerBank && ! used; ++i)
+            used = processor.getEngine().getPadSample (b * rz::padsPerBank + i) != nullptr;
+        const auto letter = juce::String::charToString ((juce::juce_wchar) ('A' + b));
+        bankButtons[(size_t) b].setButtonText (used ? letter + " *" : letter);
+    }
 }
 
 void RezalicaEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 {
     refreshPadNames();
+    refreshChopControls();
     waveform.refresh();
     refreshPadControls();
-    for (int i = 0; i < (int) pads.size(); ++i)
-        pads[(size_t) i]->setSelected (i == processor.selectedPad.load());
+    if (processor.currentBank.load() != pads[0]->getIndex() / rz::padsPerBank)
+        setBank (processor.currentBank.load());
+    for (auto& p : pads)
+        p->setSelected (p->getIndex() == processor.selectedPad.load());
 }
 
 void RezalicaEditor::timerCallback()
@@ -230,24 +320,31 @@ void RezalicaEditor::timerCallback()
     for (int i = 0; i < rz::numPads; ++i)
     {
         const int h = processor.getEngine().hitCounter[(size_t) i].load();
-        if (h != lastHits[(size_t) i])
-        {
-            lastHits[(size_t) i] = h;
-            pads[(size_t) i]->flash();
-        }
-        else
-        {
-            pads[(size_t) i]->decay();
-        }
+        const bool hit = h != lastHits[(size_t) i];
+        lastHits[(size_t) i] = h;
+        for (auto& p : pads)
+            if (p->getIndex() == i)
+                hit ? p->flash() : p->decay();
+    }
+
+    // follow pads played from MIDI / computer keyboard: show them in the waveform
+    const int played = processor.getEngine().playedCounter.load();
+    if (played != lastPlayedCounter)
+    {
+        lastPlayedCounter = played;
+        const int pad = processor.getEngine().lastPlayedPad.load();
+        if (pad >= 0 && pad < rz::numPads && pad != processor.selectedPad.load())
+            selectPad (pad, false);
     }
 
     waveform.updatePlayhead();
 
     // the selected pad can also be changed from the sequencer window
     const int sel = processor.selectedPad.load();
-    if (! pads[(size_t) sel]->isMouseButtonDown())
-        for (int i = 0; i < rz::numPads; ++i)
-            pads[(size_t) i]->setSelected (i == sel);
+    if (processor.currentBank.load() != pads[0]->getIndex() / rz::padsPerBank)
+        setBank (processor.currentBank.load()); // bank changed from the sequencer window
+    for (auto& p : pads)
+        p->setSelected (p->getIndex() == sel);
 
     if (sequencerWindow != nullptr)
         seqButton.setToggleState (sequencerWindow->isVisible(), juce::dontSendNotification);
@@ -257,9 +354,10 @@ int RezalicaEditor::chopModeFromBox() const
 {
     switch (chopModeBox.getSelectedId())
     {
-        case 1: return RezalicaProcessor::chop4;
-        case 2: return RezalicaProcessor::chop8;
-        case 4: return RezalicaProcessor::chopTransients;
+        case 1: return RezalicaProcessor::chop2;
+        case 2: return RezalicaProcessor::chop4;
+        case 3: return RezalicaProcessor::chop8;
+        case 5: return RezalicaProcessor::chopTransients;
         default: return RezalicaProcessor::chop16;
     }
 }
@@ -286,7 +384,10 @@ void RezalicaEditor::chooseChopFile()
     {
         auto f = fc.getResult();
         if (f.existsAsFile() && processor.chopFileToPads (f, chopModeFromBox()))
+        {
             selectPad (0);
+            refreshChopControls();
+        }
     });
 }
 
@@ -330,13 +431,15 @@ bool RezalicaEditor::keyPressed (const juce::KeyPress& key)
 bool RezalicaEditor::keyStateChanged (bool)
 {
     bool used = false;
-    for (int i = 0; i < rz::numPads; ++i)
+    for (int i = 0; i < rz::padsPerBank; ++i)
     {
         const bool down = juce::KeyPress::isKeyCurrentlyDown ((int) padKeys[i]);
         if (down != keyDown[(size_t) i])
         {
             keyDown[(size_t) i] = down;
-            processor.triggerPadFromUi (i, down ? 1.0f : 0.0f, down);
+            if (down)
+                keyPad[(size_t) i] = processor.currentBank.load() * rz::padsPerBank + i;
+            processor.triggerPadFromUi (keyPad[(size_t) i], down ? 1.0f : 0.0f, down);
             used = true;
         }
     }
@@ -366,16 +469,24 @@ void RezalicaEditor::paint (juce::Graphics& g)
     // title
     g.setColour (accent);
     g.setFont (juce::FontOptions (26.0f, juce::Font::bold));
-    g.drawText ("REZALICA", headerArea.withWidth (160), juce::Justification::centredLeft);
+    g.drawText ("REZALICA", headerArea.withWidth (160).withTrimmedBottom (10), juce::Justification::centredLeft);
     g.setColour (dim);
-    g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("16-PAD SLICE SAMPLER", headerArea.withX (headerArea.getX() + 150).withWidth (140), juce::Justification::centredLeft);
+    g.setFont (juce::FontOptions (10.0f));
+    g.drawText ("SLICE SAMPLER  4 x 16 PADS", headerArea.withWidth (160).withTrimmedTop (28), juce::Justification::centredLeft);
 
     drawPanel (sampleArea, {});
-    drawPanel (padArea, "PADS   (MIDI C1-D#2  /  keys 1-4 Q-R A-F Z-V)");
+    {
+        const int bank = processor.currentBank.load();
+        const int lo = RezalicaProcessor::midiBaseNote + bank * rz::padsPerBank;
+        drawPanel (padArea, "BANK " + juce::String::charToString ((juce::juce_wchar) ('A' + bank))
+                              + "   MIDI " + juce::MidiMessage::getMidiNoteName (lo, true, true, 3)
+                              + "-" + juce::MidiMessage::getMidiNoteName (lo + 15, true, true, 3)
+                              + "   keys 1-4 Q-R A-F Z-V");
+    }
     drawPanel (filterArea, {});
     drawPanel (lofiArea, {});
     drawPanel (delayArea, {});
+    drawPanel (reverbArea, {});
 }
 
 void RezalicaEditor::resized()
@@ -385,15 +496,16 @@ void RezalicaEditor::resized()
     headerArea = b.removeFromTop (40);
     {
         auto h = headerArea;
-        h.removeFromLeft (300);
+        h.removeFromLeft (175);
         masterKnob.setBounds (h.removeFromRight (130).withSizeKeepingCentre (130, 44));
         h.removeFromRight (10);
         auto row = h.withSizeKeepingCentre (h.getWidth(), 30);
         loadChopButton.setBounds (row.removeFromLeft (120)); row.removeFromLeft (6);
-        chopModeBox.setBounds (row.removeFromLeft (110)); row.removeFromLeft (6);
-        rechopButton.setBounds (row.removeFromLeft (90)); row.removeFromLeft (20);
-        seqButton.setBounds (row.removeFromLeft (110)); row.removeFromLeft (6);
-        stopButton.setBounds (row.removeFromLeft (90));
+        chopModeBox.setBounds (row.removeFromLeft (120)); row.removeFromLeft (6);
+        sensitivitySlider.setBounds (row.removeFromLeft (140)); row.removeFromLeft (6);
+        sliceCountLabel.setBounds (row.removeFromLeft (170));
+        stopButton.setBounds (row.removeFromRight (90)); row.removeFromRight (6);
+        seqButton.setBounds (row.removeFromRight (110));
     }
     b.removeFromTop (10);
 
@@ -431,19 +543,26 @@ void RezalicaEditor::resized()
     // ---- pads ----
     {
         auto p = padArea.reduced (10);
-        p.removeFromTop (18);
+        auto bankRow = p.removeFromTop (24);
+        for (int bi = rz::numBanks; --bi >= 0;)
+        {
+            bankButtons[(size_t) bi].setBounds (bankRow.removeFromRight (40));
+            bankRow.removeFromRight (4);
+        }
+        p.removeFromTop (6);
         const int cw = p.getWidth() / 4, ch = p.getHeight() / 4;
-        for (int i = 0; i < rz::numPads; ++i)
+        for (int i = 0; i < rz::padsPerBank; ++i)
             pads[(size_t) i]->setBounds (p.getX() + (i % 4) * cw, p.getY() + (i / 4) * ch, cw, ch);
     }
 
     // ---- effects ----
     {
         auto f = fxArea;
-        const int w = (f.getWidth() - 20) / 3;
+        const int w = (f.getWidth() - 30) / 4;
         filterArea = f.removeFromLeft (w); f.removeFromLeft (10);
         lofiArea = f.removeFromLeft (w);   f.removeFromLeft (10);
-        delayArea = f;
+        delayArea = f.removeFromLeft (w);  f.removeFromLeft (10);
+        reverbArea = f;
 
         auto layoutGroup = [] (juce::Rectangle<int> area, juce::TextButton& onButton, std::initializer_list<juce::Component*> items)
         {
@@ -457,13 +576,14 @@ void RezalicaEditor::resized()
 
         layoutGroup (filterArea, filterOnButton, { &cutoffKnob, &resoKnob, &driveKnob });
         layoutGroup (lofiArea, lofiOnButton, { &bitsKnob, &rateKnob, &noiseKnob });
+        layoutGroup (reverbArea, reverbOnButton, { &reverbSizeKnob, &reverbDampKnob, &reverbWidthKnob, &reverbMixKnob });
 
         auto d = delayArea.reduced (10);
         auto top = d.removeFromTop (26);
-        delayOnButton.setBounds (top.removeFromLeft (110));
-        top.removeFromLeft (8);
+        delayOnButton.setBounds (top.removeFromLeft (90));
+        top.removeFromLeft (4);
         delayDivLabel.setBounds (top.removeFromLeft (40));
-        delayDivBox.setBounds (top.removeFromLeft (110));
+        delayDivBox.setBounds (top.removeFromLeft (juce::jmin (110, top.getWidth())));
         d.removeFromTop (6);
         const int iw = d.getWidth() / 3;
         for (auto* c : { &timeKnob, &feedbackKnob, &mixKnob })
