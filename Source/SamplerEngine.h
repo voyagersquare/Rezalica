@@ -101,6 +101,14 @@ public:
     void render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& fx, int startSample, int numSamples);
     void updatePlayPositions();
 
+    // ---- preview voice (plays a whole sample, used by Lazy Chop) ----
+    void setPreviewSample (SampleData::Ptr s);       // message thread
+    void startPreview()  { previewCommand = 1; }     // any thread
+    void stopPreview()   { previewCommand = 2; }     // any thread
+    bool isPreviewBusy() const { return previewCommand.load() == 1 || previewVoice.isActive(); }
+    float getPreviewPositionNow() const { return previewVoice.getNormalisedPosition(); } // audio thread
+    std::atomic<float> previewPosition { -1.0f };   // for the UI
+
     // ---- for the UI ----
     std::array<std::atomic<int>, numPads> hitCounter;
     std::array<std::atomic<float>, numPads> playPosition; // -1 when not playing
@@ -116,6 +124,10 @@ private:
     mutable juce::SpinLock lock;
     std::array<SampleData::Ptr, numPads> pads;       // guarded by lock
     std::array<SampleData::Ptr, numPads> audioPads;  // audio thread copy
+    SampleData::Ptr previewSample;                   // guarded by lock
+    Voice previewVoice;
+    PadSettings previewSettings;
+    std::atomic<int> previewCommand { 0 };
     std::atomic<int> version { 0 };
     int lastVersion = -1;
 

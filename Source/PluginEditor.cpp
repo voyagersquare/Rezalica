@@ -34,13 +34,26 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     };
 
     // ---- header ----
-    for (auto* b : { &loadChopButton, &seqButton, &stopButton })
+    for (auto* b : { &loadChopButton, &lazyButton, &seqButton, &stopButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (*b);
     }
     styleToggle (seqButton, rz::colours::accent2);
     loadChopButton.onClick = [this] { chooseChopFile(); };
+    styleToggle (lazyButton, juce::Colour (0xffe0413a));
+    lazyButton.setTooltip ("Lazy Chop: plays the selected pad's whole sample - hit any pad, key or MIDI note "
+                           "to drop a slice at the playhead. Slices fill A1, A2, A3... Click again to stop.");
+    lazyButton.onClick = [this]
+    {
+        if (processor.isLazyChopActive())
+            processor.stopLazyChop();
+        else if (processor.startLazyChop())
+            selectPad (0);
+        lazyButton.setToggleState (processor.isLazyChopActive(), juce::dontSendNotification);
+        refreshChopControls();
+        waveform.refresh();
+    };
     sliceCountLabel.setJustificationType (juce::Justification::centredLeft);
     sliceCountLabel.setColour (juce::Label::textColourId, rz::colours::dim);
     addAndMakeVisible (sliceCountLabel);
@@ -65,6 +78,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     chopModeBox.addItem ("8 slices", 3);
     chopModeBox.addItem ("16 slices", 4);
     chopModeBox.addItem ("Transients", 5);
+    chopModeBox.addItem ("Manual", 6);
     chopModeBox.setWantsKeyboardFocus (false);
     chopModeBox.setTooltip ("Changing this re-chops the selected pad's sample automatically");
     chopModeBox.onChange = [this] { processor.setChopMode (chopModeFromBox()); refreshChopControls(); };
@@ -247,20 +261,27 @@ void RezalicaEditor::refreshChopControls()
 {
     const int mode = processor.getChopMode();
     const int id = mode == RezalicaProcessor::chop2 ? 1 : mode == RezalicaProcessor::chop4 ? 2
-                 : mode == RezalicaProcessor::chop8 ? 3 : mode == RezalicaProcessor::chopTransients ? 5 : 4;
+                 : mode == RezalicaProcessor::chop8 ? 3 : mode == RezalicaProcessor::chopTransients ? 5
+                 : mode == RezalicaProcessor::chopManual ? 6 : 4;
     chopModeBox.setSelectedId (id, juce::dontSendNotification);
 
     const bool transient = mode == RezalicaProcessor::chopTransients;
-    sensitivitySlider.setVisible (transient);
+    if (sensitivitySlider.isVisible() != transient)
+    {
+        sensitivitySlider.setVisible (transient);
+        resized();
+    }
     if (! sensitivitySlider.isMouseButtonDown())
         sensitivitySlider.setValue (processor.getTransientSensitivity() * 100.0, juce::dontSendNotification);
 
     const int n = processor.getNumSlices();
     juce::String text;
     if (n > rz::padsPerBank)
-        text = juce::String (n) + " slices (banks A-" + juce::String::charToString ((juce::juce_wchar) ('A' + (n - 1) / rz::padsPerBank)) + ")";
+        text = juce::String (n) + " slices  A-" + juce::String::charToString ((juce::juce_wchar) ('A' + (n - 1) / rz::padsPerBank));
     else if (n > 0)
         text = juce::String (n) + " slices";
+    if (processor.isLazyChopActive())
+        text = "LAZY: " + juce::String (n) + " slices";
     sliceCountLabel.setText (text, juce::dontSendNotification);
 }
 
@@ -327,6 +348,18 @@ void RezalicaEditor::timerCallback()
                 hit ? p->flash() : p->decay();
     }
 
+    // Lazy Chop: collect the slice markers the audio thread recorded
+    if (processor.isLazyChopActive() || lastLazyState)
+    {
+        processor.updateLazyChop();
+        const bool lazy = processor.isLazyChopActive();
+        lazyButton.setToggleState (lazy, juce::dontSendNotification);
+        if (lazy != lastLazyState)
+            refreshChopControls();
+        lastLazyState = lazy;
+        lastPlayedCounter = processor.getEngine().playedCounter.load(); // pads hits are markers now, don't follow them
+    }
+
     // follow pads played from MIDI / computer keyboard: show them in the waveform
     const int played = processor.getEngine().playedCounter.load();
     if (played != lastPlayedCounter)
@@ -358,6 +391,7 @@ int RezalicaEditor::chopModeFromBox() const
         case 2: return RezalicaProcessor::chop4;
         case 3: return RezalicaProcessor::chop8;
         case 5: return RezalicaProcessor::chopTransients;
+        case 6: return RezalicaProcessor::chopManual;
         default: return RezalicaProcessor::chop16;
     }
 }
@@ -502,8 +536,13 @@ void RezalicaEditor::resized()
         auto row = h.withSizeKeepingCentre (h.getWidth(), 30);
         loadChopButton.setBounds (row.removeFromLeft (120)); row.removeFromLeft (6);
         chopModeBox.setBounds (row.removeFromLeft (120)); row.removeFromLeft (6);
-        sensitivitySlider.setBounds (row.removeFromLeft (140)); row.removeFromLeft (6);
-        sliceCountLabel.setBounds (row.removeFromLeft (170));
+        if (sensitivitySlider.isVisible())
+        {
+            sensitivitySlider.setBounds (row.removeFromLeft (120));
+            row.removeFromLeft (6);
+        }
+        lazyButton.setBounds (row.removeFromLeft (100)); row.removeFromLeft (6);
+        sliceCountLabel.setBounds (row.removeFromLeft (130));
         stopButton.setBounds (row.removeFromRight (90)); row.removeFromRight (6);
         seqButton.setBounds (row.removeFromRight (110));
     }

@@ -41,7 +41,7 @@ public:
 
     //==============================================================================
     // Message-thread API used by the editor
-    enum ChopMode { chop2 = 2, chop4 = 4, chop8 = 8, chop16 = 16, chopTransients = 0 };
+    enum ChopMode { chop2 = 2, chop4 = 4, chop8 = 8, chop16 = 16, chopTransients = 0, chopManual = -1 };
     static constexpr int maxSlices = 64;
 
     bool loadFileToPad (int pad, const juce::File& file);
@@ -50,6 +50,18 @@ public:
     void setChopMode (int mode);                              // re-chops the selected pad's sample automatically
     void setTransientSensitivity (float sensitivity01);       // re-chops when in transient mode
     void clearPad (int pad);
+
+    // manual chop markers (switch the chop mode to Manual)
+    void addSlicePoint (float normalisedPosition);
+    void removeSlicePoint (int index);
+    int moveSlicePoint (int index, float normalisedPosition);
+    void clearSlicePoints();
+
+    // Lazy Chop: plays the selected pad's whole sample, every pad hit drops a slice at the playhead
+    bool startLazyChop();
+    void stopLazyChop();
+    bool isLazyChopActive() const noexcept { return lazyActive.load() || lazyStarting; }
+    void updateLazyChop(); // call regularly from the UI (message thread)
 
     int getChopMode() const noexcept               { return chopMode; }
     float getTransientSensitivity() const noexcept { return transientSensitivity; }
@@ -87,6 +99,8 @@ private:
     rz::SampleData::Ptr loadSample (const juce::File& file);
     void rechop();
     void applySlices();
+    void prepareManualSource();
+    float snapToZeroCrossing (float normalisedPosition) const;
     void addEvent (int offset, int type, int pad, float velocity);
     rz::FxChain::Params readFxParams() const;
 
@@ -103,6 +117,11 @@ private:
     int chopMode = chop16;
     float transientSensitivity = 0.5f;
     std::vector<float> slicePoints;
+
+    std::atomic<bool> lazyActive { false };
+    bool lazyStarting = false;
+    juce::AbstractFifo lazyFifo { 128 };
+    std::array<float, 128> lazyHits {};
 
     juce::ReferenceCountedArray<rz::SampleData> samplePool; // owns all loaded samples (message thread)
 

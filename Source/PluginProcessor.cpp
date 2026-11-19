@@ -241,13 +241,30 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             case -1: engine.allNotesOff(); sequencer.internalPlay = false; break;
             case 0:  engine.noteOff (e.pad, false); break;
             case 1:  engine.noteOff (e.pad, true); break;
-            case 2:  engine.noteOn (e.pad, e.velocity, false); break;
+            case 2:
+                if (lazyActive.load())
+                {
+                    const float pos = engine.getPreviewPositionNow();
+                    if (pos >= 0.0f)
+                    {
+                        auto w = lazyFifo.write (1);
+                        w.forEach ([&] (int idx) { lazyHits[(size_t) idx] = pos; });
+                    }
+                }
+                else
+                {
+                    engine.noteOn (e.pad, e.velocity, false);
+                }
+                break;
             case 3:  engine.noteOn (e.pad, e.velocity, true); break;
             default: break;
         }
     }
     engine.render (dryBuffer, fxBuffer, cursor, numSamples - cursor);
     engine.updatePlayPositions();
+
+    if (lazyActive.load() && ! engine.isPreviewBusy())
+        lazyActive = false; // preview reached the end of the sample
 
     fx.process (fxBuffer, numSamples, readFxParams());
 
@@ -296,6 +313,9 @@ std::vector<float> RezalicaProcessor::findSlicePoints (const rz::SampleData& s, 
 {
     std::vector<float> points;
     const int len = s.buffer.getNumSamples();
+
+    if (mode == chopManual)
+        return { 0.0f };
 
     if (mode != chopTransients)
     {
@@ -381,7 +401,8 @@ void RezalicaProcessor::rechop()
         return;
     }
 
-    slicePoints = findSlicePoints (*chopSource, chopMode, transientSensitivity);
+    if (chopMode != chopManual)
+        slicePoints = findSlicePoints (*chopSource, chopMode, transientSensitivity);
     if (slicePoints.empty())
         slicePoints.push_back (0.0f);
     applySlices();
@@ -455,10 +476,149 @@ void RezalicaProcessor::chopPadSample (int pad, int mode)
 
 void RezalicaProcessor::setChopMode (int mode)
 {
+    if (mode == chopManual)
+    {
+        prepareManualSource(); // keeps the current markers
+        applySlices();
+        return;
+    }
+
     chopMode = mode;
     if (auto s = engine.getPadSample (selectedPad.load()))
         setChopSource (s);
     rechop();
+}
+
+void RezalicaProcessor::prepareManualSource()
+{
+    auto s = engine.getPadSample (selectedPad.load());
+    if (s != nullptr && s != chopSource)
+    {
+        setChopSource (s);
+        slicePoints = { 0.0f };
+    }
+    if (slicePoints.empty())
+        slicePoints = { 0.0f };
+    chopMode = chopManual;
+}
+
+float RezalicaProcessor::snapToZeroCrossing (float n) const
+{
+    if (chopSource == nullptr)
+        return n;
+
+    const auto& b = chopSource->buffer;
+    const int len = b.getNumSamples();
+    const int centre = juce::jlimit (0, len - 1, (int) (n * (float) len));
+    const float* L = b.getReadPointer (0);
+    const float* R = b.getReadPointer (1);
+    auto mono = [&] (int i) { return L[i] + R[i]; };
+
+    for (int d = 0; d < 256; ++d)
+        for (int i : { centre - d, centre + d })
+            if (i > 0 && i < len && (mono (i - 1) <= 0.0f) != (mono (i) <= 0.0f))
+                return (float) i / (float) len;
+    return n;
+}
+
+void RezalicaProcessor::addSlicePoint (float n)
+{
+    prepareManualSource();
+    if (chopSource == nullptr || (int) slicePoints.size() >= maxSlices)
+        return;
+
+    n = snapToZeroCrossing (juce::jlimit (0.0f, 0.999f, n));
+    for (auto p : slicePoints)
+        if (std::abs (p - n) < 0.002f)
+            return; // already a marker here
+
+    slicePoints.insert (std::upper_bound (slicePoints.begin(), slicePoints.end(), n), n);
+    applySlices();
+}
+
+void RezalicaProcessor::removeSlicePoint (int index)
+{
+    prepareManualSource();
+    if (index < 0 || index >= (int) slicePoints.size() || slicePoints.size() <= 1)
+        return;
+    slicePoints.erase (slicePoints.begin() + index);
+    applySlices();
+}
+
+int RezalicaProcessor::moveSlicePoint (int index, float n)
+{
+    if (chopSource == nullptr || index < 0 || index >= (int) slicePoints.size())
+        return -1;
+
+    chopMode = chopManual;
+    const float gap = 64.0f / (float) juce::jmax (64, chopSource->buffer.getNumSamples());
+    const float lo = index > 0 ? slicePoints[(size_t) index - 1] + gap : 0.0f;
+    const float hi = index + 1 < (int) slicePoints.size() ? slicePoints[(size_t) index + 1] - gap : 1.0f - gap;
+    slicePoints[(size_t) index] = juce::jlimit (lo, juce::jmax (lo, hi), n);
+    applySlices();
+    return index;
+}
+
+void RezalicaProcessor::clearSlicePoints()
+{
+    prepareManualSource();
+    slicePoints = { 0.0f };
+    applySlices();
+}
+
+bool RezalicaProcessor::startLazyChop()
+{
+    auto s = engine.getPadSample (selectedPad.load());
+    if (s == nullptr)
+        s = chopSource;
+    if (s == nullptr)
+        return false;
+
+    setChopSource (s);
+    chopMode = chopManual;
+    slicePoints.clear();
+    applySlices();      // pads fill up as you hit them
+    slicePoints.clear();
+
+    lazyFifo.reset();
+    engine.setPreviewSample (s);
+    engine.startPreview();
+    lazyStarting = true; // until the audio thread has started the preview
+    lazyActive = true;
+    return true;
+}
+
+void RezalicaProcessor::stopLazyChop()
+{
+    lazyActive = false;
+    lazyStarting = false;
+    engine.stopPreview();
+    updateLazyChop();
+}
+
+void RezalicaProcessor::updateLazyChop()
+{
+    if (lazyStarting && engine.previewPosition.load() >= 0.0f)
+        lazyStarting = false;
+    if (lazyStarting && ! lazyActive.load())
+        lazyStarting = false;
+
+    bool changed = false;
+    auto r = lazyFifo.read (lazyFifo.getNumReady());
+    r.forEach ([&] (int i)
+    {
+        const float n = snapToZeroCrossing (lazyHits[(size_t) i]);
+        if ((int) slicePoints.size() >= maxSlices)
+            return;
+        for (auto p : slicePoints)
+            if (std::abs (p - n) < 0.002f)
+                return;
+        slicePoints.insert (std::upper_bound (slicePoints.begin(), slicePoints.end(), n), n);
+        changed = true;
+    });
+
+    if (changed)
+        applySlices();
 }
 
 void RezalicaProcessor::setTransientSensitivity (float sensitivity01)
@@ -568,6 +728,11 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
     juce::ValueTree chop ("CHOP");
     chop.setProperty ("mode", chopMode, nullptr);
     chop.setProperty ("sensitivity", transientSensitivity, nullptr);
+    {
+        juce::StringArray pts;
+        for (auto p : slicePoints) pts.add (juce::String (p, 6));
+        chop.setProperty ("points", pts.joinIntoString (","), nullptr);
+    }
     chop.setProperty ("source", chopSource != nullptr ? chopSource->file.getFullPathName() : juce::String(), nullptr);
     root.appendChild (chop, nullptr);
 
@@ -659,7 +824,18 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         {
             chopSource = loadSample (src);
             if (chopSource != nullptr) // restore slice list without touching the (possibly edited) pads
-                slicePoints = findSlicePoints (*chopSource, chopMode, transientSensitivity);
+            {
+                if (chopMode == chopManual)
+                {
+                    for (auto& t : juce::StringArray::fromTokens (chop.getProperty ("points").toString(), ",", {}))
+                        if (t.isNotEmpty()) slicePoints.push_back (t.getFloatValue());
+                    std::sort (slicePoints.begin(), slicePoints.end());
+                }
+                else
+                {
+                    slicePoints = findSlicePoints (*chopSource, chopMode, transientSensitivity);
+                }
+            }
         }
     }
 

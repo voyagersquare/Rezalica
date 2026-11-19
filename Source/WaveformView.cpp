@@ -6,6 +6,28 @@ namespace rz
 WaveformView::WaveformView (RezalicaProcessor& p) : processor (p)
 {
     setWantsKeyboardFocus (false);
+
+    zoomSlider.setSliderStyle (juce::Slider::LinearVertical);
+    zoomSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    zoomSlider.setRange (1.0, 32.0, 0.01);
+    zoomSlider.setSkewFactorFromMidPoint (4.0);
+    zoomSlider.setDoubleClickReturnValue (true, 1.0);
+    zoomSlider.setWantsKeyboardFocus (false);
+    zoomSlider.setTooltip ("Vertical zoom (mouse wheel over the waveform, double-click to reset)");
+    zoomSlider.setColour (juce::Slider::trackColourId, colours::accent2.withAlpha (0.6f));
+    zoomSlider.onValueChange = [this] { verticalZoom = (float) zoomSlider.getValue(); repaint(); };
+    addAndMakeVisible (zoomSlider);
+}
+
+void WaveformView::resized()
+{
+    zoomSlider.setBounds (getLocalBounds().removeFromRight (24).reduced (2, 22));
+    rebuildPeaks();
+}
+
+juce::Rectangle<float> WaveformView::waveArea() const
+{
+    return getLocalBounds().toFloat().withTrimmedRight (24.0f).reduced (6.0f, 18.0f);
 }
 
 void WaveformView::setPad (int newPad)
@@ -17,6 +39,8 @@ void WaveformView::setPad (int newPad)
 void WaveformView::refresh()
 {
     auto s = processor.getEngine().getPadSample (pad);
+    if (s == nullptr && processor.isLazyChopActive())
+        s = processor.getChopSource(); // show the sample being lazy-chopped
     if (s != sample)
     {
         sample = s;
@@ -27,10 +51,15 @@ void WaveformView::refresh()
 
 void WaveformView::updatePlayhead()
 {
+    if (sample == nullptr && processor.isLazyChopActive())
+        refresh();
+
     const float p = processor.getEngine().playPosition[(size_t) pad].load();
-    if (! juce::exactlyEqual (p, playhead))
+    const float pv = isChopSource() ? processor.getEngine().previewPosition.load() : -1.0f;
+    if (! juce::exactlyEqual (p, playhead) || ! juce::exactlyEqual (pv, previewHead))
     {
         playhead = p;
+        previewHead = pv;
         repaint();
     }
 }
@@ -75,6 +104,22 @@ void WaveformView::rebuildPeaks()
     }
 }
 
+int WaveformView::sliceMarkerNear (float x) const
+{
+    if (! isChopSource())
+        return -1;
+
+    int best = -1;
+    float bestDist = 6.0f;
+    const auto& pts = processor.getSlicePoints();
+    for (int i = 0; i < (int) pts.size(); ++i)
+    {
+        const float d = std::abs (x - normToX (pts[(size_t) i]));
+        if (d < bestDist) { bestDist = d; best = i; }
+    }
+    return best;
+}
+
 void WaveformView::paint (juce::Graphics& g)
 {
     using namespace colours;
@@ -96,70 +141,118 @@ void WaveformView::paint (juce::Graphics& g)
     }
 
     auto& ps = processor.getEngine().getPad (pad);
+    const bool padUsesSample = processor.getEngine().getPadSample (pad) == sample;
     const float st = ps.start.load(), en = ps.end.load();
 
     // selected region
-    g.setColour (accent.withAlpha (0.12f));
-    g.fillRect (juce::Rectangle<float>::leftTopRightBottom (normToX (st), area.getY(), normToX (en), area.getBottom()));
+    if (padUsesSample)
+    {
+        g.setColour (accent.withAlpha (0.12f));
+        g.fillRect (juce::Rectangle<float>::leftTopRightBottom (normToX (st), area.getY(), normToX (en), area.getBottom()));
+    }
 
-    // waveform
+    // centre line + waveform (vertically zoomed, clipped to the area)
     const float mid = area.getCentreY();
     const float half = area.getHeight() * 0.5f;
+    g.setColour (outline);
+    g.drawHorizontalLine ((int) mid, area.getX(), area.getRight());
+
     for (size_t x = 0; x < peaks.size(); ++x)
     {
         const float px = area.getX() + (float) x;
         const float n = (float) x / (float) juce::jmax ((size_t) 1, peaks.size());
-        g.setColour (n >= st && n <= en ? accent2 : dim.withAlpha (0.6f));
-        g.drawVerticalLine ((int) px, mid - peaks[x].second * half, mid - peaks[x].first * half + 1.0f);
+        const float top = juce::jmax (area.getY(), mid - peaks[x].second * half * verticalZoom);
+        const float bottom = juce::jmin (area.getBottom(), mid - peaks[x].first * half * verticalZoom + 1.0f);
+        g.setColour (padUsesSample && n >= st && n <= en ? accent2 : dim.withAlpha (0.6f));
+        g.drawVerticalLine ((int) px, top, bottom);
     }
 
-    // every slice of the chop source (there can be more slices than pads)
-    if (sample == processor.getChopSource())
+    // chop markers (there can be more of them than there are pads in a bank)
+    if (isChopSource())
     {
-        g.setColour (text.withAlpha (0.12f));
-        for (auto pt : processor.getSlicePoints())
-            g.drawVerticalLine ((int) normToX (pt), area.getY(), area.getBottom());
+        const auto& pts = processor.getSlicePoints();
+        g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+        for (int i = 0; i < (int) pts.size(); ++i)
+        {
+            const float x = normToX (pts[(size_t) i]);
+            g.setColour ((i == dragSlice ? text : accent2).withAlpha (0.75f));
+            g.drawVerticalLine ((int) x, area.getY(), area.getBottom());
+            juce::Path handle;
+            handle.addTriangle (x - 5.0f, area.getBottom(), x + 5.0f, area.getBottom(), x, area.getBottom() - 7.0f);
+            g.fillPath (handle);
+            g.setColour (text.withAlpha (0.55f));
+            g.drawText (padLabel (i), juce::Rectangle<float> (x + 2.0f, bounds.getY() + 2.0f, 28.0f, 14.0f), juce::Justification::left);
+        }
     }
-
-    // other pads that use the same sample
-    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-    for (int i = 0; i < numPads; ++i)
+    else
     {
-        if (i == pad || processor.getEngine().getPadSample (i) != sample)
-            continue;
-        const float x = normToX (processor.getEngine().getPad (i).start.load());
-        g.setColour (text.withAlpha (0.35f));
-        g.drawVerticalLine ((int) x, area.getY(), area.getBottom());
-        g.drawText (padLabel (i), juce::Rectangle<float> (x + 2.0f, bounds.getY() + 2.0f, 28.0f, 14.0f), juce::Justification::left);
+        // pads that share this sample without being part of the chop
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        for (int i = 0; i < numPads; ++i)
+        {
+            if (i == pad || processor.getEngine().getPadSample (i) != sample)
+                continue;
+            const float x = normToX (processor.getEngine().getPad (i).start.load());
+            g.setColour (text.withAlpha (0.35f));
+            g.drawVerticalLine ((int) x, area.getY(), area.getBottom());
+            g.drawText (padLabel (i), juce::Rectangle<float> (x + 2.0f, bounds.getY() + 2.0f, 28.0f, 14.0f), juce::Justification::left);
+        }
     }
 
-    // start / end markers
-    for (int m = 0; m < 2; ++m)
+    // start / end handles of the selected pad
+    if (padUsesSample)
     {
-        const float x = normToX (m == 0 ? st : en);
-        g.setColour (accent);
-        g.fillRect (x - 1.0f, area.getY(), 2.0f, area.getHeight());
-        juce::Path tri;
-        if (m == 0) tri.addTriangle (x, area.getY(), x + 9.0f, area.getY(), x, area.getY() + 9.0f);
-        else        tri.addTriangle (x, area.getY(), x - 9.0f, area.getY(), x, area.getY() + 9.0f);
-        g.fillPath (tri);
+        for (int m = 0; m < 2; ++m)
+        {
+            const float x = normToX (m == 0 ? st : en);
+            g.setColour (accent);
+            g.fillRect (x - 1.0f, area.getY(), 2.0f, area.getHeight());
+            juce::Path tri;
+            if (m == 0) tri.addTriangle (x, area.getY(), x + 9.0f, area.getY(), x, area.getY() + 9.0f);
+            else        tri.addTriangle (x, area.getY(), x - 9.0f, area.getY(), x, area.getY() + 9.0f);
+            g.fillPath (tri);
+        }
     }
 
-    // playhead
-    if (playhead >= 0.0f)
+    // playheads
+    if (playhead >= 0.0f && padUsesSample)
     {
         g.setColour (juce::Colours::white);
         g.drawVerticalLine ((int) normToX (playhead), area.getY(), area.getBottom());
     }
+    if (previewHead >= 0.0f)
+    {
+        g.setColour (juce::Colour (0xffe0413a));
+        g.fillRect (normToX (previewHead) - 1.0f, area.getY(), 2.0f, area.getHeight());
+    }
 
-    // footer
+    // header / footer text
     g.setColour (dim);
+    g.setFont (juce::FontOptions (9.0f, juce::Font::bold));
+    g.drawText ("ZOOM", zoomSlider.getBounds().toFloat().withY (bounds.getY() + 3.0f).withHeight (14.0f).expanded (6.0f, 0.0f), juce::Justification::centred);
     g.setFont (juce::FontOptions (11.0f));
+    if (verticalZoom > 1.01f)
+        g.drawText ("zoom x" + juce::String (verticalZoom, 1), juce::Rectangle<float> (area.getRight() - 80.0f, bounds.getY() + 2.0f, 80.0f, 14.0f), juce::Justification::right);
+
     const double secs = sample->buffer.getNumSamples() / sample->sampleRate;
+    const auto footer = juce::Rectangle<float> (area.getX(), area.getBottom() + 1.0f, area.getWidth(), 16.0f);
     g.drawText (sample->name + "   " + juce::String (secs, 2) + " s   " + juce::String ((int) sample->sampleRate) + " Hz",
-                juce::Rectangle<float> (area.getX(), area.getBottom() + 1.0f, area.getWidth(), 16.0f), juce::Justification::left);
-    g.drawText ("Pad " + padLabel (pad) + "  " + juce::String (st * secs, 3) + " - " + juce::String (en * secs, 3) + " s",
-                juce::Rectangle<float> (area.getX(), area.getBottom() + 1.0f, area.getWidth(), 16.0f), juce::Justification::right);
+                footer, juce::Justification::left);
+
+    if (processor.isLazyChopActive())
+    {
+        g.setColour (juce::Colour (0xffe0413a));
+        g.drawText ("LAZY CHOP: hit pads / keys / MIDI to drop slices", footer, juce::Justification::centred);
+    }
+    else if (isChopSource())
+    {
+        g.drawText ("double-click: add marker   right-click: delete   drag: move", footer, juce::Justification::centred);
+    }
+
+    g.setColour (dim);
+    if (padUsesSample)
+        g.drawText ("Pad " + padLabel (pad) + "  " + juce::String (st * secs, 3) + " - " + juce::String (en * secs, 3) + " s",
+                    footer, juce::Justification::right);
 }
 
 void WaveformView::mouseMove (const juce::MouseEvent& e)
@@ -167,8 +260,35 @@ void WaveformView::mouseMove (const juce::MouseEvent& e)
     if (sample == nullptr) { setMouseCursor (juce::MouseCursor::NormalCursor); return; }
     auto& ps = processor.getEngine().getPad (pad);
     const float x = (float) e.x;
-    const bool nearMarker = std::abs (x - normToX (ps.start.load())) < 6.0f || std::abs (x - normToX (ps.end.load())) < 6.0f;
+    const bool nearMarker = sliceMarkerNear (x) >= 0
+                         || std::abs (x - normToX (ps.start.load())) < 6.0f
+                         || std::abs (x - normToX (ps.end.load())) < 6.0f;
     setMouseCursor (nearMarker ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+}
+
+void WaveformView::showMenu (float x)
+{
+    const int marker = sliceMarkerNear (x);
+    const float n = xToNorm (x);
+
+    juce::PopupMenu m;
+    m.addItem (1, "Add chop marker here");
+    m.addItem (2, "Delete this chop marker", marker >= 0 && processor.getNumSlices() > 1);
+    m.addItem (3, "Clear all chop markers", isChopSource() && processor.getNumSlices() > 1);
+    m.addSeparator();
+    m.addItem (4, "Reset vertical zoom", verticalZoom > 1.01f);
+
+    juce::Component::SafePointer<WaveformView> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe, marker, n] (int r)
+    {
+        if (safe == nullptr) return;
+        auto& proc = safe->processor;
+        if (r == 1) proc.addSlicePoint (n);
+        if (r == 2) proc.removeSlicePoint (marker);
+        if (r == 3) proc.clearSlicePoints();
+        if (r == 4) safe->zoomSlider.setValue (1.0);
+        if (safe->onRegionChanged) safe->onRegionChanged();
+    });
 }
 
 void WaveformView::mouseDown (const juce::MouseEvent& e)
@@ -176,8 +296,24 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
     if (sample == nullptr)
         return;
 
-    auto& ps = processor.getEngine().getPad (pad);
     const float x = (float) e.x;
+
+    if (e.mods.isPopupMenu())
+    {
+        showMenu (x);
+        return;
+    }
+
+    // chop markers win over the pad's own start/end handles
+    if (const int m = sliceMarkerNear (x); m >= 0)
+    {
+        dragging = DragSlice;
+        dragSlice = m;
+        repaint();
+        return;
+    }
+
+    auto& ps = processor.getEngine().getPad (pad);
     const float ds = std::abs (x - normToX (ps.start.load()));
     const float de = std::abs (x - normToX (ps.end.load()));
 
@@ -187,7 +323,7 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Alt/Shift-click: move the closest marker to the click
+    // Shift/Alt-click: move the closest start/end handle to the click
     if (e.mods.isShiftDown() || e.mods.isAltDown())
     {
         dragging = ds <= de ? DragStart : DragEnd;
@@ -195,7 +331,7 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Plain click selects the slice (pad) under the mouse, if any
+    // plain click selects the slice (pad) under the mouse, if any
     const float n = xToNorm (x);
     for (int i = 0; i < numPads; ++i)
     {
@@ -215,8 +351,17 @@ void WaveformView::mouseDrag (const juce::MouseEvent& e)
     if (dragging == DragNone || sample == nullptr)
         return;
 
-    auto& ps = processor.getEngine().getPad (pad);
     const float n = xToNorm ((float) e.x);
+
+    if (dragging == DragSlice)
+    {
+        dragSlice = processor.moveSlicePoint (dragSlice, n);
+        if (onRegionChanged) onRegionChanged();
+        repaint();
+        return;
+    }
+
+    auto& ps = processor.getEngine().getPad (pad);
     const float minGap = 64.0f / (float) juce::jmax (64, sample->buffer.getNumSamples());
 
     if (dragging == DragStart) ps.start = juce::jmin (n, ps.end.load() - minGap);
@@ -224,6 +369,23 @@ void WaveformView::mouseDrag (const juce::MouseEvent& e)
 
     if (onRegionChanged) onRegionChanged();
     repaint();
+}
+
+void WaveformView::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (sample == nullptr || e.mods.isPopupMenu() || sliceMarkerNear ((float) e.x) >= 0)
+        return;
+
+    processor.addSlicePoint (xToNorm ((float) e.x));
+    if (onRegionChanged) onRegionChanged();
+}
+
+void WaveformView::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
+{
+    const float delta = std::abs (wheel.deltaY) > 0.0f ? wheel.deltaY : wheel.deltaX;
+    if (std::abs (delta) < 1.0e-4f)
+        return;
+    zoomSlider.setValue (juce::jlimit (1.0, 32.0, zoomSlider.getValue() * (delta > 0.0f ? 1.25 : 0.8)));
 }
 
 bool WaveformView::isInterestedInFileDrag (const juce::StringArray& files)

@@ -97,6 +97,45 @@ int main (int argc, char** argv)
     p.setTransientSensitivity (0.5f);
     check (p.getNumSlices() == 8 && p.getEngine().getPadSample (8) == nullptr, "re-chopping a short sample clears banks B-D");
 
+    // Manual chop markers
+    p.selectedPad = 0;
+    p.setChopMode (RezalicaProcessor::chopManual);
+    check (p.getChopMode() == RezalicaProcessor::chopManual && p.getNumSlices() == 8, "manual mode keeps the existing markers");
+    p.addSlicePoint (0.06f);
+    check (p.getNumSlices() == 9 && p.getEngine().getPadSample (8) != nullptr, "double-click marker adds a slice / pad");
+    check (std::abs (p.getEngine().getPad (1).start.load() - 0.06f) < 0.01f, "new marker becomes start of pad A2");
+    p.removeSlicePoint (1);
+    check (p.getNumSlices() == 8 && p.getEngine().getPadSample (8) == nullptr, "deleting a marker removes the slice");
+    p.moveSlicePoint (2, 0.30f);
+    check (std::abs (p.getEngine().getPad (2).start.load() - 0.30f) < 0.001f
+           && std::abs (p.getEngine().getPad (1).end.load() - 0.30f) < 0.001f, "dragging a marker moves both neighbouring slices");
+    p.setTransientSensitivity (0.9f);
+    check (p.getNumSlices() == 8, "sensitivity does not wipe manual markers");
+
+    // Lazy Chop: hit pads while the sample plays (2 s sample, hits at ~0.5 s and ~1.0 s)
+    check (p.startLazyChop(), "lazy chop starts");
+    check (p.getNumSlices() == 0 && p.getEngine().getPadSample (0) == nullptr, "lazy chop starts with empty pads");
+    {
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int blk = 0; blk < 230; ++blk) // ~2.45 s at 48 kHz, longer than the sample
+        {
+            juce::MidiBuffer m;
+            if (blk == 47 || blk == 94)
+                m.addEvent (juce::MidiMessage::noteOn (1, RezalicaProcessor::midiBaseNote + 9, (juce::uint8) 100), 0);
+            p.processBlock (buf, m);
+            p.updateLazyChop();
+        }
+    }
+    std::cout << "       lazy slices: " << p.getNumSlices() << "  first at " << (p.getNumSlices() > 0 ? p.getSlicePoints()[0] : -1.0f) << "\n";
+    check (p.getNumSlices() == 2, "two pad hits made two slices");
+    check (p.getNumSlices() == 2 && std::abs (p.getSlicePoints()[0] - 0.25f) < 0.02f && std::abs (p.getSlicePoints()[1] - 0.5f) < 0.02f,
+           "lazy slices land at the playhead positions");
+    check (p.getEngine().getPadSample (0) != nullptr && p.getEngine().getPadSample (1) != nullptr, "lazy slices fill A1, A2");
+    check (! p.isLazyChopActive(), "lazy chop stops when the sample ends");
+
+    p.chopFileToPads (file, RezalicaProcessor::chopTransients);
+    p.setTransientSensitivity (0.5f);
+
     juce::MidiBuffer midi;
     midi.addEvent (juce::MidiMessage::noteOn (1, RezalicaProcessor::midiBaseNote + 2, (juce::uint8) 100), 10);
     float peak = renderBlocks (p, 20, midi);
@@ -143,6 +182,8 @@ int main (int argc, char** argv)
         for (int s = 0; s < 16; s += 2) q.getSequencer().setStep (0, 7, s, 70);
         q.selectedPad = 2;
         q.setTransientSensitivity (0.5f);
+        q.setChopMode (RezalicaProcessor::chopManual);
+        q.addSlicePoint (0.07f);
         q.getEngine().getPad (2).loop = true;
         std::unique_ptr<juce::AudioProcessorEditor> ed (q.createEditor());
         ed->setVisible (true);

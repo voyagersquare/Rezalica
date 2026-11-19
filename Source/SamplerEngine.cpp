@@ -139,6 +139,9 @@ void Voice::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& fx,
 //==============================================================================
 SamplerEngine::SamplerEngine()
 {
+    previewSettings.fx = false;
+    previewSettings.attackMs = 0.5f;
+    previewSettings.releaseMs = 15.0f;
     for (auto& h : hitCounter) h = 0;
     for (auto& p : playPosition) p = -1.0f;
 }
@@ -164,8 +167,32 @@ SampleData::Ptr SamplerEngine::getPadSample (int pad) const
     return pads[(size_t) pad];
 }
 
+void SamplerEngine::setPreviewSample (SampleData::Ptr s)
+{
+    const juce::SpinLock::ScopedLockType sl (lock);
+    previewSample = std::move (s);
+}
+
 void SamplerEngine::syncSamples()
 {
+    // preview commands from the message thread
+    const int cmd = previewCommand.load();
+    if (cmd == 2)
+    {
+        previewVoice.fastStop();
+        previewCommand = 0;
+    }
+    else if (cmd == 1)
+    {
+        const juce::SpinLock::ScopedTryLockType tl (lock);
+        if (tl.isLocked())
+        {
+            if (previewSample != nullptr)
+                previewVoice.start (-1, previewSample, previewSettings, 1.0f, sampleRate, 0);
+            previewCommand = 0;
+        }
+    }
+
     const int v = version.load();
     if (v == lastVersion)
         return;
@@ -253,6 +280,7 @@ void SamplerEngine::allNotesOff()
 {
     for (auto& v : voices)
         v.fastStop();
+    previewVoice.fastStop();
 }
 
 void SamplerEngine::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& fx, int startSample, int numSamples)
@@ -262,6 +290,7 @@ void SamplerEngine::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<flo
 
     for (auto& v : voices)
         v.render (dry, fx, startSample, numSamples);
+    previewVoice.render (dry, fx, startSample, numSamples);
 }
 
 void SamplerEngine::updatePlayPositions()
@@ -275,5 +304,7 @@ void SamplerEngine::updatePlayPositions()
 
     for (size_t i = 0; i < p.size(); ++i)
         playPosition[i] = p[i];
+
+    previewPosition = previewVoice.isActive() ? previewVoice.getNormalisedPosition() : -1.0f;
 }
 } // namespace rz

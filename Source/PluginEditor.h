@@ -43,7 +43,8 @@ private:
     rz::RezalicaLookAndFeel lnf;
 
     // header
-    juce::TextButton loadChopButton { "LOAD & CHOP" }, seqButton { "SEQUENCER" }, stopButton { "STOP ALL" };
+    juce::TextButton loadChopButton { "LOAD & CHOP" }, lazyButton { "LAZY CHOP" }, seqButton { "SEQUENCER" }, stopButton { "STOP ALL" };
+    bool lastLazyState = false;
     juce::ComboBox chopModeBox;
     juce::Slider sensitivitySlider;
     juce::Label sliceCountLabel;
