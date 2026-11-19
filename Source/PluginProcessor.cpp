@@ -26,6 +26,8 @@ RezalicaProcessor::RezalicaProcessor()
 RezalicaProcessor::~RezalicaProcessor()
 {
     stopTimer();
+    aliveToken.reset();                        // late background results are dropped
+    stretchWorker.removeAllJobs (true, 5000);
     fileWriter.removeAllJobs (false, 10000); // let pending WAV writes finish
 }
 
@@ -810,25 +812,32 @@ void RezalicaProcessor::saveInBackground (const rz::SampleData::Ptr& s)
     });
 }
 
-rz::SampleData::Ptr RezalicaProcessor::renderWarp (const rz::SampleData::Ptr& source, float regionStart, float regionEnd,
-                                                   const rz::WarpSettings& settings, double bpm, bool background)
+juce::AudioBuffer<float> RezalicaProcessor::computeStretch (const rz::SampleData& source, float regionStart, float regionEnd,
+                                                           const rz::WarpSettings& settings, double bpm)
 {
-    const int len = source->buffer.getNumSamples();
+    const int len = source.buffer.getNumSamples();
     const int a = juce::jlimit (0, len - 1, (int) (regionStart * (float) len));
     const int b = juce::jlimit (a + 2, len, (int) (regionEnd * (float) len));
 
     juce::AudioBuffer<float> region (2, b - a);
     for (int ch = 0; ch < 2; ++ch)
-        region.copyFrom (ch, 0, source->buffer, ch, a, b - a);
+        region.copyFrom (ch, 0, source.buffer, ch, a, b - a);
 
     const double seconds = settings.lengthBeats() * 60.0 / bpm;
-    const int outLen = juce::jlimit (16, (int) (source->sampleRate * 60.0 * 10.0), (int) std::llround (seconds * source->sampleRate));
+    const int outLen = juce::jlimit (16, (int) (source.sampleRate * 60.0 * 10.0), (int) std::llround (seconds * source.sampleRate));
 
+    return settings.mode == rz::WarpSettings::complex
+         ? rz::stretch::complex (region, source.sampleRate, outLen)
+         : rz::stretch::beats (region, source.sampleRate, outLen, settings.preserve, settings.loopMode,
+                               settings.envelope, settings.lengthBeats());
+}
+
+rz::SampleData::Ptr RezalicaProcessor::renderWarp (const rz::SampleData::Ptr& source, float regionStart, float regionEnd,
+                                                   const rz::WarpSettings& settings, double bpm, bool background,
+                                                   const juce::AudioBuffer<float>* precomputed)
+{
     rz::SampleData::Ptr s = new rz::SampleData();
-    s->buffer = settings.mode == rz::WarpSettings::complex
-              ? rz::stretch::complex (region, source->sampleRate, outLen)
-              : rz::stretch::beats (region, source->sampleRate, outLen, settings.preserve, settings.loopMode,
-                                    settings.envelope, settings.lengthBeats());
+    s->buffer = precomputed != nullptr ? *precomputed : computeStretch (*source, regionStart, regionEnd, settings, bpm);
     s->sampleRate = source->sampleRate;
     s->name = source->name + " [" + rz::WarpSettings::lengthNames()[settings.lengthIndex] + "]";
     s->file = source->file;
@@ -854,7 +863,64 @@ void RezalicaProcessor::replaceSampleOnPads (const rz::SampleData::Ptr& from, co
         chopSource = to;
 }
 
-bool RezalicaProcessor::setWarp (int pad, rz::WarpSettings settings)
+void RezalicaProcessor::warpRegionFor (int pad, const rz::WarpSettings& settings, rz::SampleData::Ptr& base, float& ra, float& rb) const
+{
+    auto current = engine.getPadSample (pad);
+    base = current;
+    const auto& ps = engine.getPad (pad);
+    float st = ps.start.load(), en = ps.end.load();
+    if (current != nullptr && current->isWarped())
+    {
+        base = current->warpSource;
+        st = current->regionStart + st * (current->regionEnd - current->regionStart);
+        en = current->regionStart + en * (current->regionEnd - current->regionStart);
+    }
+    ra = settings.wholeSample ? 0.0f : st;
+    rb = settings.wholeSample ? 1.0f : en;
+}
+
+void RezalicaProcessor::requestWarp (int pad, rz::WarpSettings settings)
+{
+    if (! settings.enabled)
+    {
+        ++warpGeneration; // cancels pending results
+        setWarp (pad, settings);
+        return;
+    }
+
+    rz::SampleData::Ptr base;
+    float ra, rb;
+    warpRegionFor (pad, settings, base, ra, rb);
+    if (base == nullptr)
+        return;
+
+    const int generation = ++warpGeneration;
+    const double bpm = getWarpTempo (settings);
+    std::weak_ptr<int> alive = aliveToken;
+    ++warpJobs;
+
+    stretchWorker.addJob ([this, alive, base, ra, rb, settings, bpm, pad, generation]
+    {
+        auto result = std::make_shared<juce::AudioBuffer<float>> (computeStretch (*base, ra, rb, settings, bpm));
+        juce::MessageManager::callAsync ([this, alive, base, ra, rb, settings, pad, generation, result]
+        {
+            if (alive.expired())
+                return;
+            --warpJobs;
+            if (generation != warpGeneration)
+                return; // newer settings are on their way
+
+            rz::SampleData::Ptr nowBase;
+            float nra, nrb;
+            warpRegionFor (pad, settings, nowBase, nra, nrb);
+            if (nowBase == base && std::abs (nra - ra) < 1.0e-6f && std::abs (nrb - rb) < 1.0e-6f)
+                setWarp (pad, settings, result.get());
+            padsChanged.sendChangeMessage();
+        });
+    });
+}
+
+bool RezalicaProcessor::setWarp (int pad, rz::WarpSettings settings, const juce::AudioBuffer<float>* precomputed)
 {
     auto current = engine.getPadSample (pad);
     if (current == nullptr)
@@ -888,7 +954,7 @@ bool RezalicaProcessor::setWarp (int pad, rz::WarpSettings settings)
         auto& ps = engine.getPad (pad);
         const float ra = settings.wholeSample ? 0.0f : ps.start.load();
         const float rb = settings.wholeSample ? 1.0f : ps.end.load();
-        auto warped = renderWarp (base, ra, rb, settings, getWarpTempo (settings));
+        auto warped = renderWarp (base, ra, rb, settings, getWarpTempo (settings), true, precomputed);
 
         if (settings.wholeSample)
         {
@@ -907,7 +973,7 @@ bool RezalicaProcessor::setWarp (int pad, rz::WarpSettings settings)
     return true;
 }
 
-void RezalicaProcessor::updateWarpTempo()
+void RezalicaProcessor::updateWarpTempo (bool async)
 {
     std::vector<rz::SampleData::Ptr> done;
     for (int i = 0; i < rz::numPads; ++i)
@@ -921,15 +987,104 @@ void RezalicaProcessor::updateWarpTempo()
         if (std::abs (bpm - s->renderedBpm) < 0.01)
             continue;
 
-        auto fresh = renderWarp (s->warpSource, s->regionStart, s->regionEnd, s->warp, bpm);
-        replaceSampleOnPads (s, fresh);
-        padsChanged.sendChangeMessage();
+        if (! async)
+        {
+            auto fresh = renderWarp (s->warpSource, s->regionStart, s->regionEnd, s->warp, bpm);
+            replaceSampleOnPads (s, fresh);
+            padsChanged.sendChangeMessage();
+            continue;
+        }
+
+        // background: one job per sample at a time
+        if (std::find (tempoJobsPending.begin(), tempoJobsPending.end(), s.get()) != tempoJobsPending.end())
+            continue;
+        tempoJobsPending.push_back (s.get());
+        std::weak_ptr<int> alive = aliveToken;
+        ++warpJobs;
+        stretchWorker.addJob ([this, alive, s, bpm]
+        {
+            auto result = std::make_shared<juce::AudioBuffer<float>> (computeStretch (*s->warpSource, s->regionStart, s->regionEnd, s->warp, bpm));
+            juce::MessageManager::callAsync ([this, alive, s, bpm, result]
+            {
+                if (alive.expired())
+                    return;
+                --warpJobs;
+                tempoJobsPending.erase (std::remove (tempoJobsPending.begin(), tempoJobsPending.end(), s.get()), tempoJobsPending.end());
+
+                bool stillUsed = false;
+                for (int padIndex = 0; padIndex < rz::numPads; ++padIndex)
+                    stillUsed = stillUsed || engine.getPadSample (padIndex) == s;
+                if (! stillUsed)
+                    return;
+
+                auto fresh = renderWarp (s->warpSource, s->regionStart, s->regionEnd, s->warp, bpm, true, result.get());
+                replaceSampleOnPads (s, fresh);
+                padsChanged.sendChangeMessage();
+            });
+        });
     }
+}
+
+//==============================================================================
+juce::ValueTree RezalicaProcessor::padToValueTree (int pad) const
+{
+    const auto& ps = engine.getPad (pad);
+    juce::ValueTree t ("PADCOPY");
+    t.setProperty ("start", ps.start.load(), nullptr);
+    t.setProperty ("end", ps.end.load(), nullptr);
+    t.setProperty ("gain", ps.gainDb.load(), nullptr);
+    t.setProperty ("pan", ps.pan.load(), nullptr);
+    t.setProperty ("pitch", ps.pitch.load(), nullptr);
+    t.setProperty ("attack", ps.attackMs.load(), nullptr);
+    t.setProperty ("release", ps.releaseMs.load(), nullptr);
+    t.setProperty ("loop", ps.loop.load(), nullptr);
+    t.setProperty ("reverse", ps.reverse.load(), nullptr);
+    t.setProperty ("gate", ps.gate.load(), nullptr);
+    t.setProperty ("mute", ps.mute.load(), nullptr);
+    t.appendChild (ps.effects.toValueTree(), nullptr);
+    return t;
+}
+
+void RezalicaProcessor::padFromValueTree (int pad, const juce::ValueTree& t)
+{
+    auto& ps = engine.getPad (pad);
+    ps.start = (float) t.getProperty ("start", 0.0f);
+    ps.end = (float) t.getProperty ("end", 1.0f);
+    ps.gainDb = (float) t.getProperty ("gain", 0.0f);
+    ps.pan = (float) t.getProperty ("pan", 0.0f);
+    ps.pitch = (float) t.getProperty ("pitch", 0.0f);
+    ps.attackMs = (float) t.getProperty ("attack", 1.0f);
+    ps.releaseMs = (float) t.getProperty ("release", 30.0f);
+    ps.loop = (bool) t.getProperty ("loop", false);
+    ps.reverse = (bool) t.getProperty ("reverse", false);
+    ps.gate = (bool) t.getProperty ("gate", false);
+    ps.mute = (bool) t.getProperty ("mute", false);
+    ps.effects.fromValueTree (t.getChildWithName ("FX"));
+}
+
+void RezalicaProcessor::copyPad (int pad)
+{
+    padClipboard.sample = engine.getPadSample (pad);
+    padClipboard.settings = padToValueTree (pad);
+    padClipboard.valid = true;
+}
+
+void RezalicaProcessor::pastePad (int pad)
+{
+    if (! padClipboard.valid)
+        return;
+    padFromValueTree (pad, padClipboard.settings);
+    engine.setPadSample (pad, padClipboard.sample);
+    {
+        const juce::ScopedLock sl (missingPathLock);
+        missingPaths[(size_t) pad] = {};
+    }
+    padsChanged.sendChangeMessage();
 }
 
 void RezalicaProcessor::timerCallback()
 {
-    updateWarpTempo();
+    updateWarpTempo (true);
 
     // Free samples nobody uses anymore (only the pool holds a reference).
     for (int i = samplePool.size(); --i >= 0;)

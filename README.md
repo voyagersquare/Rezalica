@@ -25,6 +25,7 @@
     - **Tempo**: prati tempo DAW-a (ako se tempo promijeni, sample se sam ponovno rastegne) ili ručni BPM.
     - **Apply to**: cijeli sample (svi njegovi isječci i padovi ga prate) ili samo odabrani pad.
     - **Beats opcije**: Preserve (Transients, 1/8, 1/16), Transient loop (Off, Loop Forward, Loop Back-and-Forth), Transient envelope.
+  - Rastezanje se računa u pozadini, pa plugin ne zastaje (dok traje, gumb pokazuje `WARP...`).
   - Visina tona se ne mijenja. Original ostaje netaknut, a `WARP OFF` ga vraća.
   - Rastegnuti sample sprema se u pozadini kao WAV u `Dokumenti/Rezalica/Warped`, a projekt ga pri otvaranju učita izravno.
 - **Postavke po padu**: Gain, Pan, Pitch (±24 polutona), Attack, Release, Start, End.
@@ -63,7 +64,7 @@ Tipkovnica računala svira trenutno odabranu banku:
 | Tipka | 1 | 2 | 3 | 4 | Q | W | E | R | A | S | D | F | Z | X | C | V |
 
 - `Space` pokreće i zaustavlja interni sekvencer, a `Esc` zaustavlja sve.
-- Desni klik na pad otvara izbornik: učitaj sample, obriši pad, izreži sample tog pada.
+- Desni klik na pad otvara izbornik: učitaj sample, obriši pad, **Copy pad / Paste pad** (kopira sample, markere, sve postavke i efekte na drugi pad) i izreži sample tog pada.
 - Audio datoteku možeš povući i ispustiti na pad (učitava se na taj pad) ili na valni oblik (reže se preko svih padova).
 - **Ableton Live:** da bi tipkovnica računala svirala padove, klikni u prozor plugina. Ableton tipke šalje pluginu samo dok je njegov prozor u fokusu.
 

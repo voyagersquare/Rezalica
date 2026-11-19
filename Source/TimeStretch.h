@@ -15,11 +15,11 @@
               which keeps tones smooth and attacks reasonably sharp. */
 namespace rz::stretch
 {
-/** Onset positions in samples (always starts with 0). */
+/** Onset positions in samples (always starts with 0), refined to the start of each attack. */
 inline std::vector<int> findOnsets (const juce::AudioBuffer<float>& in, double sampleRate)
 {
     const int len = in.getNumSamples();
-    const int hop = 256;
+    const int hop = 128;
     const int frames = len / hop;
     std::vector<int> result { 0 };
     if (frames < 8)
@@ -27,48 +27,66 @@ inline std::vector<int> findOnsets (const juce::AudioBuffer<float>& in, double s
 
     const float* L = in.getReadPointer (0);
     const float* R = in.getReadPointer (juce::jmin (1, in.getNumChannels() - 1));
+
+    // energy per frame, with a gentle high-frequency emphasis so hats / snares register too
     std::vector<float> energy ((size_t) frames);
+    float prevMono = 0.0f;
     for (int f = 0; f < frames; ++f)
     {
         float sum = 0.0f;
         for (int i = f * hop; i < (f + 1) * hop; ++i)
-            sum += 0.25f * (L[i] + R[i]) * (L[i] + R[i]);
+        {
+            const float m = 0.5f * (L[i] + R[i]);
+            const float hf = m - 0.7f * prevMono;
+            prevMono = m;
+            sum += m * m + 0.5f * hf * hf;
+        }
         energy[(size_t) f] = std::sqrt (sum / (float) hop);
     }
 
+    // log-energy flux is level independent: quiet hits count as much as loud ones
     std::vector<float> flux ((size_t) frames, 0.0f);
     for (int f = 1; f < frames; ++f)
-        flux[(size_t) f] = juce::jmax (0.0f, energy[(size_t) f] - energy[(size_t) f - 1]);
-
-    // adaptive threshold: local mean of the flux plus a fraction of the global maximum
+        flux[(size_t) f] = juce::jmax (0.0f, std::log10 (energy[(size_t) f] + 1.0e-4f) - std::log10 (energy[(size_t) f - 1] + 1.0e-4f))
+                         * juce::jlimit (0.0f, 1.0f, energy[(size_t) f] * 50.0f); // ignore near-silence
     const float maxFlux = *std::max_element (flux.begin(), flux.end());
     if (maxFlux <= 0.0f)
         return result;
 
-    const int minGap = juce::jmax (2, (int) (sampleRate * 0.05 / hop));
+    const int minGap = juce::jmax (2, (int) (sampleRate * 0.045 / hop));
     int last = -minGap;
     for (int f = 2; f < frames - 1; ++f)
     {
         float local = 0.0f;
         int n = 0;
-        for (int j = juce::jmax (1, f - 8); j <= juce::jmin (frames - 1, f + 8); ++j, ++n)
+        for (int j = juce::jmax (1, f - 12); j <= juce::jmin (frames - 1, f + 12); ++j, ++n)
             local += flux[(size_t) j];
         local /= (float) juce::jmax (1, n);
 
         const float v = flux[(size_t) f];
-        if (v > 1.6f * local + 0.08f * maxFlux && v >= flux[(size_t) f - 1] && v >= flux[(size_t) f + 1] && f - last >= minGap)
+        if (v > 1.8f * local + 0.1f * maxFlux && v >= flux[(size_t) f - 1] && v >= flux[(size_t) f + 1] && f - last >= minGap)
         {
-            // move back to the quietest point just before the attack
-            int pos = f * hop;
-            int best = pos;
-            float bestLevel = 1.0e9f;
-            for (int i = juce::jmax (0, pos - hop); i < juce::jmin (len, pos + hop / 2); ++i)
-            {
-                const float a = std::abs (L[i] + R[i]);
-                if (a < bestLevel) { bestLevel = a; best = i; }
-            }
-            if (best > result.back() + hop)
-                result.push_back (best);
+            // sample-accurate start: walk back from the frame to where the signal leaves its noise floor
+            const int frameStart = juce::jmax (0, (f - 1) * hop);
+            float floorLevel = 0.0f;
+            for (int i = juce::jmax (0, frameStart - hop); i < frameStart; ++i)
+                floorLevel = juce::jmax (floorLevel, std::abs (L[i] + R[i]) * 0.5f);
+            float peak = 0.0f;
+            for (int i = frameStart; i < juce::jmin (len, (f + 1) * hop); ++i)
+                peak = juce::jmax (peak, std::abs (L[i] + R[i]) * 0.5f);
+            const float threshold = floorLevel + 0.1f * (peak - floorLevel);
+
+            int pos = frameStart;
+            for (int i = frameStart; i < juce::jmin (len, (f + 1) * hop); ++i)
+                if (std::abs (L[i] + R[i]) * 0.5f > threshold) { pos = i; break; }
+
+            // a few samples earlier, at a zero crossing if there is one close by
+            pos = juce::jmax (0, pos - 32);
+            for (int i = pos; i > juce::jmax (1, pos - 64); --i)
+                if ((L[i] + R[i] >= 0.0f) != (L[i - 1] + R[i - 1] >= 0.0f)) { pos = i; break; }
+
+            if (pos > result.back() + hop)
+                result.push_back (pos);
             last = f;
         }
     }
@@ -101,7 +119,10 @@ inline juce::AudioBuffer<float> beats (const juce::AudioBuffer<float>& in, doubl
     bounds.push_back (inLen);
 
     const double ratio = (double) outLen / (double) inLen;
-    const int fade = juce::jmax (16, (int) (sampleRate * 0.004));
+    // pieces overlap by a short crossfade: the previous one fades out while the next fades in.
+    // At detected transients the fade-in is tiny so attacks stay sharp.
+    const int cutFade = juce::jmax (16, (int) (sampleRate * 0.004));
+    const int fadeIn = preserve == 0 ? juce::jmax (8, (int) (sampleRate * 0.0005)) : cutFade;
     const float env = juce::jlimit (0.0f, 1.0f, envelope / 100.0f);
 
     for (size_t i = 0; i + 1 < bounds.size(); ++i)
@@ -117,26 +138,27 @@ inline juce::AudioBuffer<float> beats (const juce::AudioBuffer<float>& in, doubl
         if (outSeg <= 0)
             continue;
 
+        // loop region: the second half of the piece (its sustain / tail)
         const int loopStart = b0 + segLen / 2;
-        const int loopLen = juce::jmax (1, b1 - loopStart);
-        const bool looping = loopMode != 0 && outSeg > segLen;
+        const int loopLen = juce::jmax (2, b1 - loopStart);
+        const int xfade = juce::jlimit (8, juce::jmax (8, loopLen / 2), (int) (sampleRate * 0.012));
+        const bool looping = loopMode != 0 && outSeg > segLen && loopStart - xfade >= b0;
+        // the last piece does not need its tail cut: it can ring into the end of the file
+        const bool lastPiece = i + 2 == bounds.size();
 
         for (int ch = 0; ch < 2; ++ch)
         {
             const float* src = in.getReadPointer (juce::jmin (ch, in.getNumChannels() - 1));
+            auto at = [&] (int s) { return src[juce::jlimit (0, inLen - 1, s)]; };
             float* dst = out.getWritePointer (ch);
 
-            for (int n = 0; n < outSeg; ++n)
+            const int total = juce::jmin (outSeg + cutFade, outLen - o0); // play on into the next piece's fade-in
+            for (int n = 0; n < total; ++n)
             {
-                int s;
-                float g = 1.0f;
-
-                if (n < segLen)
+                float v;
+                if (n < segLen && ! (looping && loopMode == 1 && n >= segLen - xfade))
                 {
-                    s = b0 + n;
-                    // forward loops jump back: fade out the end of the first pass
-                    if (looping && loopMode == 1 && n > segLen - fade)
-                        g *= (float) (segLen - n) / (float) fade;
+                    v = at (b0 + n);
                 }
                 else if (! looping)
                 {
@@ -144,22 +166,40 @@ inline juce::AudioBuffer<float> beats (const juce::AudioBuffer<float>& in, doubl
                 }
                 else if (loopMode == 1)
                 {
-                    const int k = (n - segLen) % loopLen;
-                    s = loopStart + k;
-                    g *= juce::jmin (1.0f, (float) k / (float) fade, (float) (loopLen - k) / (float) fade);
+                    // forward loop with an equal-power crossfade: the end of the loop blends
+                    // into the audio just before its start, so there is no jump and no dip
+                    const int pos = n - (segLen - xfade);            // 0 at the first crossfade
+                    const int k = pos % loopLen;                     // position inside one loop pass
+                    if (k < xfade)
+                    {
+                        const float w = (float) k / (float) xfade;
+                        const float outgoing = at (b1 - xfade + k);
+                        const float incoming = at (loopStart - xfade + k);
+                        v = outgoing * std::cos (w * juce::MathConstants<float>::halfPi)
+                          + incoming * std::sin (w * juce::MathConstants<float>::halfPi);
+                    }
+                    else
+                    {
+                        v = at (loopStart - xfade + k);
+                    }
                 }
                 else
                 {
+                    // back-and-forth: the waveform turns around, so it stays continuous
                     const int period = 2 * loopLen;
                     const int k = (n - segLen) % period;
-                    s = k < loopLen ? b1 - 1 - k : loopStart + (k - loopLen);
+                    v = at (k < loopLen ? b1 - 1 - k : loopStart + (k - loopLen));
                 }
 
-                g *= 1.0f - (1.0f - env) * (float) n / (float) outSeg;      // transient envelope
-                if (n > outSeg - fade)
-                    g *= (float) (outSeg - n) / (float) fade;                // de-click the cut
-
-                dst[o0 + n] += src[juce::jlimit (0, inLen - 1, s)] * g;
+                float g = 1.0f - (1.0f - env) * juce::jmin (1.0f, (float) n / (float) outSeg);   // transient envelope
+                if (i > 0 && n < fadeIn)
+                    g *= std::sin ((float) n / (float) fadeIn * juce::MathConstants<float>::halfPi);    // fade in
+                if (n >= outSeg)
+                {
+                    if (lastPiece) break;
+                    g *= std::cos ((float) (n - outSeg) / (float) cutFade * juce::MathConstants<float>::halfPi); // fade out
+                }
+                dst[o0 + n] += v * g;
             }
         }
     }
@@ -167,7 +207,9 @@ inline juce::AudioBuffer<float> beats (const juce::AudioBuffer<float>& in, doubl
 }
 
 //==============================================================================
-/** Complex mode: phase vocoder with identity phase locking. */
+/** Complex mode: phase vocoder with identity phase locking.
+    The phases are computed once on the mid signal; left and right are rotated by the same
+    amount, which keeps the stereo image intact and only needs one phase calculation. */
 inline juce::AudioBuffer<float> complex (const juce::AudioBuffer<float>& in, double sampleRate, int outLen)
 {
     const int inLen = in.getNumSamples();
@@ -179,7 +221,7 @@ inline juce::AudioBuffer<float> complex (const juce::AudioBuffer<float>& in, dou
     const int order = sampleRate > 60000.0 ? 13 : 12;
     const int N = 1 << order;
     const int half = N / 2;
-    const int hs = N / 4;                       // synthesis hop
+    const int hs = N / 8;                       // synthesis hop: 87.5 % overlap, smoother result
     const double ratio = (double) outLen / (double) inLen;
     const double ha = hs / ratio;               // analysis hop
     const int pad = N;
@@ -189,38 +231,32 @@ inline juce::AudioBuffer<float> complex (const juce::AudioBuffer<float>& in, dou
     for (int n = 0; n < N; ++n)
         window[(size_t) n] = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) n / (float) N);
 
-    // padded input: L, R, mid
     const int padLen = inLen + 2 * pad;
-    std::vector<std::vector<float>> x (3, std::vector<float> ((size_t) padLen, 0.0f));
+    std::vector<float> xl ((size_t) padLen, 0.0f), xr ((size_t) padLen, 0.0f);
     for (int i = 0; i < inLen; ++i)
     {
-        const float l = in.getSample (0, i);
-        const float r = in.getSample (juce::jmin (1, in.getNumChannels() - 1), i);
-        x[0][(size_t) (pad + i)] = l;
-        x[1][(size_t) (pad + i)] = r;
-        x[2][(size_t) (pad + i)] = 0.5f * (l + r);
+        xl[(size_t) (pad + i)] = in.getSample (0, i);
+        xr[(size_t) (pad + i)] = in.getSample (juce::jmin (1, in.getNumChannels() - 1), i);
     }
 
     const int outPadLen = (int) std::ceil (padLen * ratio) + N + hs;
-    std::vector<std::vector<float>> y (2, std::vector<float> ((size_t) outPadLen, 0.0f));
+    std::vector<float> yl ((size_t) outPadLen, 0.0f), yr ((size_t) outPadLen, 0.0f);
 
-    // calibrate the FFT round trip scale and the window overlap gain
+    // FFT round trip scale and the window overlap gain (sum of hann^2 at 87.5 % overlap = 3)
     float scale;
     {
         std::vector<float> t ((size_t) (2 * N), 0.0f);
         t[1] = 1.0f;
         fft.performRealOnlyForwardTransform (t.data());
         fft.performRealOnlyInverseTransform (t.data());
-        scale = std::abs (t[1]) > 1.0e-9f ? 1.0f / t[1] : 1.0f;
-        scale /= 1.5f; // sum of hann^2 at 75 % overlap
+        scale = (std::abs (t[1]) > 1.0e-9f ? 1.0f / t[1] : 1.0f) / 3.0f;
     }
 
-    std::vector<float> buf ((size_t) (2 * N));
-    std::vector<float> mag[3], ph[3];
-    for (int c = 0; c < 3; ++c) { mag[c].resize ((size_t) half + 1); ph[c].resize ((size_t) half + 1); }
+    std::vector<float> bl ((size_t) (2 * N)), br ((size_t) (2 * N));
+    std::vector<float> mag ((size_t) half + 1), phase ((size_t) half + 1);
     std::vector<float> prevPhase ((size_t) half + 1, 0.0f), synPhase ((size_t) half + 1, 0.0f);
-    std::vector<int> peakOf ((size_t) half + 1, 0);
     std::vector<int> peaks;
+    peaks.reserve ((size_t) half);
 
     auto wrap = [] (float a)
     {
@@ -234,108 +270,115 @@ inline juce::AudioBuffer<float> complex (const juce::AudioBuffer<float>& in, dou
     for (int m = 0; m < numFrames; ++m)
     {
         const int start = (int) std::llround (m * ha);
-        if (start + N > padLen)
-            break;
         const int ts = m * hs;
-        if (ts + N > outPadLen)
+        if (start + N > padLen || ts + N > outPadLen)
             break;
 
-        // analysis of L, R and mid
-        float energy = 0.0f;
-        for (int c = 0; c < 3; ++c)
+        // analysis: L and R spectra, mid = (L + R) / 2 in the frequency domain
+        std::fill (bl.begin(), bl.end(), 0.0f);
+        std::fill (br.begin(), br.end(), 0.0f);
+        for (int n = 0; n < N; ++n)
         {
-            std::fill (buf.begin(), buf.end(), 0.0f);
-            for (int n = 0; n < N; ++n)
-                buf[(size_t) n] = x[(size_t) c][(size_t) (start + n)] * window[(size_t) n];
-            fft.performRealOnlyForwardTransform (buf.data());
-            for (int k = 0; k <= half; ++k)
-            {
-                const float re = buf[(size_t) (2 * k)], im = buf[(size_t) (2 * k + 1)];
-                mag[c][(size_t) k] = std::sqrt (re * re + im * im);
-                ph[c][(size_t) k] = std::atan2 (im, re);
-                if (c == 2) energy += mag[c][(size_t) k] * mag[c][(size_t) k];
-            }
+            bl[(size_t) n] = xl[(size_t) (start + n)] * window[(size_t) n];
+            br[(size_t) n] = xr[(size_t) (start + n)] * window[(size_t) n];
+        }
+        fft.performRealOnlyForwardTransform (bl.data(), true);
+        fft.performRealOnlyForwardTransform (br.data(), true);
+
+        float energy = 0.0f;
+        for (int k = 0; k <= half; ++k)
+        {
+            const float re = 0.5f * (bl[(size_t) (2 * k)] + br[(size_t) (2 * k)]);
+            const float im = 0.5f * (bl[(size_t) (2 * k + 1)] + br[(size_t) (2 * k + 1)]);
+            const float mg2 = re * re + im * im;
+            mag[(size_t) k] = std::sqrt (mg2);
+            phase[(size_t) k] = std::atan2 (im, re);
+            energy += mg2;
         }
 
-        // peaks of the mid spectrum
         peaks.clear();
         for (int k = 2; k < half - 1; ++k)
         {
-            const float v = mag[2][(size_t) k];
-            if (v > mag[2][(size_t) k - 1] && v >= mag[2][(size_t) k + 1] && v > mag[2][(size_t) k - 2] && v >= mag[2][(size_t) k + 2] && v > 1.0e-6f)
+            const float v = mag[(size_t) k];
+            if (v > 1.0e-6f && v > mag[(size_t) k - 1] && v >= mag[(size_t) k + 1] && v > mag[(size_t) k - 2] && v >= mag[(size_t) k + 2])
                 peaks.push_back (k);
         }
 
-        const bool onset = m > 0 && energy > 4.0f * prevEnergy && energy > 1.0e-3f;
+        const bool onset = m > 0 && energy > 3.0f * prevEnergy && energy > 1.0e-3f;
         const int hopA = start - prevStart;
 
-        if (m == 0 || onset || peaks.empty() || hopA <= 0)
+        if (m == 0 || onset || hopA <= 0)
+        {
+            synPhase = phase; // phase reset keeps attacks sharp
+        }
+        else if (peaks.empty())
         {
             for (int k = 0; k <= half; ++k)
-                synPhase[(size_t) k] = (m == 0 || onset) ? ph[2][(size_t) k]
-                                                         : synPhase[(size_t) k] + juce::MathConstants<float>::twoPi * (float) k * (float) hs / (float) N;
+                synPhase[(size_t) k] = wrap (synPhase[(size_t) k] + juce::MathConstants<float>::twoPi * (float) k * (float) hs / (float) N);
         }
         else
         {
-            // advance the phase of each peak by its measured frequency
+            // each peak moves on by its measured (true) frequency
             for (int p : peaks)
             {
                 const float omega = juce::MathConstants<float>::twoPi * (float) p / (float) N;
-                const float dphi = wrap (ph[2][(size_t) p] - prevPhase[(size_t) p] - omega * (float) hopA);
-                const float freq = omega + dphi / (float) hopA;
-                synPhase[(size_t) p] = wrap (synPhase[(size_t) p] + freq * (float) hs);
+                const float dphi = wrap (phase[(size_t) p] - prevPhase[(size_t) p] - omega * (float) hopA);
+                synPhase[(size_t) p] = wrap (synPhase[(size_t) p] + (omega + dphi / (float) hopA) * (float) hs);
             }
-            // identity phase locking: bins follow the peak of their region
+            // identity phase locking: every bin keeps its phase relation to the peak of its region
             size_t pi = 0;
             for (int k = 0; k <= half; ++k)
             {
-                while (pi + 1 < peaks.size() && std::abs (peaks[pi + 1] - k) < std::abs (peaks[pi] - k))
+                while (pi + 1 < peaks.size() && (peaks[pi] + peaks[pi + 1]) / 2 < k)
                     ++pi;
-                peakOf[(size_t) k] = peaks[pi];
-            }
-            for (int k = 0; k <= half; ++k)
-            {
-                const int p = peakOf[(size_t) k];
+                const int p = peaks[pi];
                 if (p != k)
-                    synPhase[(size_t) k] = synPhase[(size_t) p] + (ph[2][(size_t) k] - ph[2][(size_t) p]);
+                    synPhase[(size_t) k] = synPhase[(size_t) p] + (phase[(size_t) k] - phase[(size_t) p]);
             }
         }
 
-        prevPhase = ph[2];
+        prevPhase = phase;
         prevStart = start;
         prevEnergy = energy;
 
-        // synthesis for L and R, keeping each channel's phase offset to the mid
-        for (int c = 0; c < 2; ++c)
+        // synthesis: rotate L and R by (new phase - analysed mid phase)
+        for (int k = 0; k <= half; ++k)
         {
-            std::fill (buf.begin(), buf.end(), 0.0f);
-            for (int k = 0; k <= half; ++k)
+            const float rot = synPhase[(size_t) k] - phase[(size_t) k];
+            const float c = std::cos (rot), sn = std::sin (rot);
+            for (auto* b : { &bl, &br })
             {
-                const float phase = synPhase[(size_t) k] + (ph[c][(size_t) k] - ph[2][(size_t) k]);
-                const float re = mag[c][(size_t) k] * std::cos (phase);
-                const float im = mag[c][(size_t) k] * std::sin (phase);
-                buf[(size_t) (2 * k)] = re;
-                buf[(size_t) (2 * k + 1)] = (k == 0 || k == half) ? 0.0f : im;
+                auto& d = *b;
+                const float re = d[(size_t) (2 * k)], im = d[(size_t) (2 * k + 1)];
+                d[(size_t) (2 * k)] = re * c - im * sn;
+                d[(size_t) (2 * k + 1)] = (k == 0 || k == half) ? 0.0f : re * sn + im * c;
             }
+        }
+        for (auto* b : { &bl, &br })
+        {
+            auto& d = *b;
             for (int k = half + 1; k < N; ++k)
             {
-                buf[(size_t) (2 * k)] = buf[(size_t) (2 * (N - k))];
-                buf[(size_t) (2 * k + 1)] = -buf[(size_t) (2 * (N - k) + 1)];
+                d[(size_t) (2 * k)] = d[(size_t) (2 * (N - k))];
+                d[(size_t) (2 * k + 1)] = -d[(size_t) (2 * (N - k) + 1)];
             }
-            fft.performRealOnlyInverseTransform (buf.data());
-            auto& dst = y[(size_t) c];
-            for (int n = 0; n < N; ++n)
-                dst[(size_t) (ts + n)] += buf[(size_t) n] * window[(size_t) n] * scale;
+            fft.performRealOnlyInverseTransform (d.data());
+        }
+        for (int n = 0; n < N; ++n)
+        {
+            const float w = window[(size_t) n] * scale;
+            yl[(size_t) (ts + n)] += bl[(size_t) n] * w;
+            yr[(size_t) (ts + n)] += br[(size_t) n] * w;
         }
     }
 
     const int offset = (int) std::llround (pad * ratio);
-    for (int c = 0; c < 2; ++c)
-        for (int i = 0; i < outLen; ++i)
-        {
-            const int j = offset + i;
-            out.setSample (c, i, j < outPadLen ? y[(size_t) c][(size_t) j] : 0.0f);
-        }
+    for (int i = 0; i < outLen; ++i)
+    {
+        const int j = offset + i;
+        out.setSample (0, i, j < outPadLen ? yl[(size_t) j] : 0.0f);
+        out.setSample (1, i, j < outPadLen ? yr[(size_t) j] : 0.0f);
+    }
     return out;
 }
 } // namespace rz::stretch

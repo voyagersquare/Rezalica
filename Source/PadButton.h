@@ -20,6 +20,7 @@ public:
     std::function<void (int)> onLoadRequest;
     std::function<void (int)> onClear;
     std::function<void (int, int)> onChop; // pad, mode
+    std::function<void (int)> onCopy, onPaste;
 
     void setIndex (int i)                    { if (i != index) { index = i; flashLevel = 0.0f; held = false; repaint(); } }
     int getIndex() const noexcept            { return index; }
@@ -126,6 +127,9 @@ private:
         m.addItem (1, "Load sample...");
         m.addItem (2, "Clear pad", name.isNotEmpty());
         m.addSeparator();
+        m.addItem (20, "Copy pad", name.isNotEmpty());
+        m.addItem (21, "Paste pad", processor.canPastePad());
+        m.addSeparator();
         juce::PopupMenu chop;
         chop.addItem (9, "2 equal slices");
         chop.addItem (10, "4 equal slices");
@@ -138,6 +142,8 @@ private:
         {
             if (r == 1 && onLoadRequest) onLoadRequest (index);
             if (r == 2 && onClear) onClear (index);
+            if (r == 20 && onCopy) onCopy (index);
+            if (r == 21 && onPaste) onPaste (index);
             if (r >= 9 && r <= 13 && onChop)
                 onChop (index, r == 9 ? 2 : r == 10 ? 4 : r == 11 ? 8 : r == 12 ? 16 : 0);
         });

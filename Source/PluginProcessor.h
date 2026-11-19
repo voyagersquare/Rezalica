@@ -55,11 +55,19 @@ public:
     static juce::File getTrimFolder();
 
     // Time stretch / warp (applied to the selected pad's sample, or only its region)
-    bool setWarp (int pad, rz::WarpSettings settings);   // settings.enabled = false removes the warp
+    bool setWarp (int pad, rz::WarpSettings settings,    // settings.enabled = false removes the warp
+                  const juce::AudioBuffer<float>* precomputed = nullptr);
+    void requestWarp (int pad, rz::WarpSettings settings); // same, but stretches on a background thread
+    bool isWarpBusy() const noexcept { return warpJobs.load() > 0; }
     rz::WarpSettings getWarpSettings (int pad) const;    // current settings of the pad (or the last used ones)
     bool isPadWarped (int pad) const;
     double getWarpTempo (const rz::WarpSettings& s) const;
-    void updateWarpTempo();                              // re-stretches synced samples when the DAW tempo changes
+    void updateWarpTempo (bool async = false);           // re-stretches synced samples when the DAW tempo changes
+
+    // copy / paste a whole pad (sample, markers, settings, effects)
+    void copyPad (int pad);
+    bool canPastePad() const noexcept { return padClipboard.valid; }
+    void pastePad (int pad);
     static juce::File getWarpFolder();
 
     // manual chop markers (switch the chop mode to Manual)
@@ -110,7 +118,13 @@ private:
     void timerCallback() override;
     rz::SampleData::Ptr loadSample (const juce::File& file);
     rz::SampleData::Ptr renderWarp (const rz::SampleData::Ptr& source, float regionStart, float regionEnd,
-                                    const rz::WarpSettings& settings, double bpm, bool saveInBackground = true);
+                                    const rz::WarpSettings& settings, double bpm, bool saveInBackground = true,
+                                    const juce::AudioBuffer<float>* precomputed = nullptr);
+    static juce::AudioBuffer<float> computeStretch (const rz::SampleData& source, float regionStart, float regionEnd,
+                                                    const rz::WarpSettings& settings, double bpm);
+    void warpRegionFor (int pad, const rz::WarpSettings& settings, rz::SampleData::Ptr& base, float& ra, float& rb) const;
+    juce::ValueTree padToValueTree (int pad) const;
+    void padFromValueTree (int pad, const juce::ValueTree& t);
     void replaceSampleOnPads (const rz::SampleData::Ptr& from, const rz::SampleData::Ptr& to);
     void saveInBackground (const rz::SampleData::Ptr& s);
 
@@ -161,6 +175,14 @@ private:
     std::atomic<float>* pMaster = nullptr;
 
     rz::WarpSettings lastWarpSettings;
+
+    struct PadClipboard { rz::SampleData::Ptr sample; juce::ValueTree settings; bool valid = false; } padClipboard;
+
+    std::atomic<int> warpJobs { 0 };
+    int warpGeneration = 0;
+    std::vector<rz::SampleData*> tempoJobsPending;
+    std::shared_ptr<int> aliveToken = std::make_shared<int> (0);
+    juce::ThreadPool stretchWorker { 1 };
 
     // writes stretched samples to disk in the background (declared last: stopped first)
     juce::ThreadPool fileWriter { 1 };

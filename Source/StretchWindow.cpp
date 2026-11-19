@@ -119,13 +119,13 @@ StretchPanel::StretchPanel (RezalicaProcessor& p) : processor (p)
     warpOnButton.onClick = [this]
     {
         ui.enabled = true;
-        processor.setWarp (processor.selectedPad.load(), ui);
+        processor.requestWarp (processor.selectedPad.load(), ui);
         updateInfo();
     };
     warpOffButton.onClick = [this]
     {
         ui.enabled = false;
-        processor.setWarp (processor.selectedPad.load(), ui);
+        processor.requestWarp (processor.selectedPad.load(), ui);
         updateInfo();
     };
     for (auto* b : { &warpOnButton, &warpOffButton })
@@ -136,7 +136,7 @@ StretchPanel::StretchPanel (RezalicaProcessor& p) : processor (p)
 
     setSize (640, 480);
     loadFromPad();
-    startTimerHz (4);
+    startTimerHz (8);
 }
 
 StretchPanel::~StretchPanel()
@@ -174,7 +174,7 @@ void StretchPanel::settingsChanged (bool reapply)
     if (reapply && processor.isPadWarped (processor.selectedPad.load()))
     {
         ui.enabled = true;
-        processor.setWarp (processor.selectedPad.load(), ui);
+        processor.requestWarp (processor.selectedPad.load(), ui);
     }
     updateInfo();
 }
@@ -185,7 +185,9 @@ void StretchPanel::updateInfo()
     auto s = processor.getEngine().getPadSample (pad);
     const bool warped = s != nullptr && s->isWarped();
 
-    title.setText ("TIME STRETCH / WARP  -  PAD " + padLabel (pad) + (warped ? "   (WARP ON)" : "   (WARP OFF)"), juce::dontSendNotification);
+    title.setText ("TIME STRETCH / WARP  -  PAD " + padLabel (pad)
+                       + (processor.isWarpBusy() ? "   (stretching...)" : warped ? "   (WARP ON)" : "   (WARP OFF)"),
+                   juce::dontSendNotification);
 
     const bool beats = ui.mode == WarpSettings::beats;
     for (auto* c : { (juce::Component*) &preserveBox, (juce::Component*) &loopBox, (juce::Component*) &envelopeSlider })

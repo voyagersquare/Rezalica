@@ -170,9 +170,10 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         const int pad = processor.selectedPad.load();
         auto ws = processor.getWarpSettings (pad);
         ws.enabled = warpButton.getToggleState();
-        if (! processor.setWarp (pad, ws))
+        if (processor.getEngine().getPadSample (pad) == nullptr)
             warpButton.setToggleState (false, juce::dontSendNotification);
-        selectPad (pad);
+        else
+            processor.requestWarp (pad, ws); // stretches in the background
     };
     stretchButton.setTooltip ("Open the time stretch / warp window");
     stretchButton.onClick = [this] { showStretchWindow(); };
@@ -192,6 +193,8 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         pad->onSelect = [this] (int idx) { selectPad (idx); };
         pad->onLoadRequest = [this] (int idx) { choosePadFile (idx); };
         pad->onClear = [this] (int idx) { processor.clearPad (idx); };
+        pad->onCopy = [this] (int idx) { processor.copyPad (idx); };
+        pad->onPaste = [this] (int idx) { processor.pastePad (idx); selectPad (idx); };
         pad->onChop = [this] (int idx, int mode) { processor.chopPadSample (idx, mode); selectPad (0); refreshChopControls(); };
         addAndMakeVisible (*pad);
         pads.push_back (std::move (pad));
@@ -509,6 +512,8 @@ void RezalicaEditor::timerCallback()
 
     if (sequencerWindow != nullptr)
         seqButton.setToggleState (sequencerWindow->isVisible(), juce::dontSendNotification);
+
+    warpButton.setButtonText (processor.isWarpBusy() ? "WARP..." : "WARP");
 }
 
 int RezalicaEditor::chopModeFromBox() const

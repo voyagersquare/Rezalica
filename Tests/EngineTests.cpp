@@ -353,6 +353,19 @@ int main (int argc, char** argv)
         }
         std::cout << "       beats x1.5: " << found << "/8 hits at their new positions\n";
         check (stretched.getNumSamples() == 132300 && found == 8, "beats: every hit moves to its stretched position");
+        // forward loop of a sustained tone: crossfaded, so no clicks / jumps
+        {
+            juce::AudioBuffer<float> tone (2, 22050);
+            for (int i = 0; i < 22050; ++i)
+                for (int ch = 0; ch < 2; ++ch)
+                    tone.setSample (ch, i, 0.5f * std::sin (i * 0.031f) * std::exp (-i / 30000.0f));
+            auto looped = rz::stretch::beats (tone, sr, 66150, 2, 1, 100.0f, 4.0);
+            float maxStepIn = 0.0f, maxStepOut = 0.0f;
+            for (int i = 1; i < 22050; ++i) maxStepIn = juce::jmax (maxStepIn, std::abs (tone.getSample (0, i) - tone.getSample (0, i - 1)));
+            for (int i = 1; i < 66150 - 200; ++i) maxStepOut = juce::jmax (maxStepOut, std::abs (looped.getSample (0, i) - looped.getSample (0, i - 1)));
+            std::cout << "       beats loop: largest sample step " << maxStepOut << " (original " << maxStepIn << ")\n";
+            check (maxStepOut < maxStepIn * 1.6f, "beats: loop forward is click-free");
+        }
         auto squeezed = rz::stretch::beats (clicks, sr, 44100, 0, 1, 100.0f, 8.0);
         check (squeezed.getNumSamples() == 44100 && squeezed.getMagnitude (0, 3 * 5512, 300) > 0.3f, "beats: speeding up keeps the hits");
     }
@@ -411,8 +424,22 @@ int main (int argc, char** argv)
         check (padOnly->isWarped() && p.getEngine().getPadSample (0) == original && std::abs (padOnly->buffer.getNumSamples() - 55125) < 2,
                "pad-only warp stretches just that pad's slice");
 
+        // background version (what the WARP button uses)
+        w.mode = rz::WarpSettings::beats;
+        w.wholeSample = true;
+        w.lengthIndex = 2;
+        p.requestWarp (3, w);
+        for (int i = 0; i < 200 && p.isWarpBusy(); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        auto bg = p.getEngine().getPadSample (3);
+        check (! p.isWarpBusy() && bg->isWarped() && std::abs (bg->buffer.getNumSamples() - (int) (4 * 60.0 / 96.0 * 44100)) < 2,
+               "background warp finishes and lands on the pads");
+        for (int i = 0; i < 100 && ! bg->renderedFile.existsAsFile(); ++i) juce::Thread::sleep (50);
+        juce::Thread::sleep (100);
+
         w.enabled = false;
         p.setWarp (3, w);
+        bg->renderedFile.deleteFile();
         check (p.getEngine().getPadSample (3) == original && std::abs (p.getEngine().getPad (3).start.load() - start3) < 1.0e-5f,
                "warp off restores the original sample and markers");
 
@@ -420,6 +447,24 @@ int main (int argc, char** argv)
             f.deleteFile();
         wseq.bpm = 120.0f;
         renderBlocks (p, 2);
+    }
+
+    // Copy / paste pad
+    {
+        auto& src = p.getEngine().getPad (2);
+        src.gainDb = -4.5f; src.reverse = true; src.effects.reverbOn = true; src.effects.reverbMix = 0.77f;
+        p.copyPad (2);
+        check (p.canPastePad(), "copy pad");
+        p.pastePad (20); // B5
+        auto& dst = p.getEngine().getPad (20);
+        check (p.getEngine().getPadSample (20) == p.getEngine().getPadSample (2)
+               && std::abs (dst.start.load() - src.start.load()) < 1.0e-6f && std::abs (dst.end.load() - src.end.load()) < 1.0e-6f
+               && std::abs (dst.gainDb.load() + 4.5f) < 1.0e-4f && dst.reverse.load()
+               && dst.effects.reverbOn.load() && std::abs (dst.effects.reverbMix.load() - 0.77f) < 1.0e-4f,
+               "paste pad copies sample, markers, settings and effects");
+        src.gainDb = 0.0f; src.reverse = false; src.effects.reset();
+        dst.reverse = false;
+        p.clearPad (20);
     }
 
     // State round trip
