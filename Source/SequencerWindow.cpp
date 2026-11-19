@@ -2,6 +2,115 @@
 
 namespace rz
 {
+namespace
+{
+/** Click cycle of a step: off -> full -> softer -> softer -> softest -> off. */
+juce::uint8 nextVelocity (juce::uint8 v)
+{
+    if (v == 0)  return 127;
+    if (v > 96)  return 96;
+    if (v > 64)  return 64;
+    if (v > 32)  return 32;
+    return 0;
+}
+
+/** Pop-up for one step (Ctrl+click): timing (early / late) and velocity. */
+class StepEditPopup : public juce::Component
+{
+public:
+    StepEditPopup (RezalicaProcessor& p, int patternIndex, int padIndex, int stepIndex, std::function<void()> changed)
+        : processor (p), pattern (patternIndex), pad (padIndex), step (stepIndex), onChange (std::move (changed))
+    {
+        auto& seq = processor.getSequencer();
+        title.setText (padLabel (pad) + "  step " + juce::String (step + 1), juce::dontSendNotification);
+        title.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        title.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (title);
+
+        for (auto* l : { &timingLabel, &velocityLabel })
+        {
+            l->setFont (juce::FontOptions (11.0f));
+            l->setColour (juce::Label::textColourId, colours::dim);
+            l->setJustificationType (juce::Justification::centredLeft);
+            addAndMakeVisible (*l);
+        }
+        hint.setText ("< earlier        on the grid        later >", juce::dontSendNotification);
+        hint.setFont (juce::FontOptions (10.0f));
+        hint.setColour (juce::Label::textColourId, colours::dim);
+        hint.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (hint);
+
+        timing.setSliderStyle (juce::Slider::LinearHorizontal);
+        timing.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        timing.setRange (-50.0, 50.0, 1.0);
+        timing.setDoubleClickReturnValue (true, 0.0);
+        timing.setValue (seq.getNudge (pattern, pad, step), juce::dontSendNotification);
+        timing.setColour (juce::Slider::trackColourId, juce::Colour (0xffffc94a).withAlpha (0.6f));
+        timing.onValueChange = [this]
+        {
+            processor.getSequencer().setNudge (pattern, pad, step, (int) timing.getValue());
+            updateLabels();
+            if (onChange) onChange();
+        };
+        addAndMakeVisible (timing);
+
+        velocity.setSliderStyle (juce::Slider::LinearHorizontal);
+        velocity.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        velocity.setRange (1.0, 127.0, 1.0);
+        velocity.setValue (juce::jmax (1, (int) seq.getStep (pattern, pad, step)), juce::dontSendNotification);
+        velocity.onValueChange = [this]
+        {
+            processor.getSequencer().setStep (pattern, pad, step, (juce::uint8) velocity.getValue());
+            updateLabels();
+            if (onChange) onChange();
+        };
+        addAndMakeVisible (velocity);
+
+        updateLabels();
+        setSize (300, 150);
+    }
+
+    void resized() override
+    {
+        auto b = getLocalBounds().reduced (10, 6);
+        title.setBounds (b.removeFromTop (20));
+        timingLabel.setBounds (b.removeFromTop (18));
+        timing.setBounds (b.removeFromTop (22));
+        hint.setBounds (b.removeFromTop (14));
+        b.removeFromTop (6);
+        velocityLabel.setBounds (b.removeFromTop (18));
+        velocity.setBounds (b.removeFromTop (22));
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (colours::panel);
+        // centre mark of the timing slider = exactly on the grid
+        auto t = timing.getBounds().toFloat();
+        g.setColour (colours::text.withAlpha (0.5f));
+        g.fillRect (t.getCentreX() - 0.5f, t.getY() - 2.0f, 1.0f, t.getHeight() + 4.0f);
+    }
+
+private:
+    void updateLabels()
+    {
+        const int n = (int) timing.getValue();
+        const double ms = std::abs (n) * 0.01 * 15000.0 / juce::jmax (20.0f, processor.getSequencer().effectiveBpm.load());
+        timingLabel.setText ("TIMING: " + (n == 0 ? juce::String ("on the grid")
+                                                 : juce::String (std::abs (n)) + " % " + (n < 0 ? "earlier" : "later")
+                                                   + "  (" + juce::String (ms, 1) + " ms)"),
+                             juce::dontSendNotification);
+        velocityLabel.setText ("VELOCITY: " + juce::String ((int) velocity.getValue()), juce::dontSendNotification);
+        repaint();
+    }
+
+    RezalicaProcessor& processor;
+    const int pattern, pad, step;
+    std::function<void()> onChange;
+    juce::Label title, timingLabel, velocityLabel, hint;
+    juce::Slider timing, velocity;
+};
+} // namespace
 //==============================================================================
 int SequencerGrid::numSteps() const
 {
@@ -61,10 +170,28 @@ void SequencerGrid::paint (juce::Graphics& g)
 
             const auto v = seq.getStep (pattern, pad, s);
             if (v > 0)
-                c = accent.withMultipliedBrightness (0.45f + 0.55f * (float) v / 127.0f);
+                c = accent.withMultipliedBrightness (0.35f + 0.65f * (float) v / 127.0f);
 
             g.setColour (c);
             g.fillRoundedRectangle (cell, 3.0f);
+
+            if (v > 0)
+            {
+                // velocity: a bar along the left side, as high as the step is loud
+                const float h = (cell.getHeight() - 4.0f) * (float) v / 127.0f;
+                g.setColour (juce::Colours::white.withAlpha (0.55f));
+                g.fillRect (cell.getX() + 3.0f, cell.getBottom() - 2.0f - h, 3.0f, h);
+
+                // timing offset: a yellow mark left (early) or right (late) of the centre
+                if (const int n = seq.getNudge (pattern, pad, s); n != 0)
+                {
+                    const float x = cell.getCentreX() + (float) n / 50.0f * (cell.getWidth() * 0.5f - 3.0f);
+                    g.setColour (juce::Colour (0xffffc94a));
+                    g.fillRect (juce::Rectangle<float>::leftTopRightBottom (juce::jmin (x, cell.getCentreX()), cell.getBottom() - 4.0f,
+                                                                            juce::jmax (x, cell.getCentreX()), cell.getBottom() - 2.0f));
+                    g.fillRect (x - 1.0f, cell.getY() + 2.0f, 2.0f, cell.getHeight() - 4.0f);
+                }
+            }
         }
     }
 
@@ -93,17 +220,33 @@ void SequencerGrid::mouseDown (const juce::MouseEvent& e)
     const int pattern = seq.currentPattern.load();
     const auto current = seq.getStep (pattern, pad, step);
 
+    // Ctrl + click: timing (early / late) and velocity of this step
+    if (e.mods.isCommandDown() && ! e.mods.isPopupMenu())
+    {
+        if (current == 0)
+            seq.setStep (pattern, pad, step, 127);
+        paintValue = 0;
+        auditionPad = -2; // no drag painting
+        juce::Component::SafePointer<SequencerGrid> safe (this);
+        auto popup = std::make_unique<StepEditPopup> (processor, pattern, pad, step, [safe] { if (safe != nullptr) safe->repaint(); });
+        juce::CallOutBox::launchAsynchronously (std::move (popup), cellBounds (pad % padsPerBank, step).toNearestInt(), this);
+        repaint();
+        return;
+    }
+
     if (e.mods.isPopupMenu())          paintValue = 0;
     else if (e.mods.isShiftDown())     paintValue = 127;      // accent
-    else                               paintValue = current > 0 ? 0 : 100;
+    else                               paintValue = nextVelocity (current); // full, softer, softer, softest, off
 
     seq.setStep (pattern, pad, step, paintValue);
+    if (paintValue == 0)
+        seq.setNudge (pattern, pad, step, 0);
     repaint();
 }
 
 void SequencerGrid::mouseDrag (const juce::MouseEvent& e)
 {
-    if (auditionPad >= 0)
+    if (auditionPad >= 0 || auditionPad == -2)
         return;
 
     int pad, step;
@@ -118,10 +261,8 @@ void SequencerGrid::mouseDrag (const juce::MouseEvent& e)
 void SequencerGrid::mouseUp (const juce::MouseEvent&)
 {
     if (auditionPad >= 0)
-    {
         processor.triggerPadFromUi (auditionPad, 0.0f, false);
-        auditionPad = -1;
-    }
+    auditionPad = -1;
 }
 
 //==============================================================================
@@ -160,6 +301,7 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p) : processor (p), grid (p)
         const int to = (from + 1) % Sequencer::numPatterns;
         s.setPatternData (to, s.getPatternData (from));
         s.setClip (to, s.getClip (from)->copy()); // the piano roll part too
+        s.setNudgeData (to, s.getNudgeData (from));
         s.length[(size_t) to] = s.length[(size_t) from].load();
         s.currentPattern = to;
         syncControls();
@@ -231,8 +373,8 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p) : processor (p), grid (p)
     followButton.setTooltip ("Show the page that is playing");
     addAndMakeVisible (followButton);
 
-    infoLabel.setText ("Click = step on/off   Shift+click = accent   Right-click/drag = erase   Click a pad name = audition. "
-                       "With SYNC HOST on, the pattern follows your DAW transport.",
+    infoLabel.setText ("Click = full / softer / softer / softest / off   Ctrl+click = timing (early / late) + velocity   "
+                       "Right-click/drag = erase   Click a pad name = audition",
                        juce::dontSendNotification);
     infoLabel.setColour (juce::Label::textColourId, colours::dim);
     addAndMakeVisible (infoLabel);

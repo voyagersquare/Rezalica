@@ -467,6 +467,43 @@ int main (int argc, char** argv)
         for (int st = 0; st < 16; ++st) sq.setStep (0, 0, st, saved[(size_t) st]);
         check (p.getEngine().hitCounter[0].load() == before + 1, "128-step pattern plays step 101");
 
+        // timing offsets: a step nudged early / late fires that much before / after the grid
+        {
+            sq.length[0] = 16;
+            std::array<juce::uint8, 16> keep {};
+            for (int st = 0; st < 16; ++st) { keep[(size_t) st] = sq.getStep (0, 0, st); sq.setStep (0, 0, st, 0); }
+            sq.setStep (0, 0, 4, 127);        // beat 2 at 240 BPM: 4 steps * 62.5 ms = 250 ms
+            auto hitTime = [&] (int nudge)
+            {
+                sq.setNudge (0, 0, 4, nudge);
+                p.getEngine().allNotesOff();
+                renderBlocks (p, 40);
+                sq.internalPlay = true;
+                juce::AudioBuffer<float> blk (2, 64);
+                for (int i = 0; i < 48000 / 64; ++i)  // 1 s in small blocks
+                {
+                    juce::MidiBuffer m;
+                    const int h = p.getEngine().hitCounter[0].load();
+                    p.processBlock (blk, m);
+                    if (p.getEngine().hitCounter[0].load() != h && i > 0)
+                    {
+                        sq.internalPlay = false;
+                        renderBlocks (p, 4);
+                        return i * 64.0 / 48.0; // ms
+                    }
+                }
+                sq.internalPlay = false;
+                return -1.0;
+            };
+            const double onGrid = hitTime (0), early = hitTime (-40), late = hitTime (40);
+            std::cout << "       step timing: early " << early << " ms, on grid " << onGrid << " ms, late " << late << " ms\n";
+            check (std::abs (onGrid - 250.0) < 3.0 && std::abs (early - 225.0) < 3.0 && std::abs (late - 275.0) < 3.0,
+                   "step nudge moves the hit 40 % of a step early / late");
+            sq.setNudge (0, 0, 4, 0);
+            for (int st = 0; st < 16; ++st) sq.setStep (0, 0, st, keep[(size_t) st]);
+            sq.length[0] = 128;
+        }
+
         juce::MemoryBlock old (64 * 32);
         old.fillWith (0);
         static_cast<juce::uint8*> (old.getData())[5 * 32 + 7] = 90; // pad A6, step 8 in the old 32-step layout
@@ -848,6 +885,13 @@ int main (int argc, char** argv)
             bp.setLookAndFeel (&bl);
             save (bp, "bankvolume.png");
             bp.setLookAndFeel (nullptr);
+        }
+        {
+            auto& qs = q.getSequencer();
+            const juce::uint8 vels[] { 127, 96, 64, 32 };
+            for (int st = 0; st < 16; ++st) qs.setStep (0, 1, st, vels[st % 4]);
+            qs.setStep (0, 2, 3, 127); qs.setNudge (0, 2, 3, -35);
+            qs.setStep (0, 2, 11, 127); qs.setNudge (0, 2, 11, 30);
         }
         rz::SequencerPanel panel (q);
         rz::RezalicaLookAndFeel lnf;

@@ -1533,6 +1533,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         pat.setProperty ("length", sequencer.length[(size_t) i].load(), nullptr);
         pat.setProperty ("steps", sequencer.getPatternData (i).toBase64Encoding(), nullptr);
         pat.setProperty ("stride", rz::Sequencer::maxSteps, nullptr);
+        pat.setProperty ("nudge", sequencer.getNudgeData (i).toBase64Encoding(), nullptr);
         pat.appendChild (sequencer.getClip (i)->toValueTree(), nullptr);
         seq.appendChild (pat, nullptr);
     }
@@ -1692,6 +1693,9 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
             juce::MemoryBlock mb;
             mb.fromBase64Encoding (pat.getProperty ("steps").toString());
             sequencer.setPatternData (i, mb, (int) pat.getProperty ("stride", 32));
+            juce::MemoryBlock nb;
+            nb.fromBase64Encoding (pat.getProperty ("nudge").toString());
+            sequencer.setNudgeData (i, nb);
             if (auto clip = pat.getChildWithName ("CLIP"); clip.isValid())
                 sequencer.setClip (i, rz::NoteClip::fromValueTree (clip, sequencer.noteIdCounter()));
             else

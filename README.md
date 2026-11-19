@@ -47,7 +47,9 @@
   - gumbi A–D prikazuju redove banke koju uređuješ, a pattern svira svih 64 padova
   - `SYNC HOST`: prati transport i tempo DAW-a, a bez toga ima vlastiti BPM i `PLAY`
   - `REC`: snima ono što sviraš na padovima izravno u pattern
-  - Shift+klik dodaje naglašeni korak, desni klik ili povlačenje briše
+  - **Klikanje po ćeliji mijenja jačinu (velocity)**: 1. klik = puno (127), 2. = tiše (96), 3. = još tiše (64), 4. = najtiše (32), 5. = briše korak. Bijeli stupić u ćeliji pokazuje jačinu.
+  - **Ctrl + klik** na ćeliju otvara kliznik koji pomiče udarac **ispred grida (ranije) ili iza grida (kasnije)**, do pola koraka (prikazuje i ms) te kliznik za točnu jačinu. Pomaknuti korak ima žutu oznaku.
+  - Shift+klik = puna jačina, desni klik ili povlačenje briše
 - Sve se sprema s projektom u DAW-u: padovi, postavke i patterni. Za samplove se pamti putanja do datoteke.
 
 - **Piano Roll** (gumb `PIANO ROLL` otvara zaseban prozor), za melodijske samplove i za bubnjeve:

@@ -97,6 +97,10 @@ public:
             for (auto& row : pat)
                 for (auto& s : row)
                     s = 0;
+        for (auto& pat : nudges)
+            for (auto& row : pat)
+                for (auto& n : row)
+                    n = 0;
         for (auto& l : length)
             l = 16;
         for (int i = 0; i < numPatterns; ++i)
@@ -130,6 +134,39 @@ public:
         for (auto& row : steps[(size_t) pattern])
             for (auto& s : row)
                 s = 0;
+        for (auto& row : nudges[(size_t) pattern])
+            for (auto& n : row)
+                n = 0;
+    }
+
+    /** Timing offset of a step in % of a step: -50 = half a step early ... +50 = half a step late. */
+    int getNudge (int pattern, int pad, int step) const { return nudges[(size_t) pattern][(size_t) pad][(size_t) step].load(); }
+    void setNudge (int pattern, int pad, int step, int percent)
+    {
+        nudges[(size_t) pattern][(size_t) pad][(size_t) step] = (juce::int8) juce::jlimit (-50, 50, percent);
+    }
+
+    juce::MemoryBlock getNudgeData (int pattern) const
+    {
+        juce::MemoryBlock mb ((size_t) (numPads * maxSteps));
+        auto* d = static_cast<juce::int8*> (mb.getData());
+        for (int p = 0; p < numPads; ++p)
+            for (int s = 0; s < maxSteps; ++s)
+                d[p * maxSteps + s] = (juce::int8) getNudge (pattern, p, s);
+        return mb;
+    }
+
+    void setNudgeData (int pattern, const juce::MemoryBlock& mb)
+    {
+        for (auto& row : nudges[(size_t) pattern])
+            for (auto& n : row)
+                n = 0;
+        if (mb.getSize() < (size_t) (numPads * maxSteps))
+            return;
+        auto* d = static_cast<const juce::int8*> (mb.getData());
+        for (int p = 0; p < numPads; ++p)
+            for (int s = 0; s < maxSteps; ++s)
+                setNudge (pattern, p, s, d[p * maxSteps + s]);
     }
 
     juce::MemoryBlock getPatternData (int pattern) const
@@ -248,23 +285,25 @@ public:
                 ++i;
         }
 
-        // steps
+        // steps (each one may be nudged up to half a step early or late)
         for (long long k = (long long) std::floor (ppqStart / stepLengthPpq) - 1;; ++k)
         {
             const double base = (double) k * stepLengthPpq;
-            if (base >= ppqEnd)
+            if (base - stepLengthPpq * 0.5 >= ppqEnd)
                 break;
 
-            const double t = base + ((k & 1) != 0 ? swingOffset : 0.0);
-            if (t < ppqStart || t >= ppqEnd)
-                continue;
-
             const int step = (int) (((k % len) + len) % len);
-            currentStep = step;
+            if (base >= ppqStart && base < ppqEnd)
+                currentStep = step;
 
+            const double onGrid = base + ((k & 1) != 0 ? swingOffset : 0.0);
             for (int pad = 0; pad < numPads; ++pad)
                 if (auto v = getStep (pattern, pad, step))
-                    stepHit (pad, (float) v / 127.0f, toOffset (t));
+                {
+                    const double t = onGrid + getNudge (pattern, pad, step) * 0.01 * stepLengthPpq;
+                    if (t >= ppqStart && t < ppqEnd)
+                        stepHit (pad, (float) v / 127.0f, toOffset (t));
+                }
         }
 
         // piano roll note-ons
@@ -414,6 +453,7 @@ private:
     }
 
     std::array<std::array<std::array<std::atomic<juce::uint8>, maxSteps>, numPads>, numPatterns> steps;
+    std::array<std::array<std::array<std::atomic<juce::int8>, maxSteps>, numPads>, numPatterns> nudges;
 
     // piano roll clips: message thread side (guarded) and the audio thread's copy
     mutable juce::SpinLock clipLock;
