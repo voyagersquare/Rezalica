@@ -194,7 +194,7 @@ int main (int argc, char** argv)
     };
     const auto a2Dry = renderPad (1);
     auto& a1fx = p.getEngine().getPad (0).effects;
-    a1fx.filterOn = true; a1fx.cutoff = 300.0f; a1fx.lofiOn = true; a1fx.delayOn = true; a1fx.reverbOn = true;
+    a1fx.filterOn = true; a1fx.cutoff = 300.0f; a1fx.satOn = true; a1fx.tube = 0.6f; a1fx.delayOn = true; a1fx.reverbOn = true;
     const auto a2WithA1FxOn = renderPad (1); // A1 has effects but is silent
     renderPad (0);                           // A1 plays through its effects ...
     renderBlocks (p, 500);                   // ... and its delay / reverb tail dies away
@@ -215,7 +215,65 @@ int main (int argc, char** argv)
     const auto a2Filtered = renderPad (1);
     check (a2Filtered.getMagnitude (0, 0, a2Filtered.getNumSamples()) < a2Dry.getMagnitude (0, 0, a2Dry.getNumSamples()) * 0.9f,
            "A2's own filter changes A2");
+
+    // Saturation: gentle, keeps roughly the same level, adds harmonics
     a2fx.reset();
+    for (int type = 0; type < 3; ++type)
+    {
+        a2fx.reset();
+        a2fx.satOn = true;
+        (type == 0 ? a2fx.tube : type == 1 ? a2fx.tape : a2fx.solid) = 1.0f;
+        const auto sat = renderPad (1);
+        const float ratio = sat.getRMSLevel (0, 0, sat.getNumSamples()) / juce::jmax (1.0e-9f, a2Dry.getRMSLevel (0, 0, a2Dry.getNumSamples()));
+        float diff = 0.0f;
+        for (int i = 0; i < sat.getNumSamples(); ++i)
+            diff = juce::jmax (diff, std::abs (sat.getSample (0, i) - a2Dry.getSample (0, i)));
+        const char* names[] { "tube", "tape", "solid state" };
+        std::cout << "       " << names[type] << " at max: level ratio " << ratio << ", max change " << diff << "\n";
+        check (ratio > 0.6f && ratio < 1.4f && diff > 0.005f && std::isfinite (ratio), "saturation changes the sound but keeps the level");
+    }
+    for (int type = 0; type < 6; ++type)
+    {
+        a2fx.reset();
+        a2fx.filterOn = true; a2fx.filterType = type; a2fx.cutoff = 1000.0f; a2fx.resonance = 1.0f;
+        const auto f = renderPad (1);
+        check (std::isfinite (f.getMagnitude (0, 0, f.getNumSamples())) && f.getMagnitude (0, 0, f.getNumSamples()) < 4.0f,
+               "ladder filter types stay stable at full resonance");
+    }
+    a2fx.reset();
+
+    // LOOP plays between the markers while held, stops when released
+    {
+        auto& ps = p.getEngine().getPad (1);
+        ps.loop = true;
+        p.getEngine().allNotesOff();
+        renderBlocks (p, 60);
+        juce::MidiBuffer on;
+        on.addEvent (juce::MidiMessage::noteOn (1, RezalicaProcessor::midiBaseNote + 1, (juce::uint8) 100), 0);
+        renderBlocks (p, 2, on);
+        // slice A2 is 0.25 s long; hold for ~1.5 s and it must still sound
+        renderBlocks (p, 140);
+        check (p.getEngine().isPadSounding (1), "loop keeps playing while held");
+        juce::MidiBuffer off;
+        off.addEvent (juce::MidiMessage::noteOff (1, RezalicaProcessor::midiBaseNote + 1), 0);
+        renderBlocks (p, 10, off);
+        check (! p.getEngine().isPadSounding (1), "loop stops when the pad is released");
+        ps.loop = false;
+    }
+
+    // TRIM keeps only the region between the markers
+    {
+        auto& ps = p.getEngine().getPad (2);
+        const auto before = p.getEngine().getPadSample (2);
+        const float st = ps.start.load(), en = ps.end.load();
+        const int expected = (int) (en * (float) before->buffer.getNumSamples()) - (int) (st * (float) before->buffer.getNumSamples());
+        check (p.trimPad (2), "trim");
+        const auto after = p.getEngine().getPadSample (2);
+        check (after != before && std::abs (after->buffer.getNumSamples() - expected) <= 1, "trimmed sample is exactly the marked region");
+        check (ps.start.load() < 1.0e-6f && ps.end.load() > 0.999999f && after->file.existsAsFile(), "trimmed pad plays all of it and is saved as WAV");
+        check (p.getEngine().getPadSample (1) == before, "other pads keep the original sample");
+        after->file.deleteFile();
+    }
 
     // Reverse + effects shouldn't blow up
     p.getEngine().getPad (0).reverse = true;
@@ -229,7 +287,7 @@ int main (int argc, char** argv)
         for (int i = 0; i < 16; ++i)
         {
             auto& f = p.getEngine().getPad (i).effects;
-            f.filterOn = true; f.lofiOn = true; f.delayOn = true; f.reverbOn = true;
+            f.filterOn = true; f.satOn = true; f.tube = 0.5f; f.tape = 0.5f; f.solid = 0.5f; f.delayOn = true; f.reverbOn = true;
         }
         const int blocks = (int) (48000 * 10.0 / 512);
         juce::AudioBuffer<float> buf (2, 512);

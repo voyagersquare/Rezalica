@@ -32,27 +32,28 @@ struct SampleData : public juce::ReferenceCountedObject
 /** Per-pad effect settings (each pad has its own effect chain). */
 struct PadFx
 {
-    std::atomic<bool> filterOn { false }, lofiOn { false }, delayOn { false }, reverbOn { false };
-    std::atomic<float> cutoff { 20000.0f }, resonance { 0.1f }, drive { 0.0f };
-    std::atomic<float> bits { 10.0f }, rate { 3.0f }, noise { 0.2f };
+    std::atomic<bool> filterOn { false }, satOn { false }, delayOn { false }, reverbOn { false };
+    std::atomic<int> filterType { 0 };        // LP24, LP12, HP24, HP12, BP24, BP12
+    std::atomic<float> cutoff { 20000.0f }, resonance { 0.0f };
+    std::atomic<float> tube { 0.0f }, tape { 0.0f }, solid { 0.0f }; // saturation amounts, 0 = off
     std::atomic<int> delayDiv { 2 };          // index into the delay sync divisions, 0 = free (ms)
     std::atomic<float> delayTime { 375.0f }, feedback { 0.35f }, delayMix { 0.3f };
     std::atomic<float> reverbSize { 0.6f }, reverbDamp { 0.4f }, reverbWidth { 1.0f }, reverbMix { 0.3f };
 
-    bool anyOn() const noexcept { return filterOn.load() || lofiOn.load() || delayOn.load() || reverbOn.load(); }
+    bool anyOn() const noexcept { return filterOn.load() || satOn.load() || delayOn.load() || reverbOn.load(); }
     bool hasTail() const noexcept { return delayOn.load() || reverbOn.load(); }
 
     juce::ValueTree toValueTree() const
     {
         juce::ValueTree t ("FX");
         t.setProperty ("filterOn", filterOn.load(), nullptr);
+        t.setProperty ("filterType", filterType.load(), nullptr);
         t.setProperty ("cutoff", cutoff.load(), nullptr);
         t.setProperty ("resonance", resonance.load(), nullptr);
-        t.setProperty ("drive", drive.load(), nullptr);
-        t.setProperty ("lofiOn", lofiOn.load(), nullptr);
-        t.setProperty ("bits", bits.load(), nullptr);
-        t.setProperty ("rate", rate.load(), nullptr);
-        t.setProperty ("noise", noise.load(), nullptr);
+        t.setProperty ("satOn", satOn.load(), nullptr);
+        t.setProperty ("tube", tube.load(), nullptr);
+        t.setProperty ("tape", tape.load(), nullptr);
+        t.setProperty ("solid", solid.load(), nullptr);
         t.setProperty ("delayOn", delayOn.load(), nullptr);
         t.setProperty ("delayDiv", delayDiv.load(), nullptr);
         t.setProperty ("delayTime", delayTime.load(), nullptr);
@@ -69,13 +70,13 @@ struct PadFx
     void fromValueTree (const juce::ValueTree& t)
     {
         filterOn = (bool) t.getProperty ("filterOn", false);
+        filterType = (int) t.getProperty ("filterType", 0);
         cutoff = (float) t.getProperty ("cutoff", 20000.0f);
-        resonance = (float) t.getProperty ("resonance", 0.1f);
-        drive = (float) t.getProperty ("drive", 0.0f);
-        lofiOn = (bool) t.getProperty ("lofiOn", false);
-        bits = (float) t.getProperty ("bits", 10.0f);
-        rate = (float) t.getProperty ("rate", 3.0f);
-        noise = (float) t.getProperty ("noise", 0.2f);
+        resonance = (float) t.getProperty ("resonance", 0.0f);
+        satOn = (bool) t.getProperty ("satOn", false);
+        tube = (float) t.getProperty ("tube", 0.0f);
+        tape = (float) t.getProperty ("tape", 0.0f);
+        solid = (float) t.getProperty ("solid", 0.0f);
         delayOn = (bool) t.getProperty ("delayOn", false);
         delayDiv = (int) t.getProperty ("delayDiv", 2);
         delayTime = (float) t.getProperty ("delayTime", 375.0f);
@@ -101,7 +102,7 @@ struct PadSettings
     std::atomic<float> pitch { 0.0f };     // semitones
     std::atomic<float> attackMs { 1.0f };
     std::atomic<float> releaseMs { 30.0f };
-    std::atomic<bool> loop { false };
+    std::atomic<bool> loop { false };      // loops start..end while the pad is held
     std::atomic<bool> reverse { false };
     std::atomic<bool> gate { false };      // plays only while the pad is held
     std::atomic<bool> mute { false };

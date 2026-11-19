@@ -51,6 +51,8 @@ public:
     void setChopMode (int mode);                              // re-chops the selected pad's sample automatically
     void setTransientSensitivity (float sensitivity01);       // re-chops when in transient mode
     void clearPad (int pad);
+    bool trimPad (int pad); // keeps only start..end of the pad's sample (new sample, saved as WAV)
+    static juce::File getTrimFolder();
 
     // manual chop markers (switch the chop mode to Manual)
     void addSlicePoint (float normalisedPosition);

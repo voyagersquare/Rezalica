@@ -77,14 +77,15 @@ rz::FxChain::Params RezalicaProcessor::readFxParams (int pad, bool padSounding) 
 {
     const auto& f = engine.getPad (pad).effects;
     rz::FxChain::Params p;
+    juce::ignoreUnused (padSounding);
     p.filterOn = f.filterOn.load();
+    p.filterType = f.filterType.load();
     p.cutoff = f.cutoff.load();
     p.resonance = f.resonance.load();
-    p.drive = f.drive.load();
-    p.lofiOn = f.lofiOn.load();
-    p.bits = f.bits.load();
-    p.rateDivide = f.rate.load();
-    p.noise = padSounding ? f.noise.load() : 0.0f; // vinyl noise only while the pad plays
+    p.satOn = f.satOn.load();
+    p.tube = f.tube.load();
+    p.tape = f.tape.load();
+    p.solid = f.solid.load();
     p.delayOn = f.delayOn.load();
     p.feedback = f.feedback.load();
     p.mix = f.delayMix.load();
@@ -664,6 +665,62 @@ void RezalicaProcessor::setTransientSensitivity (float sensitivity01)
     transientSensitivity = juce::jlimit (0.0f, 1.0f, sensitivity01);
     if (chopMode == chopTransients)
         rechop();
+}
+
+juce::File RezalicaProcessor::getTrimFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Trimmed");
+}
+
+bool RezalicaProcessor::trimPad (int pad)
+{
+    auto src = engine.getPadSample (pad);
+    if (src == nullptr)
+        return false;
+
+    auto& ps = engine.getPad (pad);
+    const int len = src->buffer.getNumSamples();
+    float st = ps.start.load(), en = ps.end.load();
+    if (en < st) std::swap (st, en);
+    const int a = juce::jlimit (0, len - 1, (int) (st * (float) len));
+    const int b = juce::jlimit (a + 1, len, (int) (en * (float) len));
+    if (b - a < 16 || (a == 0 && b == len))
+        return false; // nothing to trim
+
+    rz::SampleData::Ptr s = new rz::SampleData();
+    s->buffer.setSize (2, b - a);
+    for (int ch = 0; ch < 2; ++ch)
+        s->buffer.copyFrom (ch, 0, src->buffer, ch, a, b - a);
+    s->sampleRate = src->sampleRate;
+    s->name = src->name + " trim";
+
+    // keep it on disk so the project can find it again
+    auto folder = getTrimFolder();
+    folder.createDirectory();
+    auto file = folder.getNonexistentChildFile (juce::File::createLegalFileName (s->name), ".wav", false);
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> out (file.createOutputStream());
+        if (out != nullptr)
+            if (std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (out.get(), s->sampleRate, 2, 24, {}, 0)); w != nullptr)
+            {
+                out.release(); // the writer owns the stream now
+                w->writeFromAudioSampleBuffer (s->buffer, 0, s->buffer.getNumSamples());
+            }
+    }
+    if (file.existsAsFile())
+        s->file = file;
+
+    samplePool.add (s);
+    ps.start = 0.0f;
+    ps.end = 1.0f;
+    engine.setPadSample (pad, s);
+    {
+        const juce::ScopedLock sl (missingPathLock);
+        missingPaths[(size_t) pad] = {};
+    }
+    padsChanged.sendChangeMessage();
+    return true;
 }
 
 void RezalicaProcessor::clearPad (int pad)

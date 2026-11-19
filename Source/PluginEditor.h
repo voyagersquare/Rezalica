@@ -59,7 +59,7 @@ private:
     rz::Knob gainKnob { "GAIN" }, panKnob { "PAN" }, pitchKnob { "PITCH" }, attackKnob { "ATTACK" },
              releaseKnob { "RELEASE" }, startKnob { "START" }, endKnob { "END" };
     juce::TextButton loopButton { "LOOP" }, reverseButton { "REVERSE" }, gateButton { "GATE" },
-                     muteButton { "MUTE" }, loadPadButton { "LOAD" }, clearPadButton { "CLEAR" };
+                     muteButton { "MUTE" }, loadPadButton { "LOAD" }, clearPadButton { "CLEAR" }, trimButton { "TRIM" };
 
     // pads
     std::vector<std::unique_ptr<rz::PadButton>> pads;
@@ -68,10 +68,12 @@ private:
     std::array<int, rz::padsPerBank> keyPad {};   // which pad each held key started
 
     // effects
-    juce::TextButton filterOnButton { "FILTER + DRIVE" }, lofiOnButton { "LO-FI / VINYL" }, delayOnButton { "DELAY" }, reverbOnButton { "REVERB" };
+    juce::TextButton filterOnButton { "FILTER" }, satOnButton { "SATURATION" }, delayOnButton { "DELAY" }, reverbOnButton { "REVERB" };
+    juce::ComboBox filterTypeBox;
+    juce::Label filterTypeLabel;
     rz::Knob reverbSizeKnob { "SIZE" }, reverbDampKnob { "DAMP" }, reverbWidthKnob { "WIDTH" }, reverbMixKnob { "MIX" };
-    rz::Knob cutoffKnob { "CUTOFF" }, resoKnob { "RESONANCE" }, driveKnob { "DRIVE" },
-             bitsKnob { "BITS" }, rateKnob { "RATE" }, noiseKnob { "NOISE" },
+    rz::Knob cutoffKnob { "CUTOFF" }, resoKnob { "RESONANCE" },
+             tubeKnob { "TUBE" }, tapeKnob { "TAPE" }, solidKnob { "SOLID STATE" },
              timeKnob { "TIME" }, feedbackKnob { "FEEDBACK" }, mixKnob { "MIX" };
     juce::ComboBox delayDivBox;
     juce::Label delayDivLabel;
@@ -92,7 +94,7 @@ private:
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::Rectangle<int> headerArea, sampleArea, padArea, fxArea;
-    juce::Rectangle<int> filterArea, lofiArea, delayArea, reverbArea;
+    juce::Rectangle<int> filterArea, satArea, delayArea, reverbArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RezalicaEditor)
 };

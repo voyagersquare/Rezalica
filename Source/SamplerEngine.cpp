@@ -229,15 +229,6 @@ void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer)
     if (s == nullptr || ps.mute.load())
         return;
 
-    // Loop pads without gate behave like a toggle when played by hand.
-    if (! fromSequencer && ps.loop.load() && ! ps.gate.load() && isPadPlaying (pad))
-    {
-        for (auto& v : voices)
-            if (v.isActive() && v.getPad() == pad)
-                v.release();
-        return;
-    }
-
     // Each pad is monophonic: retriggering cuts the previous voice.
     for (auto& v : voices)
         if (v.isActive() && v.getPad() == pad)
@@ -265,7 +256,8 @@ void SamplerEngine::noteOff (int pad, bool fromSequencer)
         return;
 
     auto& ps = settings[(size_t) pad];
-    const bool shouldRelease = ps.gate.load() || (fromSequencer && ps.loop.load());
+    juce::ignoreUnused (fromSequencer);
+    const bool shouldRelease = ps.gate.load() || ps.loop.load(); // loop plays while held
     if (! shouldRelease)
         return;
 

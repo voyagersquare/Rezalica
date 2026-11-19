@@ -19,12 +19,15 @@
 - Kad sviraš MIDI kontrolerom ili tipkovnicom, valni oblik prati pad koji si zadnji udario.
 - **Valni oblik**: vidiš sample, sve isječke i markere početka/kraja. Markere povlačiš mišem (Alt+klik pomiče najbliži start/end marker), a klik na isječak odabire njegov pad.
 - **Postavke po padu**: Gain, Pan, Pitch (±24 polutona), Attack, Release, Start, End.
-- **Modovi pada**: `LOOP`, `REVERSE`, `GATE` (svira samo dok držiš), `MUTE`.
-  - Loop bez Gatea radi kao prekidač: prvi udarac pokreće, drugi zaustavlja.
+- **Modovi pada**: `LOOP` (dio između markera vrti se ukrug dok držiš pad, tipku ili MIDI notu, a staje kad pustiš), `REVERSE`, `GATE` (svira samo dok držiš), `MUTE`.
+- **TRIM** (truncate): od samplea pada ostaje samo narančasti dio između markera. Taj dio postaje novi sample na tom padu i sprema se kao WAV u `Dokumenti/Rezalica/Trimmed`, a ostali padovi zadržavaju originalni sample.
 - **Efekti su po padu.** Svaki pad ima svoj lanac efekata sa svojim postavkama. Donji panel uvijek uređuje **odabrani pad** (piše „EFFECTS FOR PAD A3”), pa npr. Reverb na snareu ne utječe na kick. Padovi s uključenim efektom imaju oznaku **FX**.
   - `COPY FX` / `PASTE FX` kopiraju efekte s jednog pada na drugi, a `FX TO BANK` ih kopira na svih 16 padova trenutne banke.
-  - **Filter + Drive**: niskopropusni filtar s rezonancijom i saturacijom
-  - **Lo-Fi / Vinyl**: bit-crusher, smanjenje sample ratea i pucketanje ploče
+  - **Filter**: analogni ladder filtar (Moog-style) s tipovima LP 24, LP 12, HP 24, HP 12, BP 24 i BP 12 te kontrolama Cutoff i Resonance
+  - **Saturation**: tri blaga tipa analogne saturacije, svaki sa svojim kotačićem (0 = isključeno). Radi s 2× oversamplingom i automatskom kompenzacijom glasnoće.
+    - **Tube**: topla, uglavnom parni harmonici
+    - **Tape**: meka kompresija i blago zaobljeni visoki tonovi
+    - **Solid State**: čvršće tranzistorsko rezanje, neparni harmonici
   - **Delay**: slobodno vrijeme u ms ili sinkronizirano s tempom (1/4, 1/8, 1/8 s točkom, 1/16, triole)
   - **Reverb**: Size, Damp, Width, Mix
 - **Sekvencer** (gumb `SEQUENCER` otvara zaseban prozor):
@@ -92,7 +95,7 @@ cmake --build build --config Release --target RezalicaTests
 |---|---|
 | `Source/SamplerEngine.*` | Glasovi, reprodukcija padova, loop, reverse, gate, envelope |
 | `Source/Sequencer.h` | Step sekvencer (sinkronizacija s DAW-om, swing, snimanje) |
-| `Source/FxChain.h` | Filter + Drive, Lo-Fi, Delay, Reverb |
+| `Source/FxChain.h` | Ladder filter, saturacija (tube/tape/solid state), Delay, Reverb |
 | `Source/PluginProcessor.*` | Glavni procesor: MIDI, rezanje, detekcija tranzijenata, spremanje stanja |
 | `Source/PluginEditor.*` | Glavni prozor |
 | `Source/WaveformView.*`, `PadButton.h` | Valni oblik i padovi |

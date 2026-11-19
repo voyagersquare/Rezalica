@@ -133,12 +133,14 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     setupPadKnob (panKnob, -1.0, 1.0, 0.01, 0.0, "", [] (rz::PadSettings& s, float v) { s.pan = v; });
     setupPadKnob (pitchKnob, -24.0, 24.0, 0.01, 0.0, " st", [] (rz::PadSettings& s, float v) { s.pitch = v; });
     setupPadKnob (attackKnob, 0.0, 2000.0, 0.1, 1.0, " ms", [] (rz::PadSettings& s, float v) { s.attackMs = v; });
-    setupPadKnob (releaseKnob, 1.0, 4000.0, 0.1, 30.0, " ms", [] (rz::PadSettings& s, float v) { s.releaseMs = v; });
+    setupPadKnob (releaseKnob, 0.0, 4000.0, 0.1, 30.0, " ms", [] (rz::PadSettings& s, float v) { s.releaseMs = v; });
     setupPadKnob (startKnob, 0.0, 1.0, 0.0001, 0.0, "", [] (rz::PadSettings& s, float v) { s.start = juce::jmin (v, s.end.load() - 0.0001f); });
     setupPadKnob (endKnob, 0.0, 1.0, 0.0001, 1.0, "", [] (rz::PadSettings& s, float v) { s.end = juce::jmax (v, s.start.load() + 0.0001f); });
     attackKnob.slider.setSkewFactorFromMidPoint (100.0);
     releaseKnob.slider.setSkewFactorFromMidPoint (300.0);
     pitchKnob.slider.setNumDecimalPlacesToDisplay (1);
+    panKnob.slider.getProperties().set ("bipolar", true);
+    pitchKnob.slider.getProperties().set ("bipolar", true);
 
     auto setupPadToggle = [this] (juce::TextButton& b, std::function<void (rz::PadSettings&, bool)> apply, juce::Colour on)
     {
@@ -150,10 +152,18 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     setupPadToggle (reverseButton, [] (rz::PadSettings& s, bool v) { s.reverse = v; }, rz::colours::accent);
     setupPadToggle (gateButton, [] (rz::PadSettings& s, bool v) { s.gate = v; }, rz::colours::accent);
     setupPadToggle (muteButton, [] (rz::PadSettings& s, bool v) { s.mute = v; }, juce::Colour (0xffe0413a));
-    loopButton.setTooltip ("Loop the region. Without GATE, hit the pad again to stop it.");
     gateButton.setTooltip ("Play only while the pad / key / MIDI note is held");
 
-    for (auto* b : { &loadPadButton, &clearPadButton })
+    trimButton.setTooltip ("Trim / truncate: keep only the orange part between the markers as a new sample on this pad "
+                           "(saved in Documents/Rezalica/Trimmed)");
+    trimButton.onClick = [this]
+    {
+        const int pad = processor.selectedPad.load();
+        if (processor.trimPad (pad))
+            selectPad (pad);
+    };
+    loopButton.setTooltip ("Loop: plays the part between the markers over and over while you hold the pad / key / MIDI note");
+    for (auto* b : { &loadPadButton, &clearPadButton, &trimButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (*b);
@@ -206,12 +216,35 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     fxToggle (filterOnButton, &rz::PadFx::filterOn);
     fxKnob (cutoffKnob, 20.0, 20000.0, 20000.0, 1000.0, 0, " Hz", &rz::PadFx::cutoff);
-    fxKnob (resoKnob, 0.0, 1.0, 0.1, 0.0, 2, "", &rz::PadFx::resonance);
-    fxKnob (driveKnob, 0.0, 1.0, 0.0, 0.0, 2, "", &rz::PadFx::drive);
-    fxToggle (lofiOnButton, &rz::PadFx::lofiOn);
-    fxKnob (bitsKnob, 2.0, 16.0, 10.0, 0.0, 1, "", &rz::PadFx::bits);
-    fxKnob (rateKnob, 1.0, 32.0, 3.0, 6.0, 1, "", &rz::PadFx::rate);
-    fxKnob (noiseKnob, 0.0, 1.0, 0.2, 0.0, 2, "", &rz::PadFx::noise);
+    fxKnob (resoKnob, 0.0, 1.0, 0.0, 0.0, 2, "", &rz::PadFx::resonance);
+    fxToggle (satOnButton, &rz::PadFx::satOn);
+    fxKnob (tubeKnob, 0.0, 1.0, 0.0, 0.0, 2, "", &rz::PadFx::tube);
+    fxKnob (tapeKnob, 0.0, 1.0, 0.0, 0.0, 2, "", &rz::PadFx::tape);
+    fxKnob (solidKnob, 0.0, 1.0, 0.0, 0.0, 2, "", &rz::PadFx::solid);
+    tubeKnob.slider.setTooltip ("Tube: warm, mostly even harmonics");
+    tapeKnob.slider.setTooltip ("Tape: soft compression and gently rounded highs");
+    solidKnob.slider.setTooltip ("Solid state: firmer transistor-style clipping, odd harmonics");
+
+    filterTypeBox.addItemList (rz::FxChain::filterTypeNames(), 1);
+    filterTypeBox.setWantsKeyboardFocus (false);
+    filterTypeBox.setTooltip ("Analog ladder filter: low-pass, high-pass or band-pass, 12 or 24 dB/oct");
+    filterTypeBox.onChange = [this]
+    {
+        auto& fx = processor.getEngine().getPad (processor.selectedPad.load()).effects;
+        const int type = filterTypeBox.getSelectedId() - 1;
+        fx.filterType = type;
+        // sensible cutoff when switching between low-pass / high-pass / band-pass
+        const float c = fx.cutoff.load();
+        if (type >= 2 && type <= 3 && c > 15000.0f) fx.cutoff = 20.0f;
+        if (type <= 1 && c < 30.0f)                 fx.cutoff = 20000.0f;
+        if (type >= 4 && (c < 30.0f || c > 15000.0f)) fx.cutoff = 1000.0f;
+        cutoffKnob.slider.setValue (fx.cutoff.load(), juce::dontSendNotification);
+    };
+    addAndMakeVisible (filterTypeBox);
+    filterTypeLabel.setText ("TYPE", juce::dontSendNotification);
+    filterTypeLabel.setJustificationType (juce::Justification::centred);
+    filterTypeLabel.setColour (juce::Label::textColourId, rz::colours::dim);
+    addAndMakeVisible (filterTypeLabel);
     fxToggle (delayOnButton, &rz::PadFx::delayOn);
     fxKnob (timeKnob, 10.0, 2000.0, 375.0, 400.0, 0, " ms", &rz::PadFx::delayTime);
     fxKnob (feedbackKnob, 0.0, 0.95, 0.35, 0.0, 2, "", &rz::PadFx::feedback);
@@ -380,6 +413,7 @@ void RezalicaEditor::refreshFxControls()
     for (auto& b : fxToggleBindings)
         b.button->setToggleState ((fx.*(b.member)).load(), juce::dontSendNotification);
     delayDivBox.setSelectedId (fx.delayDiv.load() + 1, juce::dontSendNotification);
+    filterTypeBox.setSelectedId (fx.filterType.load() + 1, juce::dontSendNotification);
     timeKnob.setEnabled (fx.delayDiv.load() == 0);
     fxTitle.setText ("EFFECTS FOR PAD " + rz::padLabel (pad) + "  (only this pad)", juce::dontSendNotification);
 }
@@ -598,7 +632,7 @@ void RezalicaEditor::paint (juce::Graphics& g)
                               + "   keys 1-4 Q-R A-F Z-V");
     }
     drawPanel (filterArea, {});
-    drawPanel (lofiArea, {});
+    drawPanel (satArea, {});
     drawPanel (delayArea, {});
     drawPanel (reverbArea, {});
 }
@@ -644,6 +678,8 @@ void RezalicaEditor::resized()
         clearPadButton.setBounds (titleRow.removeFromRight (70));
         titleRow.removeFromRight (6);
         loadPadButton.setBounds (titleRow.removeFromRight (70));
+        titleRow.removeFromRight (6);
+        trimButton.setBounds (titleRow.removeFromRight (70));
         padTitle.setBounds (titleRow);
 
         s.removeFromTop (6);
@@ -687,22 +723,28 @@ void RezalicaEditor::resized()
         f.removeFromTop (4);
         const int w = (f.getWidth() - 30) / 4;
         filterArea = f.removeFromLeft (w); f.removeFromLeft (10);
-        lofiArea = f.removeFromLeft (w);   f.removeFromLeft (10);
+        satArea = f.removeFromLeft (w);   f.removeFromLeft (10);
         delayArea = f.removeFromLeft (w);  f.removeFromLeft (10);
         reverbArea = f;
 
-        auto layoutGroup = [] (juce::Rectangle<int> area, juce::TextButton& onButton, std::initializer_list<juce::Component*> items)
+        auto layoutGroup = [] (juce::Rectangle<int> area, juce::TextButton& onButton, std::initializer_list<juce::Component*> items, int buttonWidth = 150)
         {
             auto a = area.reduced (10);
-            onButton.setBounds (a.removeFromTop (26).withWidth (juce::jmin (150, a.getWidth())));
+            onButton.setBounds (a.removeFromTop (26).withWidth (juce::jmin (buttonWidth, a.getWidth())));
             a.removeFromTop (6);
             const int iw = a.getWidth() / (int) items.size();
             for (auto* c : items)
                 c->setBounds (a.removeFromLeft (iw).reduced (2, 0));
         };
 
-        layoutGroup (filterArea, filterOnButton, { &cutoffKnob, &resoKnob, &driveKnob });
-        layoutGroup (lofiArea, lofiOnButton, { &bitsKnob, &rateKnob, &noiseKnob });
+        layoutGroup (filterArea, filterOnButton, { &cutoffKnob, &resoKnob }, 90);
+        {
+            auto top = filterArea.reduced (10).removeFromTop (26);
+            top.removeFromLeft (98);
+            filterTypeLabel.setBounds (top.removeFromLeft (40));
+            filterTypeBox.setBounds (top.removeFromLeft (juce::jmin (100, top.getWidth())));
+        }
+        layoutGroup (satArea, satOnButton, { &tubeKnob, &tapeKnob, &solidKnob });
         layoutGroup (reverbArea, reverbOnButton, { &reverbSizeKnob, &reverbDampKnob, &reverbWidthKnob, &reverbMixKnob });
 
         auto d = delayArea.reduced (10);

@@ -60,8 +60,8 @@ public:
         g.setColour (panelLight);
         g.strokePath (track, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-        // bipolar sliders draw from the centre
-        const bool bipolar = slider.getMinimum() < 0.0 && slider.getMaximum() > 0.0;
+        // every knob starts at the left (minimum); only pan / pitch, whose zero is the centre, draw from the middle
+        const bool bipolar = (bool) slider.getProperties().getWithDefault ("bipolar", false);
         const float from = bipolar ? (startAngle + endAngle) * 0.5f : startAngle;
         juce::Path value;
         value.addCentredArc (c.x, c.y, arcR, arcR, 0.0f, from, angle, true);
