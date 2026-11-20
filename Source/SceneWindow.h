@@ -5,25 +5,37 @@
 
 namespace rz
 {
-/** SCENES: each scene is a chain of up to 8 patterns. */
-class SceneList : public juce::Component
+/** SCENE: one row of up to 128 pattern slots that play one after another.
+    Click: choose a pattern, double-click: rename that pattern, right-click: empty. */
+class SceneRow : public juce::Component
 {
 public:
-    explicit SceneList (RezalicaProcessor& p) : processor (p) {}
+    explicit SceneRow (RezalicaProcessor& p) : processor (p) {}
+    static constexpr int slotsPerPage = 32;
+    void setFirstSlot (int s) { firstSlot = s; repaint(); }
+    int getFirstSlot() const { return firstSlot; }
+
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
 private:
-    static constexpr int labelWidth = 90, infoWidth = 110;
-    juce::Rectangle<float> slotBounds (int scene, int slot) const;
+    int slotAt (juce::Point<float>) const;
+    juce::Rectangle<float> slotBounds (int slot) const;
+    void showPatternMenu (int slot);
+    void renamePattern (int pattern);
+
     RezalicaProcessor& processor;
+    int firstSlot = 0;
+    int pendingMenuSlot = -1, clickToken = 0;
 };
 
-/** SONG: a sequence of scenes, laid out like the step sequencer (rows = scenes, columns = song steps). */
-class SongGrid : public juce::Component
+/** SONG: one row of 64 steps; an active step plays the scene, an empty one is a bar of silence. */
+class SongRow : public juce::Component
 {
 public:
-    explicit SongGrid (RezalicaProcessor& p) : processor (p) {}
+    explicit SongRow (RezalicaProcessor& p) : processor (p) {}
     static constexpr int stepsPerPage = 32;
     void setFirstStep (int s) { firstStep = s; repaint(); }
     int getFirstStep() const { return firstStep; }
@@ -33,12 +45,11 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
 
 private:
-    static constexpr int labelWidth = 90, headerHeight = 20;
-    bool cellAt (juce::Point<int>, int& scene, int& step) const;
-    juce::Rectangle<float> cellBounds (int scene, int step) const;
+    int stepAt (juce::Point<float>) const;
+    juce::Rectangle<float> stepBounds (int step) const;
     RezalicaProcessor& processor;
     int firstStep = 0;
-    int paintScene = -2; // what a drag paints (-1 = erase)
+    int paintValue = -2;
 };
 
 class ScenePanel : public juce::Component,
@@ -56,9 +67,12 @@ private:
     void timerCallback() override;
     RezalicaProcessor& processor;
     juce::TextButton playButton { "PLAY SONG" }, stopButton { "STOP" }, loopButton { "LOOP" };
-    juce::TextButton page1 { "SONG 1-32" }, page2 { "SONG 33-64" };
+    std::array<juce::TextButton, 4> slotPages;
+    std::array<juce::TextButton, 2> songPages;
     juce::Slider bpmSlider;
-    juce::Label positionLabel, lengthLabel, scenesTitle, songTitle, hintLabel;
+    juce::Label positionLabel, lengthLabel, sceneTitle, songTitle, hintLabel;
+    SceneRow scene;
+    SongRow song;
 
     /** Big song clock: elapsed time and bar.beat.16th. */
     struct SongTimer : public juce::Component, public juce::SettableTooltipClient
@@ -85,21 +99,19 @@ private:
             g.drawText ("of " + total, right, juce::Justification::centredRight);
         }
     } songTimer;
-    SceneList scenes;
-    SongGrid song;
 };
 
 class SceneWindow : public juce::DocumentWindow
 {
 public:
     SceneWindow (RezalicaProcessor& p, juce::LookAndFeel& lnf)
-        : juce::DocumentWindow ("Rezalica - Scenes / Song", colours::background, juce::DocumentWindow::closeButton)
+        : juce::DocumentWindow ("Rezalica - Scene / Song", colours::background, juce::DocumentWindow::closeButton)
     {
         setLookAndFeel (&lnf);
         setUsingNativeTitleBar (true);
         setContentOwned (new ScenePanel (p), true);
         setResizable (true, false);
-        setResizeLimits (900, 560, 2600, 1600);
+        setResizeLimits (900, 500, 2800, 1600);
         setAlwaysOnTop (true);
         centreWithSize (getWidth(), getHeight());
     }

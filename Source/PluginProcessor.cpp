@@ -891,9 +891,9 @@ bool RezalicaProcessor::loadProjectFromFile (const juce::File& file)
 
 void RezalicaProcessor::newProject()
 {
-    RezalicaProcessor fresh;
+    auto fresh = std::make_unique<RezalicaProcessor>();
     juce::MemoryBlock state;
-    fresh.getStateInformation (state);
+    fresh->getStateInformation (state);
     stopAll();
     setStateInformation (state.getData(), (int) state.getSize());
     undoStack.clear();
@@ -965,7 +965,8 @@ juce::File RezalicaProcessor::exportPatternWav (int pattern, bool stepPart, bool
 
     juce::MemoryBlock state;
     getStateInformation (state);
-    RezalicaProcessor offline;
+    auto offlinePtr = std::make_unique<RezalicaProcessor>(); // on the heap: the processor is large
+    auto& offline = *offlinePtr;
     offline.setStateInformation (state.getData(), (int) state.getSize());
 
     auto& seq = offline.getSequencer();
@@ -1025,7 +1026,7 @@ juce::File RezalicaProcessor::exportPatternWav (int pattern, bool stepPart, bool
 
 bool RezalicaProcessor::exportSongMidi (const juce::File& file)
 {
-    std::array<rz::Sequencer::SongSegment, rz::Sequencer::maxSegments> segs;
+    std::vector<rz::Sequencer::SongSegment> segs;
     double total = 0.0;
     const int n = sequencer.buildSong (segs, total);
     if (n == 0)
@@ -1075,7 +1076,7 @@ bool RezalicaProcessor::exportSongMidi (const juce::File& file)
 
 bool RezalicaProcessor::exportSongWav (const juce::File& file)
 {
-    std::array<rz::Sequencer::SongSegment, rz::Sequencer::maxSegments> segs;
+    std::vector<rz::Sequencer::SongSegment> segs;
     double total = 0.0;
     if (sequencer.buildSong (segs, total) == 0)
         return false;
@@ -1087,7 +1088,8 @@ bool RezalicaProcessor::exportSongWav (const juce::File& file)
 
     juce::MemoryBlock state;
     getStateInformation (state);
-    RezalicaProcessor offline;
+    auto offlinePtr = std::make_unique<RezalicaProcessor>(); // on the heap: the processor is large
+    auto& offline = *offlinePtr;
     offline.setStateInformation (state.getData(), (int) state.getSize());
     auto& seq = offline.getSequencer();
     seq.songMode = true;
@@ -1799,6 +1801,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         pat.setProperty ("length", sequencer.length[(size_t) i].load(), nullptr);
         pat.setProperty ("steps", sequencer.getPatternData (i).toBase64Encoding(), nullptr);
         pat.setProperty ("stride", rz::Sequencer::maxSteps, nullptr);
+        pat.setProperty ("name", sequencer.patternNames[(size_t) i], nullptr);
         pat.setProperty ("nudge", sequencer.getNudgeData (i).toBase64Encoding(), nullptr);
         pat.appendChild (sequencer.getClip (i)->toValueTree(), nullptr);
         seq.appendChild (pat, nullptr);
@@ -1960,6 +1963,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
             juce::MemoryBlock mb;
             mb.fromBase64Encoding (pat.getProperty ("steps").toString());
             sequencer.setPatternData (i, mb, (int) pat.getProperty ("stride", 32));
+            sequencer.patternNames[(size_t) i] = pat.getProperty ("name").toString();
             juce::MemoryBlock nb;
             nb.fromBase64Encoding (pat.getProperty ("nudge").toString());
             sequencer.setNudgeData (i, nb);

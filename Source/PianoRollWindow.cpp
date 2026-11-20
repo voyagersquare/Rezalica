@@ -1134,7 +1134,14 @@ void PianoRollPanel::syncControls()
     playButton.setToggleState (s.isPlayingPattern(), juce::dontSendNotification);
     recButton.setToggleState (s.pianoRecording.load(), juce::dontSendNotification);
     syncButton.setToggleState (s.syncToHost.load(), juce::dontSendNotification);
+    for (int i = 0; i < Sequencer::numPatterns; ++i)   // names from RENAME in the SCENE window
+    {
+        const auto label = juce::String (i + 1) + ": " + s.getPatternLabel (i);
+        if (patternBox.getItemText (i) != label) patternBox.changeItemText (i + 1, label);
+    }
     patternBox.setSelectedId (s.currentPattern.load() + 1, juce::dontSendNotification);
+    if (const auto cur = patternBox.getItemText (s.currentPattern.load()); patternBox.getText() != cur)
+        patternBox.setText (cur, juce::dontSendNotification);
     lengthBox.setSelectedId (s.length[(size_t) s.currentPattern.load()].load(), juce::dontSendNotification);
     if (! bpmSlider.isMouseButtonDown())
         bpmSlider.setValue (s.syncToHost.load() ? s.effectiveBpm.load() : s.bpm.load(), juce::dontSendNotification);

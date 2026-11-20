@@ -4,10 +4,10 @@ namespace rz
 {
 namespace
 {
-juce::Colour sceneColour (int scene)
+juce::Colour patternColour (int pattern)
 {
     static const juce::uint32 c[] { 0xffff7a2f, 0xff3fc6c0, 0xffffc94a, 0xffb07cff, 0xff6fd36f, 0xffff5f8a, 0xff4fa3ff, 0xffd9a066 };
-    return juce::Colour (c[scene % 8]);
+    return juce::Colour (c[(pattern % 8 + 8) % 8]);
 }
 
 juce::String timeString (double seconds)
@@ -15,190 +15,248 @@ juce::String timeString (double seconds)
     const int s = (int) std::round (seconds);
     return juce::String (s / 60) + ":" + juce::String (s % 60).paddedLeft ('0', 2);
 }
+
+const juce::Colour sceneColour { 0xffff7a2f };
 } // namespace
 
 //==============================================================================
-juce::Rectangle<float> SceneList::slotBounds (int scene, int slot) const
+juce::Rectangle<float> SceneRow::slotBounds (int slot) const
 {
-    const float rowH = (float) getHeight() / (float) Sequencer::numScenes;
-    const float w = (float) (getWidth() - labelWidth - infoWidth) / (float) Sequencer::slotsPerScene;
-    return { (float) labelWidth + (float) slot * w, (float) scene * rowH, w, rowH };
+    const float w = (float) getWidth() / (float) slotsPerPage;
+    return { (float) (slot - firstSlot) * w, 0.0f, w, (float) getHeight() };
 }
 
-void SceneList::paint (juce::Graphics& g)
+int SceneRow::slotAt (juce::Point<float> p) const
+{
+    if (! getLocalBounds().toFloat().contains (p)) return -1;
+    return juce::jlimit (0, Sequencer::slotsPerScene - 1, firstSlot + (int) (p.x / ((float) getWidth() / (float) slotsPerPage)));
+}
+
+void SceneRow::paint (juce::Graphics& g)
 {
     using namespace colours;
     auto& seq = processor.getSequencer();
-    const float rowH = (float) getHeight() / (float) Sequencer::numScenes;
-    const bool playing = seq.songMode.load() && seq.isRunning();
-    const int playStep = seq.songPosStep.load();
-    const int playScene = playStep >= 0 ? seq.getSongStep (playStep) : -1;
-    const int playSlot = seq.songPosSlot.load();
+    const bool playing = seq.isPlayingSong();
+    const int playSlot = playing ? seq.songPosSlot.load() : -1;
 
-    for (int sc = 0; sc < Sequencer::numScenes; ++sc)
+    for (int sl = firstSlot; sl < firstSlot + slotsPerPage; ++sl)
     {
-        auto label = juce::Rectangle<float> (0.0f, (float) sc * rowH, (float) labelWidth - 6.0f, rowH).reduced (1.0f);
-        g.setColour (playing && sc == playScene ? sceneColour (sc).withAlpha (0.35f) : panel);
-        g.fillRoundedRectangle (label, 3.0f);
-        g.setColour (sceneColour (sc));
-        g.fillRect (label.removeFromLeft (4.0f));
-        g.setColour (text);
-        g.setFont (juce::FontOptions (juce::jmin (13.0f, rowH * 0.5f), juce::Font::bold));
-        g.drawText ("SCENE " + juce::String (sc + 1), label.reduced (6.0f, 0.0f), juce::Justification::centredLeft);
+        auto cell = slotBounds (sl).reduced (2.0f);
+        const int p = seq.getSceneSlot (0, sl);
+        const bool now = sl == playSlot;
 
-        for (int sl = 0; sl < Sequencer::slotsPerScene; ++sl)
+        g.setColour (p >= 0 ? patternColour (p).withMultipliedBrightness (now ? 1.0f : 0.62f)
+                            : ((sl / 4) % 2 == 0 ? juce::Colour (0xff2b2e35) : juce::Colour (0xff24262c)));
+        g.fillRoundedRectangle (cell, 5.0f);
+        if (now)
         {
-            auto cell = slotBounds (sc, sl).reduced (2.0f);
-            const int p = seq.getSceneSlot (sc, sl);
-            const bool now = playing && sc == playScene && sl == playSlot;
-            g.setColour (p >= 0 ? sceneColour (sc).withMultipliedBrightness (now ? 1.0f : 0.6f) : juce::Colour (0xff24262c));
-            g.fillRoundedRectangle (cell, 3.0f);
-            if (now)
-            {
-                g.setColour (juce::Colours::white);
-                g.drawRoundedRectangle (cell, 3.0f, 1.5f);
-            }
-            g.setColour (p >= 0 ? juce::Colours::black : dim.withAlpha (0.5f));
-            g.setFont (juce::FontOptions (juce::jmin (12.0f, rowH * 0.45f), juce::Font::bold));
-            g.drawText (p >= 0 ? "P" + juce::String (p + 1) : juce::String ("+"), cell, juce::Justification::centred);
+            g.setColour (juce::Colours::white);
+            g.drawRoundedRectangle (cell, 5.0f, 2.0f);
         }
 
-        // length of the scene
-        const int steps = seq.sceneLengthSteps (sc);
-        auto info = juce::Rectangle<float> ((float) getWidth() - (float) infoWidth + 6.0f, (float) sc * rowH, (float) infoWidth - 6.0f, rowH);
-        g.setColour (dim);
-        g.setFont (juce::FontOptions (11.0f));
-        g.drawText (juce::String (steps / 16.0, steps % 16 == 0 ? 0 : 2) + (steps == 16 ? " bar" : " bars"), info, juce::Justification::centredLeft);
+        // slot number
+        g.setColour (p >= 0 ? juce::Colours::black.withAlpha (0.6f) : dim.withAlpha (0.6f));
+        g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+        g.drawText (juce::String (sl + 1), cell.reduced (4.0f, 3.0f), juce::Justification::topLeft);
+
+        // pattern name, written vertically when the cell is narrow
+        if (p >= 0)
+        {
+            const auto label = seq.getPatternLabel (p);
+            g.setColour (juce::Colours::black);
+            g.setFont (juce::FontOptions (juce::jmin (15.0f, cell.getWidth() * 0.45f), juce::Font::bold));
+            if (cell.getWidth() >= 60.0f || label.length() <= 3)
+            {
+                g.drawFittedText (label, cell.reduced (3.0f).toNearestInt(), juce::Justification::centred, 3);
+            }
+            else
+            {
+                juce::Graphics::ScopedSaveState ss (g);
+                g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, cell.getCentreX(), cell.getCentreY()));
+                auto r = juce::Rectangle<float> (cell.getHeight() - 20.0f, cell.getWidth()).withCentre (cell.getCentre());
+                g.drawText (label, r, juce::Justification::centred, true);
+            }
+            g.setColour (juce::Colours::black.withAlpha (0.55f));
+            g.setFont (juce::FontOptions (9.0f));
+            g.drawText (juce::String (seq.length[(size_t) p].load()), cell.reduced (4.0f, 3.0f), juce::Justification::bottomRight);
+        }
+        else
+        {
+            g.setColour (dim.withAlpha (0.45f));
+            g.setFont (juce::FontOptions (16.0f));
+            g.drawText ("+", cell, juce::Justification::centred);
+        }
     }
 }
 
-void SceneList::mouseDown (const juce::MouseEvent& e)
+void SceneRow::mouseDown (const juce::MouseEvent& e)
+{
+    const int sl = slotAt (e.position);
+    if (sl < 0) return;
+    auto& seq = processor.getSequencer();
+
+    if (e.mods.isPopupMenu())
+    {
+        seq.setSceneSlot (0, sl, -1);
+        repaint();
+        return;
+    }
+    pendingMenuSlot = sl;
+}
+
+void SceneRow::mouseUp (const juce::MouseEvent& e)
+{
+    if (pendingMenuSlot < 0 || e.mods.isPopupMenu())
+        return;
+    const int sl = pendingMenuSlot;
+    pendingMenuSlot = -1;
+
+    // empty slot: choose a pattern right away; filled slot: wait a moment, a double-click renames
+    if (processor.getSequencer().getSceneSlot (0, sl) < 0)
+    {
+        showPatternMenu (sl);
+        return;
+    }
+    const int token = ++clickToken;
+    juce::Component::SafePointer<SceneRow> safe (this);
+    juce::Timer::callAfterDelay (juce::MouseEvent::getDoubleClickTimeout() + 20, [safe, sl, token]
+    {
+        if (safe != nullptr && safe->clickToken == token)
+            safe->showPatternMenu (sl);
+    });
+}
+
+void SceneRow::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    ++clickToken; // cancels the pending single-click menu
+    pendingMenuSlot = -1;
+    const int sl = slotAt (e.position);
+    if (sl < 0) return;
+    const int p = processor.getSequencer().getSceneSlot (0, sl);
+    if (p >= 0)
+        renamePattern (p);
+}
+
+void SceneRow::showPatternMenu (int sl)
 {
     auto& seq = processor.getSequencer();
-    for (int sc = 0; sc < Sequencer::numScenes; ++sc)
-        for (int sl = 0; sl < Sequencer::slotsPerScene; ++sl)
-            if (slotBounds (sc, sl).contains (e.position))
-            {
-                if (e.mods.isPopupMenu())
-                {
-                    seq.setSceneSlot (sc, sl, -1);
-                    repaint();
-                    return;
-                }
-                juce::PopupMenu m;
-                m.addSectionHeader ("SCENE " + juce::String (sc + 1) + ", slot " + juce::String (sl + 1));
-                for (int p = 0; p < Sequencer::numPatterns; ++p)
-                    m.addItem (p + 1, "Pattern " + juce::String (p + 1) + "   (" + juce::String (seq.length[(size_t) p].load()) + " steps)",
-                               true, seq.getSceneSlot (sc, sl) == p);
-                m.addSeparator();
-                m.addItem (100, "Empty");
-                juce::Component::SafePointer<SceneList> safe (this);
-                m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (slotBounds (sc, sl).toNearestInt())),
-                                 [safe, sc, sl] (int r)
-                {
-                    if (safe == nullptr || r == 0) return;
-                    safe->processor.getSequencer().setSceneSlot (sc, sl, r == 100 ? -1 : r - 1);
-                    safe->repaint();
-                });
-                return;
-            }
+    juce::PopupMenu m;
+    m.addSectionHeader ("SCENE slot " + juce::String (sl + 1));
+    for (int p = 0; p < Sequencer::numPatterns; ++p)
+        m.addItem (p + 1, "Pattern " + juce::String (p + 1) + ":  " + seq.getPatternLabel (p) + "   (" + juce::String (seq.length[(size_t) p].load()) + " steps)",
+                   true, seq.getSceneSlot (0, sl) == p);
+    m.addSeparator();
+    if (seq.getSceneSlot (0, sl) >= 0)
+        m.addItem (200, "Rename this pattern...   (double-click)");
+    m.addItem (100, "Empty");
+    juce::Component::SafePointer<SceneRow> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (slotBounds (sl).toNearestInt())),
+                     [safe, sl] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        auto& s = safe->processor.getSequencer();
+        if (r == 200) { safe->renamePattern (s.getSceneSlot (0, sl)); return; }
+        s.setSceneSlot (0, sl, r == 100 ? -1 : r - 1);
+        safe->repaint();
+    });
+}
+
+void SceneRow::renamePattern (int pattern)
+{
+    if (pattern < 0) return;
+    auto& seq = processor.getSequencer();
+    auto* w = new juce::AlertWindow ("Rename pattern", "Name for pattern " + juce::String (pattern + 1) + " (empty = P" + juce::String (pattern + 1) + ")",
+                                     juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("name", seq.patternNames[(size_t) pattern]);
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<SceneRow> safe (this);
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, w, pattern] (int r)
+    {
+        if (safe != nullptr && r == 1)
+        {
+            safe->processor.getSequencer().patternNames[(size_t) pattern] = w->getTextEditorContents ("name").trim().substring (0, 24);
+            safe->repaint();
+        }
+    }), true);
+    if (auto* ed = w->getTextEditor ("name"))
+        ed->selectAll();
 }
 
 //==============================================================================
-juce::Rectangle<float> SongGrid::cellBounds (int scene, int step) const
+juce::Rectangle<float> SongRow::stepBounds (int step) const
 {
-    const float w = (float) (getWidth() - labelWidth) / (float) stepsPerPage;
-    const float h = (float) (getHeight() - headerHeight) / (float) Sequencer::numScenes;
-    return { (float) labelWidth + (float) (step - firstStep) * w, (float) headerHeight + (float) scene * h, w, h };
+    const float w = (float) getWidth() / (float) stepsPerPage;
+    return { (float) (step - firstStep) * w, 0.0f, w, (float) getHeight() };
 }
 
-bool SongGrid::cellAt (juce::Point<int> pos, int& scene, int& step) const
+int SongRow::stepAt (juce::Point<float> p) const
 {
-    if (pos.x < labelWidth || pos.y < headerHeight)
-        return false;
-    scene = juce::jlimit (0, Sequencer::numScenes - 1, (pos.y - headerHeight) * Sequencer::numScenes / juce::jmax (1, getHeight() - headerHeight));
-    step = juce::jlimit (0, Sequencer::maxSongSteps - 1, firstStep + (pos.x - labelWidth) * stepsPerPage / juce::jmax (1, getWidth() - labelWidth));
-    return true;
+    if (! getLocalBounds().toFloat().contains (p)) return -1;
+    return juce::jlimit (0, Sequencer::maxSongSteps - 1, firstStep + (int) (p.x / ((float) getWidth() / (float) stepsPerPage)));
 }
 
-void SongGrid::paint (juce::Graphics& g)
+void SongRow::paint (juce::Graphics& g)
 {
     using namespace colours;
     auto& seq = processor.getSequencer();
-    const int playStep = seq.songMode.load() && seq.isRunning() ? seq.songPosStep.load() : -1;
+    const int playStep = seq.isPlayingSong() ? seq.songPosStep.load() : -1;
     const int songLen = seq.songLengthSteps();
 
-    // step numbers
-    g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
     for (int st = firstStep; st < firstStep + stepsPerPage; ++st)
     {
-        auto c = cellBounds (0, st).withY (0.0f).withHeight ((float) headerHeight);
-        g.setColour (st == playStep ? text : st < songLen ? dim : dim.withAlpha (0.4f));
-        g.drawText (juce::String (st + 1), c, juce::Justification::centred);
-    }
-
-    for (int sc = 0; sc < Sequencer::numScenes; ++sc)
-    {
-        auto lab = juce::Rectangle<float> (0.0f, cellBounds (sc, firstStep).getY(), (float) labelWidth - 6.0f, cellBounds (sc, firstStep).getHeight()).reduced (1.0f);
-        g.setColour (panel);
-        g.fillRoundedRectangle (lab, 3.0f);
-        g.setColour (sceneColour (sc));
-        g.fillRect (lab.removeFromLeft (4.0f));
-        g.setColour (text);
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-        g.drawText ("SCENE " + juce::String (sc + 1), lab.reduced (6.0f, 0.0f), juce::Justification::centredLeft);
-
-        for (int st = firstStep; st < firstStep + stepsPerPage; ++st)
+        auto cell = stepBounds (st).reduced (2.0f);
+        const bool on = seq.getSongStep (st) >= 0;
+        juce::Colour c = (st / 4) % 2 == 0 ? juce::Colour (0xff2b2e35) : juce::Colour (0xff24262c);
+        if (on) c = sceneColour.withMultipliedBrightness (st == playStep ? 1.15f : 0.8f);
+        else if (st < songLen) c = c.darker (0.25f); // a bar of silence inside the song
+        g.setColour (c);
+        g.fillRoundedRectangle (cell, 5.0f);
+        if (st == playStep)
         {
-            auto cell = cellBounds (sc, st).reduced (1.5f);
-            const bool on = seq.getSongStep (st) == sc;
-            juce::Colour c = (st / 4) % 2 == 0 ? juce::Colour (0xff2b2e35) : juce::Colour (0xff24262c);
-            if (st == playStep) c = c.brighter (0.25f);
-            if (on) c = sceneColour (sc);
-            g.setColour (c);
-            g.fillRoundedRectangle (cell, 3.0f);
-            if (on && cell.getWidth() > 14.0f)
-            {
-                g.setColour (juce::Colours::black);
-                g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
-                g.drawText (juce::String (sc + 1), cell, juce::Justification::centred);
-            }
+            g.setColour (juce::Colours::white);
+            g.drawRoundedRectangle (cell, 5.0f, 2.0f);
         }
-    }
 
-    if (playStep >= firstStep && playStep < firstStep + stepsPerPage)
-    {
-        auto col = cellBounds (0, playStep);
-        g.setColour (juce::Colours::white.withAlpha (0.7f));
-        g.drawRect (col.withHeight ((float) getHeight() - (float) headerHeight), 1.5f);
+        g.setColour (on ? juce::Colours::black.withAlpha (0.6f) : dim.withAlpha (0.6f));
+        g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+        g.drawText (juce::String (st + 1), cell.reduced (4.0f, 3.0f), juce::Justification::topLeft);
+        if (on)
+        {
+            g.setColour (juce::Colours::black);
+            g.setFont (juce::FontOptions (juce::jmin (14.0f, cell.getWidth() * 0.4f), juce::Font::bold));
+            g.drawFittedText ("SCENE", cell.reduced (2.0f).toNearestInt(), juce::Justification::centred, 1);
+        }
+        else if (st < songLen)
+        {
+            g.setColour (dim.withAlpha (0.5f));
+            g.setFont (juce::FontOptions (9.0f));
+            g.drawText ("rest", cell, juce::Justification::centred);
+        }
     }
 }
 
-void SongGrid::mouseDown (const juce::MouseEvent& e)
+void SongRow::mouseDown (const juce::MouseEvent& e)
 {
-    int sc, st;
-    if (! cellAt (e.getPosition(), sc, st))
-        return;
+    const int st = stepAt (e.position);
+    if (st < 0) return;
     auto& seq = processor.getSequencer();
-    // one scene per song step: click sets it, clicking it again (or right-click) empties the step
-    paintScene = (e.mods.isPopupMenu() || seq.getSongStep (st) == sc) ? -1 : sc;
-    seq.setSongStep (st, paintScene);
+    // click: the step plays the scene / click again (or right-click): empty
+    paintValue = (e.mods.isPopupMenu() || seq.getSongStep (st) >= 0) ? -1 : 0;
+    seq.setSongStep (st, paintValue);
     repaint();
 }
 
-void SongGrid::mouseDrag (const juce::MouseEvent& e)
+void SongRow::mouseDrag (const juce::MouseEvent& e)
 {
-    int sc, st;
-    if (paintScene < -1 || ! cellAt (e.getPosition(), sc, st))
-        return;
-    auto& seq = processor.getSequencer();
-    if (paintScene == -1) { if (seq.getSongStep (st) == sc) seq.setSongStep (st, -1); }
-    else                  seq.setSongStep (st, paintScene);
+    const int st = stepAt (e.position);
+    if (st < 0 || paintValue < -1) return;
+    processor.getSequencer().setSongStep (st, paintValue);
     repaint();
 }
 
 //==============================================================================
-ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), scenes (p), song (p)
+ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), scene (p), song (p)
 {
     auto toggle = [this] (juce::TextButton& b, juce::Colour on)
     {
@@ -211,7 +269,6 @@ ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), scenes (p), song 
     toggle (loopButton, colours::accent2);
     stopButton.setWantsKeyboardFocus (false);
     addAndMakeVisible (stopButton);
-
     playButton.setTooltip ("Play the song from the start (space bar in this window). The sampler's PLAY plays just the selected pattern");
     loopButton.setTooltip ("Start the song again when it ends");
 
@@ -224,16 +281,28 @@ ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), scenes (p), song 
     stopButton.onClick = [this] { processor.getSequencer().stopPlayback(); processor.stopAll(); };
     loopButton.onClick = [this] { processor.getSequencer().songLoop = loopButton.getToggleState(); };
 
-    for (auto* b : { &page1, &page2 })
+    for (int i = 0; i < (int) slotPages.size(); ++i)
     {
-        b->setClickingTogglesState (true);
-        b->setRadioGroupId (7101);
-        b->setWantsKeyboardFocus (false);
-        addAndMakeVisible (*b);
+        auto& b = slotPages[(size_t) i];
+        b.setButtonText (juce::String (i * SceneRow::slotsPerPage + 1) + "-" + juce::String ((i + 1) * SceneRow::slotsPerPage));
+        b.setClickingTogglesState (true);
+        b.setRadioGroupId (7201);
+        b.setWantsKeyboardFocus (false);
+        b.onClick = [this, i] { if (slotPages[(size_t) i].getToggleState()) scene.setFirstSlot (i * SceneRow::slotsPerPage); };
+        addAndMakeVisible (b);
     }
-    page1.setToggleState (true, juce::dontSendNotification);
-    page1.onClick = [this] { song.setFirstStep (0); };
-    page2.onClick = [this] { song.setFirstStep (SongGrid::stepsPerPage); };
+    slotPages[0].setToggleState (true, juce::dontSendNotification);
+    for (int i = 0; i < (int) songPages.size(); ++i)
+    {
+        auto& b = songPages[(size_t) i];
+        b.setButtonText (juce::String (i * SongRow::stepsPerPage + 1) + "-" + juce::String ((i + 1) * SongRow::stepsPerPage));
+        b.setClickingTogglesState (true);
+        b.setRadioGroupId (7202);
+        b.setWantsKeyboardFocus (false);
+        b.onClick = [this, i] { if (songPages[(size_t) i].getToggleState()) song.setFirstStep (i * SongRow::stepsPerPage); };
+        addAndMakeVisible (b);
+    }
+    songPages[0].setToggleState (true, juce::dontSendNotification);
 
     bpmSlider.setSliderStyle (juce::Slider::LinearBar);
     bpmSlider.setRange (40.0, 240.0, 0.1);
@@ -252,28 +321,29 @@ ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), scenes (p), song 
     lengthLabel.setColour (juce::Label::textColourId, colours::dim);
     lengthLabel.setJustificationType (juce::Justification::centredRight);
 
-    for (auto* l : { &scenesTitle, &songTitle })
+    for (auto* l : { &sceneTitle, &songTitle })
     {
-        l->setFont (juce::FontOptions (12.0f, juce::Font::bold));
-        l->setColour (juce::Label::textColourId, colours::dim);
+        l->setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        l->setColour (juce::Label::textColourId, colours::text);
         addAndMakeVisible (*l);
     }
-    scenesTitle.setText ("SCENES  -  each scene plays its patterns one after another (click a slot to choose a pattern, right-click: empty)",
-                         juce::dontSendNotification);
-    songTitle.setText ("SONG  -  click a cell to put that scene on that song step (click again: remove), drag to fill",
+    sceneTitle.setText ("SCENE  -  patterns play one after another   (click: choose pattern, double-click: rename, right-click: empty)",
+                        juce::dontSendNotification);
+    songTitle.setText ("SONG  -  click a step: it plays the scene (click again: empty = a bar of silence), drag to fill",
                        juce::dontSendNotification);
-    hintLabel.setText ("Export the song from the FILE menu (WAV or MIDI). Empty song steps / scenes play one bar of silence.",
+    hintLabel.setText ("Export the song from the FILE menu (WAV or MIDI). The sampler's PLAY / space bar in the main window plays just the selected pattern.",
                        juce::dontSendNotification);
     hintLabel.setFont (juce::FontOptions (11.0f));
     hintLabel.setColour (juce::Label::textColourId, colours::dim);
     addAndMakeVisible (hintLabel);
 
-    addAndMakeVisible (scenes);
+    addAndMakeVisible (scene);
     addAndMakeVisible (song);
     songTimer.setTooltip ("Song time  |  bar . beat . 16th");
     addAndMakeVisible (songTimer);
-    setSize (1180, 700);
+
     setWantsKeyboardFocus (true);
+    setSize (1240, 640);
     timerCallback(); // show tempo, length and position right away
     startTimerHz (20);
 }
@@ -291,14 +361,12 @@ void ScenePanel::timerCallback()
     if (! bpmSlider.isMouseButtonDown())
         bpmSlider.setValue (s.syncToHost.load() ? s.effectiveBpm.load() : s.bpm.load(), juce::dontSendNotification);
 
-    // song length and position
-    std::array<Sequencer::SongSegment, Sequencer::maxSegments> segs;
+    std::vector<Sequencer::SongSegment> segs;
     double total = 0.0;
     s.buildSong (segs, total);
     const double bpm = juce::jmax (20.0f, s.effectiveBpm.load());
-    const int steps = s.songLengthSteps();
-    lengthLabel.setText ("Song: " + juce::String (steps) + " steps  |  " + juce::String (total / 4.0, 0) + " bars  |  "
-                         + timeString (total * 60.0 / bpm), juce::dontSendNotification);
+    lengthLabel.setText ("Song: " + juce::String (s.songLengthSteps()) + " steps  |  " + juce::String (total / 4.0, 0) + " bars",
+                         juce::dontSendNotification);
 
     // song clock
     {
@@ -317,19 +385,27 @@ void ScenePanel::timerCallback()
     }
 
     const int ps = s.songPosStep.load();
-    if (s.songMode.load() && s.isRunning() && ps >= 0)
+    if (s.isPlayingSong() && ps >= 0)
     {
-        const int sc = s.getSongStep (ps);
         const int sl = s.songPosSlot.load();
-        positionLabel.setText ("Song step " + juce::String (ps + 1) + "  >  Scene " + (sc >= 0 ? juce::String (sc + 1) : juce::String ("-"))
-                                   + (sl >= 0 && sc >= 0 ? "  >  Pattern " + juce::String (s.getSceneSlot (sc, sl) + 1) : juce::String()),
+        positionLabel.setText ("Song step " + juce::String (ps + 1)
+                                   + (sl >= 0 ? "  >  slot " + juce::String (sl + 1) + ":  " + s.getPatternLabel (s.getSceneSlot (0, sl)) : juce::String ("  >  rest")),
                                juce::dontSendNotification);
-        // follow the playing page
-        const int page = ps / SongGrid::stepsPerPage;
-        if (page * SongGrid::stepsPerPage != song.getFirstStep())
+        // follow the playing pages
+        if (sl >= 0)
         {
-            song.setFirstStep (page * SongGrid::stepsPerPage);
-            (page == 0 ? page1 : page2).setToggleState (true, juce::dontSendNotification);
+            const int page = sl / SceneRow::slotsPerPage;
+            if (page * SceneRow::slotsPerPage != scene.getFirstSlot())
+            {
+                scene.setFirstSlot (page * SceneRow::slotsPerPage);
+                slotPages[(size_t) page].setToggleState (true, juce::dontSendNotification);
+            }
+        }
+        const int sp = ps / SongRow::stepsPerPage;
+        if (sp * SongRow::stepsPerPage != song.getFirstStep())
+        {
+            song.setFirstStep (sp * SongRow::stepsPerPage);
+            songPages[(size_t) sp].setToggleState (true, juce::dontSendNotification);
         }
     }
     else
@@ -338,7 +414,7 @@ void ScenePanel::timerCallback()
                                : "Stopped  -  PLAY SONG or space bar plays the song", juce::dontSendNotification);
     }
 
-    scenes.repaint();
+    scene.repaint();
     song.repaint();
 }
 
@@ -361,26 +437,40 @@ void ScenePanel::resized()
 {
     auto b = getLocalBounds().reduced (10);
     auto top = b.removeFromTop (40);
-    playButton.setBounds (top.removeFromLeft (110)); top.removeFromLeft (6);
-    stopButton.setBounds (top.removeFromLeft (70)); top.removeFromLeft (6);
-    loopButton.setBounds (top.removeFromLeft (70)); top.removeFromLeft (6);
-    top.removeFromLeft (6);
-    bpmSlider.setBounds (top.removeFromLeft (120)); top.removeFromLeft (12);
+    playButton.setBounds (top.removeFromLeft (110).withSizeKeepingCentre (110, 32)); top.removeFromLeft (6);
+    stopButton.setBounds (top.removeFromLeft (70).withSizeKeepingCentre (70, 32)); top.removeFromLeft (6);
+    loopButton.setBounds (top.removeFromLeft (70).withSizeKeepingCentre (70, 32)); top.removeFromLeft (12);
+    bpmSlider.setBounds (top.removeFromLeft (120).withSizeKeepingCentre (120, 30)); top.removeFromLeft (12);
     songTimer.setBounds (top.removeFromRight (270).withSizeKeepingCentre (270, 40));
     top.removeFromRight (10);
-    lengthLabel.setBounds (top.removeFromRight (300));
+    lengthLabel.setBounds (top.removeFromRight (220));
     positionLabel.setBounds (top);
 
-    b.removeFromTop (8);
-    scenesTitle.setBounds (b.removeFromTop (18));
-    scenes.setBounds (b.removeFromTop (juce::jmax (180, b.getHeight() * 2 / 5)));
     b.removeFromTop (10);
-    auto songHead = b.removeFromTop (24);
-    page2.setBounds (songHead.removeFromRight (100)); songHead.removeFromRight (4);
-    page1.setBounds (songHead.removeFromRight (100)); songHead.removeFromRight (8);
+    hintLabel.setBounds (b.removeFromBottom (18));
+    b.removeFromBottom (6);
+
+    const int rowH = juce::jmax (110, (b.getHeight() - 2 * 30 - 16) / 2);
+
+    auto sceneHead = b.removeFromTop (26);
+    for (int i = (int) slotPages.size(); --i >= 0;)
+    {
+        slotPages[(size_t) i].setBounds (sceneHead.removeFromRight (80));
+        sceneHead.removeFromRight (4);
+    }
+    sceneTitle.setBounds (sceneHead);
+    b.removeFromTop (4);
+    scene.setBounds (b.removeFromTop (rowH));
+
+    b.removeFromTop (16);
+    auto songHead = b.removeFromTop (26);
+    for (int i = (int) songPages.size(); --i >= 0;)
+    {
+        songPages[(size_t) i].setBounds (songHead.removeFromRight (80));
+        songHead.removeFromRight (4);
+    }
     songTitle.setBounds (songHead);
     b.removeFromTop (4);
-    hintLabel.setBounds (b.removeFromBottom (18));
-    song.setBounds (b);
+    song.setBounds (b.removeFromTop (rowH));
 }
 } // namespace rz
