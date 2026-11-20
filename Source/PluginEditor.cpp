@@ -293,7 +293,34 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     for (int i = 0; i < rz::padsPerBank; ++i)
     {
         auto pad = std::make_unique<rz::PadButton> (processor, startBank * rz::padsPerBank + i, juce::String::charToString ((juce::juce_wchar) padKeys[i]));
-        pad->onSelect = [this] (int idx) { selectPad (idx); };
+        pad->onSelect = [this] (int idx)
+        {
+            // a plain click: one pad, and the start of a Shift+click range
+            multiSelection.fill (false);
+            selectionAnchor = idx;
+            refreshMultiSelection();
+            selectPad (idx);
+        };
+        pad->onMultiSelect = [this] (int idx, juce::ModifierKeys mods)
+        {
+            if (mods.isShiftDown())
+            {
+                multiSelection.fill (false);
+                for (int i = juce::jmin (selectionAnchor, idx); i <= juce::jmax (selectionAnchor, idx); ++i)
+                    multiSelection[(size_t) i] = true;
+            }
+            else
+            {
+                if (multiSelectedCount() == 0)
+                    multiSelection[(size_t) selectionAnchor] = true;
+                multiSelection[(size_t) idx] = ! multiSelection[(size_t) idx];
+            }
+            refreshMultiSelection();
+            return true;
+        };
+        pad->getMultiCount = [this] { return multiSelectedCount(); };
+        pad->onClearSelected = [this] { clearSelectedPads(); };
+        pad->onDeselect = [this] { multiSelection.fill (false); refreshMultiSelection(); };
         pad->onLoadRequest = [this] (int idx) { choosePadFile (idx); };
         pad->onClear = [this] (int idx) { processor.pushUndo ("Clear pad"); processor.clearPad (idx); };
         pad->onCopy = [this] (int idx) { processor.copyPad (idx); };
@@ -477,6 +504,7 @@ void RezalicaEditor::setBank (int bank)
     refreshPadNames();
     for (auto& p : pads)
         p->setSelected (p->getIndex() == processor.selectedPad.load());
+    refreshMultiSelection();
     repaint (padArea);
 }
 
@@ -943,6 +971,33 @@ void RezalicaEditor::toggleToolWindow (std::unique_ptr<rz::ToolWindow>& w, juce:
     button.setToggleState (show, juce::dontSendNotification);
 }
 
+int RezalicaEditor::multiSelectedCount() const
+{
+    int n = 0;
+    for (auto m : multiSelection) if (m) ++n;
+    return n;
+}
+
+void RezalicaEditor::refreshMultiSelection()
+{
+    for (auto& p : pads)
+        p->setMultiSelected (multiSelection[(size_t) p->getIndex()]);
+}
+
+void RezalicaEditor::clearSelectedPads()
+{
+    const int n = multiSelectedCount();
+    if (n == 0) return;
+    processor.pushUndo ("Clear " + juce::String (n) + " pads"); // one UNDO brings them all back
+    for (int i = 0; i < rz::numPads; ++i)
+        if (multiSelection[(size_t) i])
+            processor.clearPad (i);
+    multiSelection.fill (false);
+    refreshMultiSelection();
+    selectPad (processor.selectedPad.load(), false);
+    refreshPadNames();
+}
+
 void RezalicaEditor::toggleBrowser()
 {
     if (browserPanel == nullptr)
@@ -1141,6 +1196,8 @@ bool RezalicaEditor::keyPressed (const juce::KeyPress& key)
     }
     if (key == juce::KeyPress::escapeKey)
     {
+        multiSelection.fill (false); // ESC also drops a multi-selection of pads
+        refreshMultiSelection();
         processor.stopAll();
         return true;
     }

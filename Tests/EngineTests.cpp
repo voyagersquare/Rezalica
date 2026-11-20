@@ -1405,6 +1405,35 @@ int main (int argc, char** argv)
         dir.deleteRecursively();
     }
 
+    // ---- multi-select pads: click A1, Shift+click A4, Clear all selected pads ----
+    {
+        auto mp = std::make_unique<RezalicaProcessor> (false);
+        auto& m = *mp;
+        m.prepareToPlay (48000.0, 512);
+        m.chopFileToPads (file, RezalicaProcessor::chop8);   // A1..A8 filled
+        std::unique_ptr<juce::AudioProcessorEditor> ed (m.createEditor());
+        std::vector<rz::PadButton*> padsUi;
+        for (auto* c : ed->getChildren())
+            if (auto* pb = dynamic_cast<rz::PadButton*> (c)) padsUi.push_back (pb);
+        check (padsUi.size() == 16, "editor has 16 pad buttons");
+        if (padsUi.size() == 16)
+        {
+            padsUi[0]->onSelect (0);
+            padsUi[3]->onMultiSelect (3, juce::ModifierKeys (juce::ModifierKeys::shiftModifier));
+            padsUi[6]->onMultiSelect (6, juce::ModifierKeys (juce::ModifierKeys::ctrlModifier));
+            check (padsUi[0]->getMultiCount() == 5, "Shift+click selects A1-A4, Ctrl+click adds A7");
+            padsUi[1]->onClearSelected();
+            int left = 0;
+            for (int i = 0; i < 8; ++i) if (m.getEngine().getPadSample (i) != nullptr) ++left;
+            check (left == 3 && m.getEngine().getPadSample (4) != nullptr && m.getEngine().getPadSample (6) == nullptr
+                       && padsUi[0]->getMultiCount() == 0, "Clear all selected pads empties exactly those pads");
+            m.undo();
+            int back = 0;
+            for (int i = 0; i < 8; ++i) if (m.getEngine().getPadSample (i) != nullptr) ++back;
+            check (back == 8, "one UNDO brings all cleared pads back");
+        }
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);

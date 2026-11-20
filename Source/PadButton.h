@@ -22,6 +22,11 @@ public:
     std::function<void (int)> onClear;
     std::function<void (int, int)> onChop; // pad, mode
     std::function<void (int)> onCopy, onPaste;
+    // multi-select: Shift+click (range) / Ctrl+click (one more pad); returns true when the click only selected
+    std::function<bool (int, juce::ModifierKeys)> onMultiSelect;
+    std::function<int()> getMultiCount;
+    std::function<void()> onClearSelected, onDeselect;
+    void setMultiSelected (bool m)           { if (m != multiSelected) { multiSelected = m; repaint(); } }
 
     void setIndex (int i)                    { if (i != index) { index = i; flashLevel = 0.0f; held = false; repaint(); } }
     int getIndex() const noexcept            { return index; }
@@ -49,8 +54,13 @@ public:
         g.setColour (base.interpolatedWith (accent, flashLevel * 0.85f));
         g.fillRoundedRectangle (b, 7.0f);
 
-        g.setColour (selected ? accent : outline);
-        g.drawRoundedRectangle (b, 7.0f, selected ? 2.5f : 1.0f);
+        if (multiSelected)
+        {
+            g.setColour (juce::Colour (0xffffc94a).withAlpha (0.16f));
+            g.fillRoundedRectangle (b, 7.0f);
+        }
+        g.setColour (selected ? accent : multiSelected ? juce::Colour (0xffffc94a) : outline);
+        g.drawRoundedRectangle (b, 7.0f, selected || multiSelected ? 2.5f : 1.0f);
 
         auto inner = b.reduced (8.0f, 6.0f);
         g.setColour (flashLevel > 0.5f ? juce::Colours::black : text);
@@ -79,14 +89,20 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (onSelect) onSelect (index);
         heldIndex = index;
 
         if (e.mods.isPopupMenu())
         {
+            // with several pads selected, the menu works on the selection: keep it
+            if (! (getMultiCount && getMultiCount() > 1) && onSelect) onSelect (index);
             showMenu();
             return;
         }
+
+        if ((e.mods.isShiftDown() || e.mods.isCtrlDown() || e.mods.isCommandDown()) && onMultiSelect && onMultiSelect (index, e.mods))
+            return; // selecting, not playing
+
+        if (onSelect) onSelect (index);
 
         held = true;
         // clicking higher on the pad plays louder
@@ -132,6 +148,14 @@ private:
     void showMenu()
     {
         juce::PopupMenu m;
+        const int multi = getMultiCount ? getMultiCount() : 0;
+        if (multi > 1)
+        {
+            m.addSectionHeader (juce::String (multi) + " pads selected");
+            m.addItem (30, "Clear all selected pads (" + juce::String (multi) + ")");
+            m.addItem (31, "Deselect");
+            m.addSeparator();
+        }
         m.addItem (1, "Load sample...");
         m.addItem (2, "Clear pad", name.isNotEmpty());
         m.addSeparator();
@@ -148,6 +172,8 @@ private:
 
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this] (int r)
         {
+            if (r == 30 && onClearSelected) onClearSelected();
+            if (r == 31 && onDeselect) onDeselect();
             if (r == 1 && onLoadRequest) onLoadRequest (index);
             if (r == 2 && onClear) onClear (index);
             if (r == 20 && onCopy) onCopy (index);
@@ -162,7 +188,7 @@ private:
     const juce::String key;
     juce::String name;
     int heldIndex = 0;
-    bool selected = false, held = false, dragOver = false, hasFx = false;
+    bool selected = false, held = false, dragOver = false, hasFx = false, multiSelected = false;
     float flashLevel = 0.0f;
 };
 } // namespace rz

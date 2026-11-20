@@ -74,6 +74,12 @@ private:
     double lastAutosaveTime = 0.0;
     juce::MemoryBlock lastAutosavedState;
     int lastSelectedPad = -1;
+    // multi-select of pads (Shift+click = range, Ctrl+click = add / remove one pad)
+    std::array<bool, rz::numPads> multiSelection {};
+    int selectionAnchor = 0;
+    int multiSelectedCount() const;
+    void refreshMultiSelection();
+    void clearSelectedPads();
     bool isStandalone = false;
     void showFileMenu();
     void showAudioSettings();
