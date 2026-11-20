@@ -242,6 +242,12 @@ void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer, float t
     if (s == nullptr || ps.mute.load() || bankMute[(size_t) (pad / padsPerBank)].load())
         return;
 
+    // choke group: open / closed hi-hat style, a hit cuts the other pads of its group
+    if (const int group = ps.chokeGroup.load(); group > 0)
+        for (auto& v : voices)
+            if (v.isActive() && v.getPad() >= 0 && v.getPad() != pad && settings[(size_t) v.getPad()].chokeGroup.load() == group)
+                v.fastStop();
+
     // A pad is monophonic (retriggering cuts the previous voice), unless it is played
     // as a melodic instrument: then only the same note is cut.
     for (auto& v : voices)

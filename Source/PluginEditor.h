@@ -9,6 +9,9 @@
 #include "PianoRollWindow.h"
 #include "BankControls.h"
 #include "SceneWindow.h"
+#include "ToolWindows.h"
+#include "AppSettings.h"
+#include "MetronomeControls.h"
 
 class RezalicaEditor : public juce::AudioProcessorEditor,
                        private juce::Timer,
@@ -51,7 +54,20 @@ private:
     juce::TextButton loadChopButton { "LOAD SAMPLE" }, lazyButton { "LAZY CHOP" }, seqButton { "STEP SEQ" }, pianoRollButton { "PIANO ROLL" }, stopButton { "STOP ALL" },
                      undoButton { "UNDO" }, redoButton { "REDO" },
                      fileButton { "FILE" }, sceneButton { "SCENE" },  // FILE / SCENE / PLAY / STOP: standalone app only
-                     playButton { "PLAY" }, stopPlayButton { "STOP" };
+                     playButton { "PLAY" }, stopPlayButton { "STOP" },
+                     samplingButton { "SAMPLING" }, browserButton { "BROWSER" }, masterFxButton { "MASTER FX" }; // standalone tool row
+    rz::MetronomeControls metronome;
+    juce::Label autosaveLabel;
+    juce::Rectangle<int> toolRowArea;
+    std::unique_ptr<rz::ToolWindow> samplingWindow, browserWindow, masterFxWindow;
+    void toggleToolWindow (std::unique_ptr<rz::ToolWindow>& w, juce::TextButton& button, int which);
+    // autosave / crash recovery / recent projects (standalone)
+    void autosave();
+    void checkCrashRecovery();
+    void openProjectFile (const juce::File& f);
+    double lastAutosaveTime = 0.0;
+    juce::MemoryBlock lastAutosavedState;
+    int lastSelectedPad = -1;
     bool isStandalone = false;
     void showFileMenu();
     void showAudioSettings();
@@ -80,6 +96,7 @@ private:
     juce::TextButton loopButton { "LOOP" }, reverseButton { "REVERSE" }, gateButton { "GATE" },
                      muteButton { "MUTE" }, renderButton { "RENDER" }, clearPadButton { "CLEAR" }, trimButton { "TRIM" },
                      warpButton { "WARP" }, stretchButton { "STRETCH..." };
+    juce::ComboBox chokeBox;
 
     // pads
     std::vector<std::unique_ptr<rz::PadButton>> pads;

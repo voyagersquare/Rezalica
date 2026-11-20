@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "LookAndFeel.h"
+#include "MetronomeControls.h"
 #include "DragExport.h"
 #include <set>
 
@@ -150,6 +151,7 @@ private:
     juce::Slider velocitySlider;
     juce::Label infoLabel;
     DragExportButton dragMidiButton, dragWavButton;
+    MetronomeControls metronome;
 };
 
 class PianoRollWindow : public juce::DocumentWindow

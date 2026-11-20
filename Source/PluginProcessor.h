@@ -6,6 +6,8 @@
 #include "SamplerEngine.h"
 #include "Sequencer.h"
 #include "FxChain.h"
+#include "MasterFx.h"
+#include "Recorder.h"
 
 class RezalicaProcessor : public juce::AudioProcessor,
                           private juce::Timer
@@ -13,7 +15,8 @@ class RezalicaProcessor : public juce::AudioProcessor,
 public:
     static constexpr int midiBaseNote = 36; // C1 = A1 ... D#2 = A16, E2 = B1 ... D#7 = D16
 
-    RezalicaProcessor();
+    /** withInput: an audio input bus for sampling (the standalone app has one, the plug-in doesn't). */
+    explicit RezalicaProcessor (bool withInput = juce::JUCEApplicationBase::isStandaloneApp());
     ~RezalicaProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -151,6 +154,25 @@ public:
     bool collectRecordedPianoNotes();
     juce::ChangeBroadcaster padsChanged; // pad samples / settings replaced
 
+    // ---- master chain (EQ / compressor / limiter on the output) ----
+    rz::MasterFxSettings masterFxSettings;
+    rz::MasterFx& getMasterFx() noexcept { return masterFx; }
+
+    // ---- sampling / resampling ----
+    rz::AudioRecorder& getRecorder() noexcept { return recorder; }
+    bool hasAudioInput() const { return getTotalNumInputChannels() > 0; }
+    double getSampleRateNow() const noexcept { return currentSampleRate; }
+    /** Starts a take. source: input or Rezalica's output; patternLength: resample exactly one loop
+        of the selected pattern (starts it from the top); waitForSignal: start at the first sound. */
+    bool startRecording (rz::AudioRecorder::Source source, bool patternLength, bool waitForSignal);
+    /** Message thread: when a take is finished, writes it to a WAV (Documents/Rezalica/Recordings)
+        and loads it to the pad (the selected pad becomes the chop source). Returns the file, or {}. */
+    juce::File collectRecording (int pad);
+    static juce::File getRecordingFolder();
+
+    /** Sample browser: plays a file once (empty file = stop). */
+    void previewFile (const juce::File& file);
+
 private:
     struct UiEvent { int pad; float velocity; bool on; bool preview = false; float transpose = 0.0f; };
     enum EventType { evStopAll = -1, evOff = 0, evOffSeq = 1, evOffTag = 2, evOn = 10, evOnSeq = 11, evOnTag = 12 };
@@ -166,6 +188,7 @@ private:
     };
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+    static BusesProperties makeBuses (bool withInput);
     static std::vector<float> findSlicePoints (const rz::SampleData& s, int mode, float sensitivity);
 
     void timerCallback() override;
@@ -224,6 +247,11 @@ private:
     std::array<double, rz::numPads> pendingSeqOff {};
 
     juce::AudioBuffer<float> dryBuffer;
+    rz::MasterFx masterFx;
+    rz::AudioRecorder recorder;
+    int clickSamplesLeft = 0, clickLength = 1;
+    double clickPhase = 0.0, clickFreq = 1000.0;
+    rz::SampleData::Ptr previewData;
     double currentSampleRate = 44100.0;
 
     std::atomic<float>* pMaster = nullptr;

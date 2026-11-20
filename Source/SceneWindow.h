@@ -5,38 +5,51 @@
 
 namespace rz
 {
-/** SCENE: one row of up to 128 pattern slots that play one after another.
-    Click: choose a pattern, double-click: rename that pattern, right-click: empty. */
-class SceneRow : public juce::Component
+/** Colour of a pattern: the one chosen in the SCENE window, or the default palette. */
+juce::Colour patternColour (const Sequencer& seq, int pattern);
+/** Colours that can be chosen for a pattern. */
+const std::vector<std::pair<juce::String, juce::uint32>>& patternColourChoices();
+
+/** SCENE: up to 4 tracks of 128 pattern slots. The patterns of a track play one after another,
+    the tracks play at the same time. Click: choose pattern, double-click: rename / colour,
+    drag: move (swap), Ctrl+drag: copy, right-click: empty. */
+class SceneGrid : public juce::Component
 {
 public:
-    explicit SceneRow (RezalicaProcessor& p) : processor (p) {}
-    static constexpr int slotsPerPage = 32;
+    explicit SceneGrid (RezalicaProcessor& p) : processor (p) {}
+    static constexpr int slotsPerPage = 32, gutter = 36;
     void setFirstSlot (int s) { firstSlot = s; repaint(); }
     int getFirstSlot() const { return firstSlot; }
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
+    /** Opens the rename / colour dialog of a pattern. */
+    static void renamePattern (juce::Component* owner, RezalicaProcessor& processor, int pattern, std::function<void()> done);
+
 private:
-    int slotAt (juce::Point<float>) const;
-    juce::Rectangle<float> slotBounds (int slot) const;
-    void showPatternMenu (int slot);
-    void renamePattern (int pattern);
+    struct Cell { int track = -1, slot = -1; bool valid() const { return track >= 0 && slot >= 0; } };
+    Cell cellAt (juce::Point<float>) const;
+    juce::Rectangle<float> cellBounds (Cell) const;
+    void showPatternMenu (Cell);
 
     RezalicaProcessor& processor;
     int firstSlot = 0;
-    int pendingMenuSlot = -1, clickToken = 0;
+    Cell pressed, dropTarget;
+    bool dragging = false, copyDrag = false;
+    int clickToken = 0;
 };
 
-/** SONG: one row of 64 steps; an active step plays the scene, an empty one is a bar of silence. */
-class SongRow : public juce::Component
+/** SONG: one row per scene track, 64 steps. An active step plays that track of the scene;
+    a step where every track is off is a bar of silence. The ruler sets the start marker. */
+class SongGrid : public juce::Component
 {
 public:
-    explicit SongRow (RezalicaProcessor& p) : processor (p) {}
-    static constexpr int stepsPerPage = 32;
+    explicit SongGrid (RezalicaProcessor& p) : processor (p) {}
+    static constexpr int stepsPerPage = 32, gutter = 36, rulerHeight = 22;
     void setFirstStep (int s) { firstStep = s; repaint(); }
     int getFirstStep() const { return firstStep; }
 
@@ -45,11 +58,12 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
 
 private:
-    int stepAt (juce::Point<float>) const;
-    juce::Rectangle<float> stepBounds (int step) const;
+    int stepAtX (float x) const;
+    int trackAtY (float y) const;
+    juce::Rectangle<float> cellBounds (int track, int step) const;
     RezalicaProcessor& processor;
     int firstStep = 0;
-    int paintValue = -2;
+    int paintTrack = -1, paintValue = -2;
 };
 
 class ScenePanel : public juce::Component,
@@ -69,10 +83,12 @@ private:
     juce::TextButton playButton { "PLAY SONG" }, stopButton { "STOP" }, loopButton { "LOOP" };
     std::array<juce::TextButton, 4> slotPages;
     std::array<juce::TextButton, 2> songPages;
+    juce::ComboBox tracksBox;
     juce::Slider bpmSlider;
     juce::Label positionLabel, lengthLabel, sceneTitle, songTitle, hintLabel;
-    SceneRow scene;
-    SongRow song;
+    SceneGrid scene;
+    SongGrid song;
+    int lastTracks = -1;
 
     /** Big song clock: elapsed time and bar.beat.16th. */
     struct SongTimer : public juce::Component, public juce::SettableTooltipClient
@@ -111,7 +127,7 @@ public:
         setUsingNativeTitleBar (true);
         setContentOwned (new ScenePanel (p), true);
         setResizable (true, false);
-        setResizeLimits (900, 500, 2800, 1600);
+        setResizeLimits (900, 520, 2800, 1600);
         setAlwaysOnTop (true);
         centreWithSize (getWidth(), getHeight());
     }

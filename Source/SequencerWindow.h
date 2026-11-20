@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "LookAndFeel.h"
 #include "DragExport.h"
+#include "MetronomeControls.h"
 
 namespace rz
 {
@@ -53,7 +54,7 @@ private:
 
     RezalicaProcessor& processor;
     juce::TextButton playButton { "PLAY" }, recButton { "REC" }, syncButton { "SYNC HOST" }, clearButton { "CLEAR" }, copyButton { "COPY TO NEXT" };
-    juce::ComboBox patternBox, lengthBox;
+    juce::ComboBox patternBox, lengthBox, swingGridBox;
     juce::Slider bpmSlider, swingSlider;
     juce::Label bpmLabel, swingLabel, patternLabel, lengthLabel, infoLabel;
     std::array<juce::TextButton, numBanks> bankButtons;
@@ -61,6 +62,7 @@ private:
     juce::TextButton followButton { "FOLLOW" };
     DragExportButton dragMidiButton, dragWavButton;
     SequencerGrid grid;
+    MetronomeControls metronome;
 };
 
 class SequencerWindow : public juce::DocumentWindow

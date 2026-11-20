@@ -973,8 +973,10 @@ void PianoRollEditor::paintVelocity (juce::Graphics& g)
 PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
     : processor (p), editor (p),
       dragMidiButton ("DRAG MIDI", [this] { return processor.exportPatternMidi (processor.getSequencer().currentPattern.load(), false, true); }),
-      dragWavButton ("DRAG WAV", [this] { return processor.exportPatternWav (processor.getSequencer().currentPattern.load(), false, true); })
+      dragWavButton ("DRAG WAV", [this] { return processor.exportPatternWav (processor.getSequencer().currentPattern.load(), false, true); }),
+      metronome (p.getSequencer())
 {
+    addAndMakeVisible (metronome);
     dragMidiButton.setTooltip ("Drag the piano roll notes into your DAW as a MIDI clip (click: show the file)");
     dragWavButton.setTooltip ("Drag the piano roll part into your DAW as audio (rendered loop, click: show the file)");
     addAndMakeVisible (dragMidiButton);
@@ -1202,10 +1204,12 @@ void PianoRollPanel::resized()
     velocitySlider.setBounds (row2.removeFromLeft (150)); row2.removeFromLeft (10);
     undoButton.setBounds (row2.removeFromLeft (60)); row2.removeFromLeft (4);
     redoButton.setBounds (row2.removeFromLeft (60)); row2.removeFromLeft (10);
-    clearButton.setBounds (row2.removeFromLeft (70));
+    clearButton.setBounds (row2.removeFromLeft (70)); row2.removeFromLeft (10);
     dragWavButton.setBounds (row2.removeFromRight (110));
     row2.removeFromRight (6);
     dragMidiButton.setBounds (row2.removeFromRight (110));
+    row2.removeFromRight (8);
+    metronome.setBounds (row2.removeFromLeft (juce::jmin (200, row2.getWidth())));
 
     b.removeFromTop (6);
     infoLabel.setBounds (b.removeFromBottom (18));

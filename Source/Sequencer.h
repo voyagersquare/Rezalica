@@ -103,6 +103,9 @@ public:
                     n = 0;
         for (auto& l : length)
             l = 16;
+        for (auto& sw : patternSwing) sw = 0.0f;
+        for (auto& g : swingGrid) g = 0;
+        patternColours.fill (0);
         resetSong();
         for (int i = 0; i < numPatterns; ++i)
         {
@@ -235,13 +238,21 @@ public:
         const bool internal = internalPlay.load();
 
         const bool restart = restartRequested.exchange (false); // always consume the request
+        justRestarted = false;
         if ((internal && ! wasInternal) || restart)
         {
-            internalPpq = 0.0;
+            justRestarted = internal;
+            // the song starts at its start marker; REC with count-in first plays 1-2 bars of clicks
+            const double startAt = (songMode.load() && songLengthSteps() > 0) ? songStartPpq() : 0.0;
+            const int countBars = (recording.load() || pianoRecording.load()) ? juce::jlimit (0, 4, countInBars.load()) : 0;
+            internalPpq = startAt - countBars * 4.0;
+            countInUntil = countBars > 0 ? startAt : -1.0e18;
             if (running && ! hostPlaying)
                 releaseAllNotes (0, noteOff);
             lastPpqEnd = -1.0e9;
         }
+        if (hostPlaying)
+            countInUntil = -1.0e18;
         wasInternal = internal;
 
         ppqPerSample = tempo / 60.0 / sampleRate;
@@ -257,6 +268,8 @@ public:
                 releaseAllNotes (0, noteOff);
             running = false;
             currentStep = -1;
+            numClicks = 0;
+            countingIn = false;
             return;
         }
 
@@ -274,7 +287,19 @@ public:
         if (! hostPlaying)
             internalPpq = ppqEnd;
 
-        const double swingOffset = juce::jlimit (0.0f, 1.0f, swing.load()) * stepLengthPpq * 0.5;
+        // metronome: a click on every beat (and always during the count-in)
+        numClicks = 0;
+        countingIn = ppqStart < countInUntil;
+        if (metronome.load() || ppqStart < countInUntil)
+            for (double beat = std::ceil (ppqStart); beat < ppqEnd && numClicks < (int) clicks.size(); beat += 1.0)
+                if (metronome.load() || beat < countInUntil - 1.0e-9)
+                {
+                    const long long bi = (long long) std::llround (beat);
+                    clicks[(size_t) numClicks++] = { juce::jlimit (0, numSamples - 1, (int) ((beat - ppqStart) / ppqPerSample)), ((bi % 4) + 4) % 4 == 0 };
+                }
+        // nothing plays during the count-in
+        const double playFrom = juce::jmax (ppqStart, countInUntil);
+
         auto toOffset = [&] (double t) { return juce::jlimit (0, numSamples - 1, (int) ((t - ppqStart) / ppqPerSample)); };
 
         // piano roll note-offs that fall into this block
@@ -292,8 +317,9 @@ public:
 
         // plays one pattern (steps + piano roll) for the ppq range [a, b); the pattern starts at 'origin'.
         // wrap = loop the pattern forever (pattern mode), otherwise it plays once (song mode)
-        auto renderRange = [&] (int pattern, double origin, bool wrap, double a, double b)
+        auto renderRange = [&] (int pattern, double origin, bool wrap, double a, double b, int tagOffset)
         {
+            a = juce::jmax (a, playFrom);
             if (pattern < 0 || pattern >= numPatterns || b <= a)
                 return;
             const int len = juce::jlimit (1, maxSteps, length[(size_t) pattern].load());
@@ -313,7 +339,7 @@ public:
                 if (base >= a && base < b)
                     currentStep = stp;
 
-                const double onGrid = base + ((k & 1) != 0 ? swingOffset : 0.0);
+                const double onGrid = base + swingOffsetSteps (pattern, k) * stepLengthPpq;
                 for (int pad = 0; pad < numPads; ++pad)
                     if (auto v = getStep (pattern, pad, stp))
                     {
@@ -337,63 +363,75 @@ public:
                             continue;
                         double t = origin + loop * loopPpq + n.start * stepLengthPpq;
                         const double frac = n.start - std::floor (n.start);
-                        if (frac < 1.0e-4 && (((long long) std::floor (n.start)) & 1) != 0)
-                            t += swingOffset; // swing notes that sit on odd 16ths
+                        if (frac < 1.0e-4)
+                            t += swingOffsetSteps (pattern, (long long) std::floor (n.start)) * stepLengthPpq; // notes on the grid swing too
                         if (t < a || t >= b)
                             continue;
 
                         const double lenPpq = juce::jmin ((double) n.length, (double) len) * stepLengthPpq;
                         const int offset = toOffset (t);
-                        noteOn ((int) n.kind, n.row, (float) n.velocity / 127.0f, offset, (int) n.id, clip->targetPad);
+                        const int tag = (int) (n.id & 0xffffff) + tagOffset; // tracks playing the same pattern get their own tags
+                        noteOn ((int) n.kind, n.row, (float) n.velocity / 127.0f, offset, tag, clip->targetPad);
 
                         if (numActive < (int) active.size())
-                            active[(size_t) numActive++] = { n.id, t + lenPpq * 0.995, (int) n.kind, n.row, clip->targetPad };
+                            active[(size_t) numActive++] = { (juce::uint32) tag, t + lenPpq * 0.995, (int) n.kind, n.row, clip->targetPad };
                         else
-                            noteOff ((int) n.kind, n.row, offset, (int) n.id, clip->targetPad);
+                            noteOff ((int) n.kind, n.row, offset, tag, clip->targetPad);
                     }
             }
         };
 
         if (songMode.load() && songLengthSteps() > 0)  // an empty song plays the selected pattern
         {
-            // SONG: the song steps play their scenes, the scenes play their patterns one after another
-            auto& segs = songSegs; // member: no big allocation on the audio thread
-            double total = 0.0;
-            const int n = buildSong (segs.data(), maxSegments, total);
+            // SONG: the song steps play the scene; every scene track plays its patterns one after another
+            const double total = songTotalPpq();
             const bool loopSong = songLoop.load();
 
-            if (n == 0 || (! loopSong && ppqStart >= total))
+            if (total <= 0.0 || (! loopSong && ppqStart >= total))
             {
-                if (n > 0 && ! hostPlaying)
+                if (total > 0.0 && ! hostPlaying)
                     internalPlay = false; // the song is over
                 currentStep = -1;
                 songPosStep = -1;
-                songPosSlot = -1;
+                for (auto& sl : songPosSlots) sl = -1;
                 patternPosSteps = -1.0f;
                 songPosPpq = -1.0f;
             }
             else
             {
-                songPosPpq = (float) (loopSong ? std::fmod (ppqStart, total) : ppqStart); // for the SCENE timer
-                const long long c0 = loopSong ? (long long) std::floor (ppqStart / total) : 0;
+                songPosPpq = (float) (loopSong ? std::fmod (juce::jmax (0.0, ppqStart), total) : ppqStart); // for the SCENE timer
+                std::array<int, numTracks> posSlots;
+                posSlots.fill (-1);
+                int posStep = ppqStart < 0.0 ? songStartStep.load() : -1;
+                bool patternSet = false;
+                const long long c0 = loopSong ? (long long) std::floor (juce::jmax (0.0, ppqStart) / total) : 0;
                 const long long c1 = loopSong ? (long long) std::floor ((ppqEnd - 1.0e-9) / total) : 0;
-                for (long long c = c0; c <= c1; ++c)
-                    for (int si = 0; si < n; ++si)
+                for (long long c = juce::jmax (0LL, c0); c <= c1; ++c)
+                {
+                    const double cycle = (double) c * total;
+                    visitSong (ppqStart - cycle, ppqEnd - cycle, [&] (const SongSegment& sg)
                     {
-                        const auto& sg = segs[(size_t) si];
-                        const double segAbs = (double) c * total + sg.start;
+                        const double segAbs = cycle + sg.start;
                         const double a = juce::jmax (ppqStart, segAbs), b = juce::jmin (ppqEnd, segAbs + sg.length);
                         if (ppqStart >= segAbs && ppqStart < segAbs + sg.length)
                         {
-                            songPosStep = sg.songStep;
-                            songPosSlot = sg.slot;
-                            if (sg.pattern >= 0)
-                                currentPattern = sg.pattern; // the pattern windows follow the song
-                            patternPosSteps = (float) ((ppqStart - segAbs) / stepLengthPpq);
+                            posStep = sg.songStep;
+                            if (sg.track >= 0)
+                                posSlots[(size_t) sg.track] = sg.slot;
+                            if (sg.pattern >= 0 && ! patternSet)
+                            {
+                                currentPattern = sg.pattern; // the pattern windows follow the song (first track)
+                                patternPosSteps = (float) ((ppqStart - segAbs) / stepLengthPpq);
+                                patternSet = true;
+                            }
                         }
                         if (a < b)
-                            renderRange (sg.pattern, segAbs, false, a, b);
-                    }
+                            renderRange (sg.pattern, segAbs, false, a, b, juce::jmax (0, sg.track) << 24);
+                    });
+                }
+                songPosStep = posStep;
+                for (int t = 0; t < numTracks; ++t)
+                    songPosSlots[(size_t) t] = posSlots[(size_t) t];
             }
         }
         else
@@ -404,7 +442,7 @@ public:
             patternPosSteps = (float) std::fmod (std::fmod (s, (double) len) + len, (double) len);
             songPosStep = -1;
             songPosPpq = -1.0f;
-            renderRange (pattern, 0.0, true, ppqStart, ppqEnd);
+            renderRange (pattern, 0.0, true, ppqStart, ppqEnd, 0);
         }
 
         // note-offs of notes that start and end inside this block
@@ -430,6 +468,8 @@ public:
         const int pattern = currentPattern.load();
         const int len = juce::jlimit (1, maxSteps, length[(size_t) pattern].load());
         const double ppq = blockPpq + sampleOffset * ppqPerSample;
+        if (ppq < countInUntil - stepLengthPpq * 0.5)
+            return; // still counting in
         const long long k = std::llround (ppq / stepLengthPpq);
         const int step = (int) (((k % len) + len) % len);
         setStep (pattern, pad, step, (juce::uint8) juce::jlimit (1, 127, (int) (velocity * 127.0f)));
@@ -485,69 +525,118 @@ public:
     }
 
     //==============================================================================
-    // SONG: the scene is a container of up to 128 patterns, the song repeats the scene on its active steps
-    static constexpr int numScenes = 1, slotsPerScene = 128, maxSongSteps = 64, maxSegments = maxSongSteps * slotsPerScene;
-    struct SongSegment { double start = 0.0, length = 0.0; int pattern = -1, songStep = -1, slot = -1; };
+    // SONG: the scene has up to 4 tracks of 128 pattern slots (the tracks play at the same time,
+    // the patterns of a track one after another); the song plays the scene on its active steps,
+    // each track can be switched on / off per song step (one SONG row per track).
+    static constexpr int numTracks = 4, slotsPerScene = 128, maxSongSteps = 64;
+    struct SongSegment { double start = 0.0, length = 0.0; int pattern = -1, songStep = -1, slot = -1, track = -1; };
 
-    int getSceneSlot (int scene, int slot) const { return sceneSlots[(size_t) scene][(size_t) slot].load(); }
-    void setSceneSlot (int scene, int slot, int pattern) { sceneSlots[(size_t) scene][(size_t) slot] = (juce::int8) juce::jlimit (-1, numPatterns - 1, pattern); }
-    int getSongStep (int step) const { return songSteps[(size_t) step].load(); }
-    void setSongStep (int step, int scene) { songSteps[(size_t) step] = (juce::int8) juce::jlimit (-1, numScenes - 1, scene); }
+    int getSceneSlot (int track, int slot) const { return sceneSlots[(size_t) track][(size_t) slot].load(); }
+    void setSceneSlot (int track, int slot, int pattern) { sceneSlots[(size_t) track][(size_t) slot] = (juce::int8) juce::jlimit (-1, numPatterns - 1, pattern); }
+    /** 0 = the track plays on this song step, -1 = off. */
+    int getSongStep (int step, int track = 0) const { return songSteps[(size_t) track][(size_t) step].load(); }
+    void setSongStep (int step, int value, int track = 0) { songSteps[(size_t) track][(size_t) step] = (juce::int8) (value >= 0 ? 0 : -1); }
+    /** Number of scene tracks in use (1..4); hidden tracks don't play. */
+    int getNumTracks() const { return juce::jlimit (1, numTracks, usedTracks.load()); }
 
-    /** Length of a scene in steps (its patterns one after another; empty scene = 1 bar). */
-    int sceneLengthSteps (int scene) const
+    bool isSongStepActive (int step) const
+    {
+        for (int t = 0; t < getNumTracks(); ++t)
+            if (getSongStep (step, t) >= 0) return true;
+        return false;
+    }
+
+    /** Length of a scene track in steps (its patterns one after another). */
+    int trackLengthSteps (int track) const
     {
         int total = 0;
         for (int sl = 0; sl < slotsPerScene; ++sl)
-            if (const int p = getSceneSlot (scene, sl); p >= 0)
+            if (const int p = getSceneSlot (track, sl); p >= 0)
                 total += juce::jlimit (1, maxSteps, length[(size_t) p].load());
-        return total > 0 ? total : 16;
+        return total;
+    }
+
+    /** Length of the scene = its longest track (empty scene = 1 bar), in quarter notes. */
+    double sceneLengthPpq() const
+    {
+        int longest = 0;
+        for (int t = 0; t < getNumTracks(); ++t)
+            longest = juce::jmax (longest, trackLengthSteps (t));
+        return longest > 0 ? longest * stepLengthPpq : 4.0;
     }
 
     /** Number of song steps (up to the last one that is set). */
     int songLengthSteps() const
     {
         for (int st = maxSongSteps; --st >= 0;)
-            if (getSongStep (st) >= 0) return st + 1;
+            if (isSongStepActive (st)) return st + 1;
         return 0;
     }
 
-    /** The song as a timeline: one segment per pattern (empty song step / scene = 1 bar of silence). */
-    int buildSong (std::vector<SongSegment>& out, double& total) const
+    double songStepLengthPpq (int step, double sceneLen) const { return isSongStepActive (step) ? sceneLen : 4.0; }
+
+    double songTotalPpq() const
     {
-        out.resize ((size_t) maxSegments);
-        const int n = buildSong (out.data(), maxSegments, total);
-        out.resize ((size_t) n);
-        return n;
+        const double sceneLen = sceneLengthPpq();
+        double pos = 0.0;
+        for (int st = 0, last = songLengthSteps(); st < last; ++st)
+            pos += songStepLengthPpq (st, sceneLen);
+        return pos;
     }
 
-    int buildSong (SongSegment* out, int capacity, double& total) const
+    /** Where PLAY SONG starts: the start marker's song step (quarter notes). */
+    double songStartPpq() const
     {
-        const int maxSegs = juce::jmin (capacity, maxSegments);
-        int n = 0;
+        const double sceneLen = sceneLengthPpq();
+        const int last = songLengthSteps(), from = songStartStep.load();
+        if (from <= 0 || from >= last) return 0.0;
         double pos = 0.0;
-        const int last = songLengthSteps();
+        for (int st = 0; st < from; ++st)
+            pos += songStepLengthPpq (st, sceneLen);
+        return pos;
+    }
+
+    /** Calls fn (SongSegment) for every pattern (and every bar of silence) that overlaps [a, b). Returns the song length. */
+    template <typename Fn>
+    double visitSong (double a, double b, Fn&& fn) const
+    {
+        const double sceneLen = sceneLengthPpq();
+        const int last = songLengthSteps(), tracks = getNumTracks();
+        double pos = 0.0;
         for (int st = 0; st < last; ++st)
         {
-            const int sc = getSongStep (st);
-            bool any = false;
-            if (sc >= 0)
-                for (int sl = 0; sl < slotsPerScene; ++sl)
-                    if (const int p = getSceneSlot (sc, sl); p >= 0 && n < maxSegs)
-                    {
-                        const double len = juce::jlimit (1, maxSteps, length[(size_t) p].load()) * stepLengthPpq;
-                        out[(size_t) n++] = { pos, len, p, st, sl };
-                        pos += len;
-                        any = true;
-                    }
-            if (! any && n < maxSegs)
+            const bool any = isSongStepActive (st);
+            const double stepLen = any ? sceneLen : 4.0;
+            if (pos < b && pos + stepLen > a)
             {
-                out[(size_t) n++] = { pos, 4.0, -1, st, -1 }; // a bar of silence
-                pos += 4.0;
+                if (! any)
+                    fn (SongSegment { pos, 4.0, -1, st, -1, -1 }); // a bar of silence
+                else
+                    for (int t = 0; t < tracks; ++t)
+                    {
+                        if (getSongStep (st, t) < 0) continue;
+                        double p = pos;
+                        for (int sl = 0; sl < slotsPerScene && p < b; ++sl)
+                            if (const int pat = getSceneSlot (t, sl); pat >= 0)
+                            {
+                                const double len = juce::jlimit (1, maxSteps, length[(size_t) pat].load()) * stepLengthPpq;
+                                if (p + len > a)
+                                    fn (SongSegment { p, len, pat, st, sl, t });
+                                p += len;
+                            }
+                    }
             }
+            pos += stepLen;
         }
-        total = pos;
-        return n;
+        return pos;
+    }
+
+    /** The whole song as a list of segments (message thread). */
+    int buildSong (std::vector<SongSegment>& out, double& total) const
+    {
+        out.clear();
+        total = visitSong (-1.0e18, 1.0e18, [&] (const SongSegment& sg) { out.push_back (sg); });
+        return (int) out.size();
     }
 
     juce::ValueTree songToValueTree() const
@@ -555,15 +644,20 @@ public:
         juce::ValueTree t ("SONG");
         t.setProperty ("mode", songMode.load(), nullptr);
         t.setProperty ("loop", songLoop.load(), nullptr);
-        juce::StringArray sc, so;
-        for (int s = 0; s < numScenes; ++s)
-            for (int sl = 0; sl < slotsPerScene; ++sl)
-                sc.add (juce::String (getSceneSlot (s, sl)));
-        for (int st = 0; st < maxSongSteps; ++st)
-            so.add (juce::String (getSongStep (st)));
-        t.setProperty ("scenes", sc.joinIntoString (","), nullptr);
         t.setProperty ("slots", slotsPerScene, nullptr);
-        t.setProperty ("song", so.joinIntoString (","), nullptr);
+        t.setProperty ("tracks", getNumTracks(), nullptr);
+        t.setProperty ("start", songStartStep.load(), nullptr);
+        for (int tr = 0; tr < numTracks; ++tr)
+        {
+            juce::StringArray sc, so;
+            for (int sl = 0; sl < slotsPerScene; ++sl)
+                sc.add (juce::String (getSceneSlot (tr, sl)));
+            for (int st = 0; st < maxSongSteps; ++st)
+                so.add (juce::String (getSongStep (st, tr)));
+            const juce::String suffix = tr == 0 ? juce::String() : juce::String (tr);
+            t.setProperty ("scenes" + suffix, sc.joinIntoString (","), nullptr);
+            t.setProperty ("song" + suffix, so.joinIntoString (","), nullptr);
+        }
         return t;
     }
 
@@ -573,23 +667,49 @@ public:
         if (! t.isValid()) return;
         songMode = (bool) t.getProperty ("mode", false);
         songLoop = (bool) t.getProperty ("loop", false);
-        auto sc = juce::StringArray::fromTokens (t.getProperty ("scenes").toString(), ",", {});
+        usedTracks = juce::jlimit (1, numTracks, (int) t.getProperty ("tracks", 1));
+        songStartStep = juce::jlimit (0, maxSongSteps - 1, (int) t.getProperty ("start", 0));
         const int stride = (int) t.getProperty ("slots", 8); // older projects had 8 slots per scene
-        for (int i = 0; i < juce::jmin (sc.size(), stride, (int) slotsPerScene); ++i)
-            setSceneSlot (0, i, sc[i].getIntValue());
-        auto so = juce::StringArray::fromTokens (t.getProperty ("song").toString(), ",", {});
-        for (int i = 0; i < juce::jmin (so.size(), (int) maxSongSteps); ++i)
-            setSongStep (i, so[i].getIntValue() >= 0 ? 0 : -1);
+        for (int tr = 0; tr < numTracks; ++tr)
+        {
+            const juce::String suffix = tr == 0 ? juce::String() : juce::String (tr);
+            auto sc = juce::StringArray::fromTokens (t.getProperty ("scenes" + suffix).toString(), ",", {});
+            for (int i = 0; i < juce::jmin (sc.size(), stride, (int) slotsPerScene); ++i)
+                setSceneSlot (tr, i, sc[i].getIntValue());
+            auto so = juce::StringArray::fromTokens (t.getProperty ("song" + suffix).toString(), ",", {});
+            for (int i = 0; i < juce::jmin (so.size(), (int) maxSongSteps); ++i)
+                setSongStep (i, so[i].getIntValue(), tr); // older projects: any scene number = on
+        }
     }
 
     void resetSong()
     {
         for (auto& sc : sceneSlots) for (auto& sl : sc) sl = -1;
-        for (auto& st : songSteps) st = -1;
-        setSceneSlot (0, 0, 0); // scene 1 starts with pattern 1
+        for (auto& tr : songSteps) for (auto& st : tr) st = -1;
+        setSceneSlot (0, 0, 0); // the scene starts with pattern 1
         songMode = false;
         songLoop = false;
+        usedTracks = 1;
+        songStartStep = 0;
     }
+
+    // ---- swing per pattern ----
+    /** Swing in steps for step k of a pattern: 1/16 grid shifts every 2nd 16th by up to half a step,
+        1/8 grid shifts every 2nd 8th by up to one step. */
+    double swingOffsetSteps (int pattern, long long k) const
+    {
+        if (pattern < 0 || pattern >= numPatterns) return 0.0;
+        const double amount = juce::jlimit (0.0f, 1.0f, patternSwing[(size_t) pattern].load());
+        if (amount <= 0.0) return 0.0;
+        if (swingGrid[(size_t) pattern].load() == 1)
+            return ((k % 4) + 4) % 4 == 2 ? amount : 0.0;
+        return (k & 1) != 0 ? amount * 0.5 : 0.0;
+    }
+    std::array<std::atomic<float>, numPatterns> patternSwing; // 0..1
+    std::array<std::atomic<int>, numPatterns> swingGrid;      // 0 = 1/16, 1 = 1/8
+
+    /** Pattern colours chosen in the SCENE window (0 = default colour). Message thread. */
+    std::array<juce::uint32, numPatterns> patternColours;
 
     /** Pattern names (RENAME in the SCENE window); empty = "P1", "P2" ... (message thread). */
     std::array<juce::String, numPatterns> patternNames;
@@ -612,7 +732,20 @@ public:
     void togglePatternPlay() { if (internalPlay.load()) stopPlayback(); else playPattern(); }
     bool isPlayingSong() const { return internalPlay.load() && songMode.load() && songLengthSteps() > 0; }
     bool isPlayingPattern() const { return internalPlay.load() && ! isPlayingSong(); }
-    std::atomic<int> songPosStep { -1 }, songPosSlot { -1 };
+    std::atomic<int> songPosStep { -1 };
+    std::array<std::atomic<int>, numTracks> songPosSlots { -1, -1, -1, -1 }; // slot playing on each track, -1 = none
+    std::atomic<int> usedTracks { 1 };    // SCENE tracks shown / played
+    std::atomic<int> songStartStep { 0 }; // start marker of PLAY SONG
+
+    // ---- metronome (audio thread fills clicks[] in process()) ----
+    std::atomic<bool> metronome { false };
+    std::atomic<int> countInBars { 0 };   // bars of clicks before recording starts (0 = no count-in)
+    std::atomic<float> metronomeLevel { 0.5f };
+    struct Click { int offset; bool downbeat; };
+    std::array<Click, 16> clicks {};
+    int numClicks = 0;
+    std::atomic<bool> countingIn { false };
+    bool justRestarted = false; // audio thread: the internal clock started from the top in this block
     std::atomic<float> songPosPpq { -1.0f };   // position in the song (quarter notes), -1 when the song isn't playing
 
     std::atomic<int> currentPattern { 0 };
@@ -623,7 +756,6 @@ public:
     std::atomic<bool> pianoRecording { false };  // piano roll REC
     std::atomic<float> bpm { 90.0f };
     std::atomic<float> effectiveBpm { 90.0f };
-    std::atomic<float> swing { 0.0f };
     std::array<std::atomic<int>, numPatterns> length;
 
 private:
@@ -653,9 +785,8 @@ private:
 
     std::array<std::array<std::array<std::atomic<juce::uint8>, maxSteps>, numPads>, numPatterns> steps;
     std::array<std::array<std::array<std::atomic<juce::int8>, maxSteps>, numPads>, numPatterns> nudges;
-    std::array<std::array<std::atomic<juce::int8>, slotsPerScene>, numScenes> sceneSlots;
-    std::array<SongSegment, maxSegments> songSegs; // audio thread's song timeline
-    std::array<std::atomic<juce::int8>, maxSongSteps> songSteps;
+    std::array<std::array<std::atomic<juce::int8>, slotsPerScene>, numTracks> sceneSlots;
+    std::array<std::array<std::atomic<juce::int8>, maxSongSteps>, numTracks> songSteps;
     std::atomic<float> patternPosSteps { -1.0f };
 
     // piano roll clips: message thread side (guarded) and the audio thread's copy
@@ -676,6 +807,7 @@ private:
 
     double sampleRate = 44100.0;
     double internalPpq = 0.0, blockPpq = 0.0, ppqPerSample = 0.0, lastPpqEnd = -1.0e9;
+    double countInUntil = -1.0e18; // ppq where the count-in ends
     bool running = false, wasInternal = false;
 };
 } // namespace rz

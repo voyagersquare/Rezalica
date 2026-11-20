@@ -270,7 +270,7 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p)
     : processor (p),
       dragMidiButton ("DRAG MIDI", [this] { return processor.exportPatternMidi (processor.getSequencer().currentPattern.load(), true, false); }),
       dragWavButton ("DRAG WAV", [this] { return processor.exportPatternWav (processor.getSequencer().currentPattern.load(), true, false); }),
-      grid (p)
+      grid (p), metronome (p.getSequencer())
 {
     dragMidiButton.setTooltip ("Drag the pattern's steps into your DAW as a MIDI clip (click: show the file)");
     dragWavButton.setTooltip ("Drag the pattern's steps into your DAW as audio (rendered loop, click: show the file)");
@@ -315,6 +315,8 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p)
         s.setClip (to, s.getClip (from)->copy()); // the piano roll part too
         s.setNudgeData (to, s.getNudgeData (from));
         s.length[(size_t) to] = s.length[(size_t) from].load();
+        s.patternSwing[(size_t) to] = s.patternSwing[(size_t) from].load();
+        s.swingGrid[(size_t) to] = s.swingGrid[(size_t) from].load();
         s.currentPattern = to;
         syncControls();
         grid.repaint();
@@ -348,7 +350,23 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p)
     swingSlider.setSliderStyle (juce::Slider::LinearBar);
     swingSlider.setRange (0.0, 100.0, 1.0);
     swingSlider.setTextValueSuffix (" % swing");
-    swingSlider.onValueChange = [this] { processor.getSequencer().swing = (float) swingSlider.getValue() / 100.0f; };
+    swingSlider.setTooltip ("Swing of this pattern");
+    swingSlider.onValueChange = [this]
+    {
+        auto& s = processor.getSequencer();
+        s.patternSwing[(size_t) s.currentPattern.load()] = (float) swingSlider.getValue() / 100.0f;
+    };
+    swingGridBox.addItem ("1/16", 1);
+    swingGridBox.addItem ("1/8", 2);
+    swingGridBox.setTooltip ("Swing grid: shuffle every 2nd 16th or every 2nd 8th note");
+    swingGridBox.setWantsKeyboardFocus (false);
+    swingGridBox.onChange = [this]
+    {
+        auto& s = processor.getSequencer();
+        s.swingGrid[(size_t) s.currentPattern.load()] = swingGridBox.getSelectedId() - 1;
+    };
+    addAndMakeVisible (swingGridBox);
+    addAndMakeVisible (metronome);
 
     for (auto* s : { &bpmSlider, &swingSlider })
     {
@@ -423,7 +441,8 @@ void SequencerPanel::syncControls()
     if (! bpmSlider.isMouseButtonDown())
         bpmSlider.setValue (s.syncToHost.load() ? s.effectiveBpm.load() : s.bpm.load(), juce::dontSendNotification);
     if (! swingSlider.isMouseButtonDown())
-        swingSlider.setValue (s.swing.load() * 100.0, juce::dontSendNotification);
+        swingSlider.setValue (s.patternSwing[(size_t) s.currentPattern.load()].load() * 100.0, juce::dontSendNotification);
+    swingGridBox.setSelectedId (s.swingGrid[(size_t) s.currentPattern.load()].load() + 1, juce::dontSendNotification);
 }
 
 void SequencerPanel::timerCallback()
@@ -471,7 +490,8 @@ void SequencerPanel::resized()
     bpmSlider.setBounds (top.removeFromLeft (120)); top.removeFromLeft (12);
     patternBox.setBounds (top.removeFromLeft (110)); top.removeFromLeft (6);
     lengthBox.setBounds (top.removeFromLeft (100)); top.removeFromLeft (12);
-    swingSlider.setBounds (top.removeFromLeft (110)); top.removeFromLeft (12);
+    swingSlider.setBounds (top.removeFromLeft (110)); top.removeFromLeft (4);
+    swingGridBox.setBounds (top.removeFromLeft (64)); top.removeFromLeft (12);
     copyButton.setBounds (top.removeFromRight (110)); top.removeFromRight (6);
     clearButton.setBounds (top.removeFromRight (70));
 
@@ -486,6 +506,8 @@ void SequencerPanel::resized()
     dragMidiButton.setBounds (bankRow.removeFromLeft (110));
     bankRow.removeFromLeft (6);
     dragWavButton.setBounds (bankRow.removeFromLeft (110));
+    bankRow.removeFromLeft (16);
+    metronome.setBounds (bankRow.removeFromLeft (200));
     followButton.setBounds (bankRow.removeFromRight (80));
     bankRow.removeFromRight (8);
     for (int i = (int) pageButtons.size(); --i >= 0;)

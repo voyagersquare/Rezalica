@@ -1093,6 +1093,254 @@ int main (int argc, char** argv)
                "scenes and song are saved with the project");
     }
 
+    // ---- SCENE tracks, start marker, swing per pattern, metronome / count-in ----
+    {
+        auto tp = std::make_unique<RezalicaProcessor> (false);
+        auto& sp = *tp;
+        sp.prepareToPlay (48000.0, 128);
+        auto& sq = sp.getSequencer();
+        sq.syncToHost = false;
+        sq.bpm = 120.0f;                                   // 1 bar = 2 s
+        sp.chopFileToPads (file, RezalicaProcessor::chop8);
+        sq.length[0] = 16; sq.setStep (0, 0, 0, 127);      // P1: A1 on beat 1 (1 bar)
+        sq.length[1] = 32; sq.setStep (1, 2, 0, 127);      // P2: A3 at its start (2 bars)
+        sq.usedTracks = 2;
+        sq.setSceneSlot (0, 0, 0);                          // track 1: P1 (1 bar)
+        sq.setSceneSlot (1, 0, 1);                          // track 2: P2 (2 bars) -> scene = 2 bars
+        sq.setSongStep (0, 0, 0); sq.setSongStep (0, 0, 1); // step 1: both tracks
+        sq.setSongStep (1, 0, 1);                           // step 2: only track 2
+        check (std::abs (sq.sceneLengthPpq() - 8.0) < 1.0e-9 && std::abs (sq.songTotalPpq() - 16.0) < 1.0e-9,
+               "scene = its longest track (2 bars), song = 2 scenes (8 s)");
+
+        juce::AudioBuffer<float> blk (2, 128);
+        juce::MidiBuffer none;
+        auto run = [&] (double seconds, std::vector<double>& a1, std::vector<double>& a3)
+        {
+            int c1 = sp.getEngine().hitCounter[0].load(), c3 = sp.getEngine().hitCounter[2].load();
+            for (int i = 0; i < (int) (48000 * seconds / 128); ++i)
+            {
+                sp.processBlock (blk, none);
+                const double t = i * 128 / 48000.0;
+                if (sp.getEngine().hitCounter[0].load() != c1) { a1.push_back (t); c1 = sp.getEngine().hitCounter[0].load(); }
+                if (sp.getEngine().hitCounter[2].load() != c3) { a3.push_back (t); c3 = sp.getEngine().hitCounter[2].load(); }
+            }
+        };
+        auto near = [] (const std::vector<double>& v, std::initializer_list<double> want)
+        {
+            if (v.size() != want.size()) return false;
+            size_t k = 0;
+            for (double w : want) if (std::abs (v[k++] - w) > 0.01) return false;
+            return true;
+        };
+        std::vector<double> a1, a3;
+        sq.playSong();
+        run (9.0, a1, a3);
+        std::cout << "       tracks: A1 at"; for (auto t : a1) std::cout << " " << t;
+        std::cout << " | A3 at"; for (auto t : a3) std::cout << " " << t; std::cout << "\n";
+        check (near (a1, { 0.0 }) && near (a3, { 0.0, 4.0 }), "tracks play together; track 1 is off on song step 2");
+
+        // start marker: PLAY SONG starts at song step 2 (4 s into the song)
+        sq.songStartStep = 1;
+        a1.clear(); a3.clear();
+        sq.playSong();
+        run (1.0, a1, a3);
+        check (a1.empty() && near (a3, { 0.0 }) && sq.songPosStep.load() == 1, "PLAY SONG starts at the start marker");
+        sq.stopPlayback();
+        sq.songStartStep = 0;
+        for (int i = 0; i < 20; ++i) sp.processBlock (blk, none);
+
+        // swing per pattern, 1/8 grid: step 3 (2nd 8th) moves later by up to 1 step
+        sq.setStep (0, 1, 2, 127);
+        sq.patternSwing[0] = 0.5f; sq.swingGrid[0] = 1;
+        check (std::abs (sq.swingOffsetSteps (0, 2) - 0.5) < 1.0e-9 && sq.swingOffsetSteps (0, 1) == 0.0 && sq.swingOffsetSteps (1, 2) == 0.0,
+               "swing is per pattern; 1/8 grid shifts the 2nd 8th");
+        {
+            sq.currentPattern = 0;
+            std::vector<double> a2, dummy;
+            int c2 = sp.getEngine().hitCounter[1].load();
+            sq.playPattern();
+            for (int i = 0; i < 48000 / 128; ++i)
+            {
+                sp.processBlock (blk, none);
+                if (sp.getEngine().hitCounter[1].load() != c2) { a2.push_back (i * 128 / 48000.0); c2 = sp.getEngine().hitCounter[1].load(); }
+            }
+            sq.stopPlayback();
+            // step 3 = 0.25 s, + 0.5 step (62.5 ms)
+            check (a2.size() == 1 && std::abs (a2[0] - 0.3125) < 0.005, "swung step lands 62.5 ms late at 120 BPM");
+        }
+        sq.patternSwing[0] = 0.0f; sq.swingGrid[0] = 0;
+        sq.setStep (0, 1, 2, 0);
+        for (int i = 0; i < 20; ++i) sp.processBlock (blk, none);
+
+        // metronome: 4 beats in 2 s; count-in: REC + 1 bar count-in delays the pattern by 2 s
+        {
+            sq.metronome = true;
+            sq.playPattern();
+            int clicks = 0;
+            float peak = 0.0f;
+            for (int i = 0; i < (int) (48000 * 1.99 / 128); ++i)
+            {
+                sp.processBlock (blk, none);
+                clicks += sq.numClicks;
+                peak = juce::jmax (peak, blk.getMagnitude (0, 0, 128));
+            }
+            sq.stopPlayback();
+            sq.metronome = false;
+            std::cout << "       metronome: " << clicks << " clicks, peak " << peak << "\n";
+            check (clicks == 4 && peak > 0.05f, "metronome clicks on every beat");
+            for (int i = 0; i < 20; ++i) sp.processBlock (blk, none);
+
+            sq.recording = true;
+            sq.countInBars = 1;
+            std::vector<double> h1, dummy;
+            int countClicks = 0;
+            int c1 = sp.getEngine().hitCounter[0].load();
+            sq.playPattern();
+            for (int i = 0; i < (int) (48000 * 2.5 / 128); ++i)
+            {
+                sp.processBlock (blk, none);
+                countClicks += sq.numClicks;
+                if (sp.getEngine().hitCounter[0].load() != c1) { h1.push_back (i * 128 / 48000.0); c1 = sp.getEngine().hitCounter[0].load(); }
+            }
+            sq.stopPlayback();
+            sq.recording = false;
+            sq.countInBars = 0;
+            std::cout << "       count-in: clicks " << countClicks << ", first hit at " << (h1.empty() ? -1.0 : h1[0]) << " s\n";
+            check (countClicks == 4 && h1.size() == 1 && std::abs (h1[0] - 2.0) < 0.01, "count-in: 4 clicks, then the pattern starts");
+            for (int i = 0; i < 20; ++i) sp.processBlock (blk, none);
+        }
+
+        // choke group: pad A2 cuts pad A1
+        {
+            sp.getEngine().getPad (0).chokeGroup = 1;
+            sp.getEngine().getPad (1).chokeGroup = 1;
+            sp.getEngine().getPad (0).releaseMs = 2000.0f;
+            sp.triggerPadFromUi (0, 1.0f, true);
+            for (int i = 0; i < 4; ++i) sp.processBlock (blk, none);
+            const bool aBefore = sp.getEngine().isPadSounding (0);
+            sp.triggerPadFromUi (1, 1.0f, true);
+            for (int i = 0; i < 10; ++i) sp.processBlock (blk, none);   // > 4 ms fade
+            check (aBefore && ! sp.getEngine().isPadSounding (0) && sp.getEngine().isPadSounding (1), "choke group: a hit cuts the other pad");
+            sp.getEngine().getPad (1).chokeGroup = 2;
+            sp.triggerPadFromUi (0, 1.0f, true);
+            for (int i = 0; i < 4; ++i) sp.processBlock (blk, none);
+            sp.triggerPadFromUi (1, 1.0f, true);
+            for (int i = 0; i < 10; ++i) sp.processBlock (blk, none);
+            check (sp.getEngine().isPadSounding (0), "different choke groups don't cut each other");
+            sp.stopAll();
+            for (int i = 0; i < 20; ++i) sp.processBlock (blk, none);
+        }
+
+        // master limiter keeps the output under its ceiling
+        {
+            auto& m = sp.masterFxSettings;
+            m.limiterOn = true; m.ceilingDb = -6.0f;
+            m.eqOn = true; m.lowDb = 6.0f;
+            m.compOn = true;
+            sp.getEngine().getPad (0).gainDb = 12.0f;
+            float peak = 0.0f;
+            sp.triggerPadFromUi (0, 1.0f, true);
+            for (int i = 0; i < 200; ++i) { sp.processBlock (blk, none); peak = juce::jmax (peak, blk.getMagnitude (0, 0, 128)); }
+            std::cout << "       limiter peak " << juce::Decibels::gainToDecibels (peak) << " dB\n";
+            check (peak > 0.1f && peak <= juce::Decibels::decibelsToGain (-6.0f) * 1.02f, "master limiter: output stays under the ceiling");
+            sp.getEngine().getPad (0).gainDb = 0.0f;
+        }
+
+        // project state: tracks, start marker, colours, swing, choke, master FX
+        sq.songStartStep = 1;
+        sq.patternColours[1] = 0xff4fa3ff;
+        sq.patternSwing[1] = 0.3f; sq.swingGrid[1] = 1;
+        sq.metronome = true; sq.countInBars = 2;
+        juce::MemoryBlock st;
+        sp.getStateInformation (st);
+        auto r6p = std::make_unique<RezalicaProcessor> (false);
+        auto& r6 = *r6p;
+        r6.setStateInformation (st.getData(), (int) st.getSize());
+        auto& q6 = r6.getSequencer();
+        check (q6.getNumTracks() == 2 && q6.getSceneSlot (1, 0) == 1 && q6.getSongStep (1, 1) == 0 && q6.getSongStep (1, 0) == -1
+                   && q6.songStartStep.load() == 1 && q6.patternColours[1] == 0xff4fa3ff
+                   && std::abs (q6.patternSwing[1].load() - 0.3f) < 1.0e-6f && q6.swingGrid[1].load() == 1
+                   && q6.metronome.load() && q6.countInBars.load() == 2,
+               "tracks, start marker, colours, swing and metronome are saved with the project");
+        check (r6.getEngine().getPad (0).chokeGroup.load() == 1 && r6.masterFxSettings.limiterOn.load()
+                   && std::abs (r6.masterFxSettings.ceilingDb.load() + 6.0f) < 1.0e-6f, "choke groups and master FX are saved");
+
+        // song export with 2 tracks: 8 s + 3 s tail, MIDI has both tracks' hits (A1 once, A3 twice)
+        sq.metronome = true; // must not end up in the export
+        auto wavFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_tracks.wav");
+        auto midFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_tracks.mid");
+        check (sp.exportSongWav (wavFile), "export a 2-track song as WAV");
+        std::unique_ptr<juce::AudioFormatReader> rd (sp.getFormatManager().createReaderFor (wavFile));
+        check (rd != nullptr && (int) rd->lengthInSamples == 48000 * 11, "2-track song WAV = 8 s + 3 s tail (start marker ignored)");
+        rd.reset();
+        check (sp.exportSongMidi (midFile), "export a 2-track song as MIDI");
+        juce::MidiFile mf;
+        juce::FileInputStream in (midFile);
+        int notes = 0;
+        if (in.openedOk() && mf.readFrom (in))
+            for (auto* ev : *mf.getTrack (0))
+                if (ev->message.isNoteOn()) ++notes;
+        check (notes == 3, "2-track song MIDI has 3 hits");
+        wavFile.deleteFile();
+        midFile.deleteFile();
+    }
+
+    // ---- sampling (input) and resampling (output) ----
+    {
+        auto rp = std::make_unique<RezalicaProcessor> (true);   // with an input bus, like the standalone app
+        auto& r = *rp;
+        r.setRateAndBufferSizeDetails (48000.0, 256);
+        r.prepareToPlay (48000.0, 256);
+        check (r.hasAudioInput(), "the standalone processor has an audio input");
+        juce::AudioBuffer<float> blk (2, 256);
+        juce::MidiBuffer none;
+
+        // input: waits for sound, then records until STOP
+        r.selectedPad = 5;
+        check (r.startRecording (rz::AudioRecorder::input, false, true), "REC (input, start on sound)");
+        int k = 0;
+        for (int i = 0; i < 400; ++i)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int n = 0; n < 256; ++n)
+                    blk.setSample (ch, n, i < 20 ? 0.0f : 0.5f * std::sin ((float) (k + n - 20 * 256) * 0.03f)); // 20 blocks of silence first
+            k += 256;
+            r.processBlock (blk, none);
+            if (i == 399) r.getRecorder().stop();
+        }
+        blk.clear();
+        r.processBlock (blk, none);
+        const auto take = r.collectRecording (5);
+        auto s5 = r.getEngine().getPadSample (5);
+        std::cout << "       input take: " << (s5 != nullptr ? s5->buffer.getNumSamples() : -1) << " samples\n";
+        check (take.existsAsFile() && s5 != nullptr && s5->buffer.getNumSamples() > 380 * 256 - 10 && s5->buffer.getNumSamples() <= 380 * 256
+                   && std::abs (s5->buffer.getSample (0, 0)) < 0.05f && s5->buffer.getMagnitude (0, 0, 1000) > 0.1f,
+               "input take starts at the sound and lands on the pad");
+        check (r.getChopSource() == s5, "the take on the selected pad is ready to chop");
+        check (r.undo() && r.getEngine().getPadSample (5) == nullptr, "UNDO removes the take");
+        take.deleteFile();
+
+        // resample exactly one loop of a pattern
+        auto& sq = r.getSequencer();
+        sq.syncToHost = false;
+        sq.bpm = 120.0f;
+        r.chopFileToPads (file, RezalicaProcessor::chop8);
+        sq.currentPattern = 2; sq.length[2] = 16; sq.setStep (2, 0, 0, 127); sq.setStep (2, 1, 8, 127);
+        r.selectedPad = 20;
+        check (r.startRecording (rz::AudioRecorder::output, true, false), "RESAMPLE one loop of the pattern");
+        for (int i = 0; i < 48000 * 3 / 256 && r.getRecorder().getState() != rz::AudioRecorder::finished; ++i)
+        {
+            blk.clear();
+            r.processBlock (blk, none);
+        }
+        const auto re = r.collectRecording (20);
+        auto s20 = r.getEngine().getPadSample (20);
+        check (re.existsAsFile() && s20 != nullptr && s20->buffer.getNumSamples() == 96000 && s20->buffer.getMagnitude (0, 0, 2000) > 0.05f,
+               "resample = exactly 1 bar (2 s), starting on the first hit");
+        sq.stopPlayback();
+        re.deleteFile();
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);
@@ -1225,7 +1473,34 @@ int main (int argc, char** argv)
             rz::ScenePanel scp (q);
             scp.setLookAndFeel (&lnf);
             save (scp, "scenes.png");
+            qs.usedTracks = 2;
+            for (int sl = 0; sl < 4; ++sl) qs.setSceneSlot (1, sl, 5 + sl % 2);
+            qs.patternNames[5] = "Bass"; qs.patternColours[5] = 0xff4fa3ff;
+            for (int st = 0; st < 8; ++st) qs.setSongStep (st, st >= 3 ? 0 : -1, 1);
+            qs.songStartStep = 3;
+            rz::ScenePanel scp2 (q);
+            scp2.setLookAndFeel (&lnf);
+            save (scp2, "scenes-tracks.png");
+            scp2.setLookAndFeel (nullptr);
             scp.setLookAndFeel (nullptr);
+            qs.usedTracks = 1;
+            qs.songStartStep = 0;
+        }
+        {
+            rz::RecorderPanel rp (q);
+            rp.setLookAndFeel (&lnf);
+            save (rp, "sampling.png");
+            rp.setLookAndFeel (nullptr);
+            rz::MasterFxPanel mp (q);
+            mp.setLookAndFeel (&lnf);
+            save (mp, "masterfx.png");
+            mp.setLookAndFeel (nullptr);
+            rz::BrowserPanel bp (q);
+            bp.setLookAndFeel (&lnf);
+            juce::Thread::sleep (300);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+            save (bp, "browser.png");
+            bp.setLookAndFeel (nullptr);
         }
         {
             rz::StretchPanel sp (q);

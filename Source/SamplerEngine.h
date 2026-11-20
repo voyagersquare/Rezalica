@@ -238,12 +238,13 @@ struct PadSettings
     std::atomic<bool> reverse { false };
     std::atomic<bool> gate { false };      // plays only while the pad is held
     std::atomic<bool> mute { false };
+    std::atomic<int> chokeGroup { 0 };     // 1..8: a hit stops the other pads of the same group (0 = none)
     PadFx effects;                         // this pad's own effect chain settings
 
     void resetPlayback()
     {
         gainDb = 0.0f; pan = 0.0f; pitch = 0.0f; attackMs = 1.0f; releaseMs = 30.0f;
-        loop = false; reverse = false; gate = false; mute = false;
+        loop = false; reverse = false; gate = false; mute = false; chokeGroup = 0;
         effects.reset();
     }
 };

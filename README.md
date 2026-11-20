@@ -42,7 +42,8 @@
   - **Delay**: slobodno vrijeme u ms ili sinkronizirano s tempom (1/4, 1/8, 1/8 s točkom, 1/16, triole)
   - **Reverb**: Size, Damp, Width, Mix
 - **Step sekvencer** (gumb `STEP SEQ` otvara zaseban prozor), uglavnom za perkusivne samplove:
-  - 8 patterna, duljina 4–128 koraka (šesnaestinke), swing
+  - 8 patterna, duljina 4–128 koraka (šesnaestinke), **swing posebno za svaki pattern** s rešetkom 1/16 ili 1/8
+  - **CLICK** (metronom, desni klik: glasnoća) i **COUNT-IN** (1 ili 2 takta klikova prije snimanja kad je REC uključen) u step sekvenceru, piano rollu i glavnom prozoru
   - kod patterna duljih od 32 koraka prikaz ide po stranicama (1-32, 33-64, …), a `FOLLOW` prati playhead
   - gumbi A–D prikazuju redove banke koju uređuješ, a pattern svira svih 64 padova
   - `SYNC HOST`: prati transport i tempo DAW-a, a bez toga ima vlastiti BPM i `PLAY`
@@ -112,14 +113,25 @@ Tipkovnica računala svira trenutno odabranu banku:
 
 ## Samostalna aplikacija (Standalone)
 
-- **FILE**: New Project (Ctrl+N), Open Project… (Ctrl+O), Save Project (Ctrl+S), Save Project As… (Ctrl+Shift+S), Export Song as WAV / MIDI…, Audio Settings…
+- **FILE**: New Project (Ctrl+N), Open Project… (Ctrl+O), **Open Recent** (zadnjih 10 projekata), Save Project (Ctrl+S), Save Project As… (Ctrl+Shift+S), Export Song as WAV / MIDI…, Audio Settings…
   - Projekti se spremaju kao `.rezalica` datoteke (zadano u `Dokumenti/Rezalica/Projects`). Samplovi se pamte po putanji.
+  - **Autosave**: svake minute (ako se nešto promijenilo) projekt se automatski sprema. Ako se Rezalica sruši ili nestane struje, pri sljedećem pokretanju nudi vraćanje automatski spremljenog projekta.
+- **SAMPLING**: snimanje na odabrani pad.
+  - **INPUT**: snima ulaz zvučne kartice (mikrofon, line in, gramofon). „Start on sound“ čeka i kreće točno na prvom zvuku. Ulazni uređaj biraš u Audio Settings.
+  - **RESAMPLE**: snima ono što Rezalica svira (padovi, efekti, sekvencer, master). „One loop of the pattern“ pokreće odabrani pattern od početka i snimi točno jedan njegov krug.
+  - Snimka se sprema kao WAV u `Dokumenti/Rezalica/Recordings` i odmah je spremna za rezanje (chop mod ili LAZY CHOP). UNDO vraća stari sample.
+- **BROWSER**: pregled mapa sa samplovima. Klik preslušava, dupli klik (ili Enter / LOAD TO PAD) učitava na odabrani pad, a LOAD + NEXT PAD učita pa prijeđe na sljedeći pad.
+- **MASTER FX**: na cijelom izlazu EQ (low 100 Hz, mid s frekvencijom, high 8 kHz), kompresor (threshold, ratio, attack, release, makeup, prikaz GR) i limiter (ceiling). Sprema se s projektom i ulazi u export.
+- **CHOKE** (pored MUTE na padu): padovi iste choke grupe (1–8) prekidaju jedan drugog, npr. otvoreni i zatvoreni hi-hat.
 - **PLAY / STOP** (i **razmaknica**): sampler svira odabrani pattern (step sekvencer + piano roll) bez obzira na scene i pjesmu. Razmaknica radi u glavnom prozoru, step sekvenceru i piano rollu, a u prozoru SCENE pokreće pjesmu.
 - **SCENE**: slaganje pjesme.
-  - **SCENE** je jedan veliki red od **128 mjesta** (stranice 1–32 / 33–64 / 65–96 / 97–128). Klik na mjesto bira pattern, a desni klik prazni mjesto. Patterni sviraju jedan za drugim.
-  - **Dupli klik** na P1, P2 … otvara **RENAME**: patternu daješ ime (npr. „Intro“, „Refren“). Ime se vidi u sceni, u step sekvenceru i u piano rollu, a sprema se s projektom. Prazno ime vraća P1, P2…
-  - **SONG** je jedan red od 64 koraka (stranice 1–32 / 33–64). Klik na korak svira scenu, a ponovni klik ga prazni. Prazan korak unutar pjesme je takt tišine. Povlačenjem mišem puniš više koraka.
-  - PLAY SONG (ili razmaknica u tom prozoru) svira pjesmu od početka, STOP je zaustavlja, a LOOP je ponavlja. Step sekvencer i piano roll prate pattern koji upravo svira. Glavni PLAY uvijek svira samo pattern.
+  - **SCENE** ima **128 mjesta** (stranice 1–32 / 33–64 / 65–96 / 97–128). Klik na mjesto bira pattern, a desni klik prazni mjesto. Patterni sviraju jedan za drugim.
+  - **Povlačenje** patterna mišem ga premješta (zamjena s mjestom na koje ga spustiš), a **Ctrl + povlačenje** ga kopira.
+  - **Dupli klik** na P1, P2 … otvara **RENAME**: ime patterna (npr. „Intro“, „Refren“) i njegova **boja**. Boja se bira i iz izbornika mjesta. Ime i boja spremaju se s projektom. Prazno ime vraća P1, P2…
+  - **Trake (1–4 tracks)**: svaka traka je svoj red patterna, a sve trake sviraju istovremeno (npr. T1 bubnjevi, T2 bas/melodija). Scena traje koliko njena najduža traka.
+  - **SONG** ima po jedan red od 64 koraka za svaku traku (stranice 1–32 / 33–64). Klik na korak uključi tu traku na tom koraku pjesme, a ponovni klik je isključi. Korak na kojem su sve trake isključene je takt tišine. Povlačenjem mišem puniš više koraka.
+  - **START marker**: klik na ravnalo iznad SONG redova postavlja odakle PLAY SONG kreće, a desni klik ga vraća na početak.
+  - PLAY SONG (ili razmaknica u tom prozoru) svira pjesmu od start markera, STOP je zaustavlja, a LOOP je ponavlja (od početka). Export uvijek uzima cijelu pjesmu. Step sekvencer i piano roll prate pattern koji upravo svira. Glavni PLAY uvijek svira samo pattern.
   - **Timer** pokazuje proteklo vrijeme pjesme (min:s.desetinke), poziciju (takt.doba.šesnaestinka) i ukupnu duljinu.
   - FILE → **Export Song as WAV…** (cijela pjesma + 3 s repa) i **Export Song as MIDI…**
 - **Audio Settings…** (u FILE izborniku): postavke zvuka:
@@ -171,6 +183,10 @@ cmake --build build --config Release --target RezalicaTests
 | `Source/SequencerWindow.*` | Prozor sekvencera |
 | `Source/TimeStretch.h` | Time stretch algoritmi: Beats i Complex (phase vocoder) |
 | `Source/StretchWindow.*` | Prozor Time Stretch / Warp |
+| `Source/SceneWindow.*` | SCENE / SONG prozor (trake, drag & drop, boje, start marker) |
+| `Source/ToolWindows.*` | Prozori SAMPLING, BROWSER i MASTER FX |
+| `Source/MasterFx.h`, `Source/Recorder.h` | Master EQ / kompresor / limiter; snimač ulaza i resamplea |
+| `Source/AppSettings.h` | Nedavni projekti, mapa browsera, autosave |
 
 ## Licenca
 

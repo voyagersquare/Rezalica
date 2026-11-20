@@ -41,7 +41,8 @@ target_sources(Rezalica PRIVATE
     Source/SequencerWindow.cpp
     Source/StretchWindow.cpp
     Source/PianoRollWindow.cpp
-    Source/SceneWindow.cpp)
+    Source/SceneWindow.cpp
+    Source/ToolWindows.cpp)
 
 target_compile_definitions(Rezalica PUBLIC
     JUCE_WEB_BROWSER=0

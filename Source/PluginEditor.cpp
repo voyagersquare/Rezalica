@@ -15,7 +15,7 @@ void styleToggle (juce::TextButton& b, juce::Colour on = rz::colours::accent)
 } // namespace
 
 RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
-    : AudioProcessorEditor (&p), processor (p), waveform (p)
+    : AudioProcessorEditor (&p), processor (p), metronome (p.getSequencer()), waveform (p)
 {
     setLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
@@ -74,12 +74,31 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     // standalone app: project files and audio device settings (in a DAW the DAW does this)
     isStandalone = processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
-    for (auto* b : { &fileButton, &sceneButton, &playButton, &stopPlayButton })
+    for (auto* b : { &fileButton, &sceneButton, &playButton, &stopPlayButton, &samplingButton, &browserButton, &masterFxButton })
     {
         b->setWantsKeyboardFocus (false);
         addChildComponent (*b);
         b->setVisible (isStandalone);
     }
+    addChildComponent (metronome);
+    metronome.setVisible (isStandalone);
+    addChildComponent (autosaveLabel);
+    autosaveLabel.setVisible (isStandalone);
+    autosaveLabel.setColour (juce::Label::textColourId, rz::colours::dim);
+    autosaveLabel.setFont (juce::FontOptions (11.0f));
+    autosaveLabel.setJustificationType (juce::Justification::centredRight);
+    styleToggle (samplingButton, juce::Colour (0xffe0413a));
+    styleToggle (browserButton, rz::colours::accent2);
+    styleToggle (masterFxButton, rz::colours::accent);
+    samplingButton.setTooltip ("Record from the audio input or resample Rezalica's output onto the selected pad");
+    browserButton.setTooltip ("Sample browser: preview files and load them onto pads");
+    masterFxButton.setTooltip ("EQ, compressor and limiter on Rezalica's output");
+    samplingButton.onClick = [this] { toggleToolWindow (samplingWindow, samplingButton, 0); };
+    browserButton.onClick = [this] { toggleToolWindow (browserWindow, browserButton, 1); };
+    masterFxButton.onClick = [this] { toggleToolWindow (masterFxWindow, masterFxButton, 2); };
+    if (isStandalone)
+        if (auto* holder = juce::StandalonePluginHolder::getInstance())
+            holder->getMuteInputValue().setValue (false); // the input is only recorded, never sent to the output
     fileButton.setTooltip ("New / Open / Save / Save As project, Export Song, Audio Settings");
     sceneButton.setTooltip ("Scenes and song: chain patterns into scenes, scenes into a song");
     styleToggle (sceneButton, juce::Colour (0xffffc94a));
@@ -196,6 +215,18 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     setupPadToggle (gateButton, [] (rz::PadSettings& s, bool v) { s.gate = v; }, rz::colours::accent);
     setupPadToggle (muteButton, [] (rz::PadSettings& s, bool v) { s.mute = v; }, juce::Colour (0xffe0413a));
     gateButton.setTooltip ("Play only while the pad / key / MIDI note is held");
+
+    chokeBox.addItem ("No choke", 1);
+    for (int g = 1; g <= 8; ++g)
+        chokeBox.addItem ("Choke " + juce::String (g), g + 1);
+    chokeBox.setWantsKeyboardFocus (false);
+    chokeBox.setTooltip ("Choke group: a hit on this pad stops the other pads of the same group (e.g. open / closed hi-hat)");
+    chokeBox.onChange = [this]
+    {
+        processor.pushUndo ("Choke group");
+        processor.getEngine().getPad (processor.selectedPad.load()).chokeGroup = chokeBox.getSelectedId() - 1;
+    };
+    addAndMakeVisible (chokeBox);
 
     trimButton.setTooltip ("Trim / truncate: keep only the orange part between the markers as a new sample on this pad "
                            "(saved in Documents/Rezalica/Trimmed)");
@@ -385,7 +416,13 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     lastPlayedCounter = processor.getEngine().playedCounter.load();
 
-    setSize (isStandalone ? 1530 : 1240, 748);
+    setSize (isStandalone ? 1530 : 1240, isStandalone ? 784 : 748);
+    if (isStandalone)
+    {
+        lastAutosaveTime = juce::Time::getMillisecondCounterHiRes();
+        juce::Component::SafePointer<RezalicaEditor> safe (this);
+        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->checkCrashRecovery(); });
+    }
     setBank (startBank);
     selectPad (juce::jlimit (0, rz::numPads - 1, processor.selectedPad.load()));
     refreshPadNames();
@@ -398,6 +435,11 @@ RezalicaEditor::~RezalicaEditor()
     stopTimer();
     processor.padsChanged.removeChangeListener (this);
     sequencerWindow = nullptr;
+    samplingWindow = nullptr;
+    browserWindow = nullptr;
+    masterFxWindow = nullptr;
+    if (isStandalone)
+        rz::AppSettings::getRunningFlag().deleteFile(); // a clean exit: nothing to recover next time
     stretchWindow = nullptr;
     sceneWindow = nullptr;
     pianoRollWindow = nullptr;
@@ -482,6 +524,7 @@ void RezalicaEditor::refreshPadControls()
     reverseButton.setToggleState (s.reverse.load(), juce::dontSendNotification);
     gateButton.setToggleState (s.gate.load(), juce::dontSendNotification);
     muteButton.setToggleState (s.mute.load(), juce::dontSendNotification);
+    chokeBox.setSelectedId (juce::jlimit (0, 8, s.chokeGroup.load()) + 1, juce::dontSendNotification);
     warpButton.setToggleState (processor.isPadWarped (pad), juce::dontSendNotification);
     renderButton.setEnabled (processor.isPadWarped (pad));
 }
@@ -571,8 +614,11 @@ void RezalicaEditor::timerCallback()
 
     waveform.updatePlayhead();
 
-    // the selected pad can also be changed from the sequencer window
+    // the selected pad can also be changed from the sequencer window or the browser
     const int sel = processor.selectedPad.load();
+    if (lastSelectedPad >= 0 && sel != lastSelectedPad)
+        selectPad (sel, false);
+    lastSelectedPad = sel;
     if (processor.currentBank.load() != pads[0]->getIndex() / rz::padsPerBank)
         setBank (processor.currentBank.load()); // bank changed from the sequencer window
     for (auto& p : pads)
@@ -586,6 +632,11 @@ void RezalicaEditor::timerCallback()
     if (isStandalone)
     {
         playButton.setToggleState (processor.getSequencer().isPlayingPattern(), juce::dontSendNotification);
+        if (samplingWindow != nullptr) samplingButton.setToggleState (samplingWindow->isVisible(), juce::dontSendNotification);
+        if (browserWindow != nullptr) browserButton.setToggleState (browserWindow->isVisible(), juce::dontSendNotification);
+        if (masterFxWindow != nullptr) masterFxButton.setToggleState (masterFxWindow->isVisible(), juce::dontSendNotification);
+        if (juce::Time::getMillisecondCounterHiRes() - lastAutosaveTime > 60000.0)
+            autosave();
         // keep the space bar working: if nothing in the app has the keyboard focus, take it back
         if (juce::Component::getCurrentlyFocusedComponent() == nullptr && isShowing() && juce::Process::isForegroundProcess()
             && juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
@@ -687,6 +738,21 @@ void RezalicaEditor::showFileMenu()
     juce::PopupMenu m;
     m.addItem (1, "New Project            Ctrl+N");
     m.addItem (2, "Open Project...        Ctrl+O");
+    const auto recent = rz::AppSettings::getRecentProjects();
+    {
+        juce::PopupMenu rm;
+        for (int i = 0; i < recent.size(); ++i)
+            rm.addItem (100 + i, juce::File (recent[i]).getFileNameWithoutExtension() + "    (" + juce::File (recent[i]).getParentDirectory().getFullPathName() + ")",
+                        juce::File (recent[i]).existsAsFile());
+        if (recent.isEmpty())
+            rm.addItem (99, "(no recent projects)", false);
+        else
+        {
+            rm.addSeparator();
+            rm.addItem (99, "Clear the list");
+        }
+        m.addSubMenu ("Open Recent", rm);
+    }
     m.addSeparator();
     m.addItem (3, "Save Project           Ctrl+S");
     m.addItem (4, "Save Project As...     Ctrl+Shift+S");
@@ -701,9 +767,11 @@ void RezalicaEditor::showFileMenu()
         m.addItem (6, "Show project in folder");
     }
     juce::Component::SafePointer<RezalicaEditor> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&fileButton), [safe] (int r)
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&fileButton), [safe, recent] (int r)
     {
         if (safe == nullptr) return;
+        if (r == 99) { rz::AppSettings::clearRecentProjects(); return; }
+        if (r >= 100 && r < 100 + recent.size()) { safe->openProjectFile (juce::File (recent[r - 100])); return; }
         switch (r)
         {
             case 1: safe->newProject(); break;
@@ -795,18 +863,111 @@ void RezalicaEditor::openProject()
                               [this] (const juce::FileChooser& fc)
     {
         auto f = fc.getResult();
-        if (! f.existsAsFile()) return;
-        if (processor.loadProjectFromFile (f))
+        if (f.existsAsFile())
+            openProjectFile (f);
+    });
+}
+
+void RezalicaEditor::openProjectFile (const juce::File& f)
+{
+    if (processor.loadProjectFromFile (f))
+    {
+        rz::AppSettings::addRecentProject (f);
+        updateWindowTitle();
+        selectPad (processor.selectedPad.load());
+        refreshChopControls();
+    }
+    else
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Open project",
+                                                "This file could not be opened as a Rezalica project.");
+    }
+}
+
+void RezalicaEditor::toggleToolWindow (std::unique_ptr<rz::ToolWindow>& w, juce::TextButton& button, int which)
+{
+    if (w == nullptr)
+    {
+        juce::Component* content = nullptr;
+        juce::String name;
+        if (which == 0)
         {
-            updateWindowTitle();
-            selectPad (processor.selectedPad.load());
+            auto* panel = new rz::RecorderPanel (processor);
+            panel->onAudioSettings = [this] { showAudioSettings(); };
+            panel->onRecorded = [this] { selectPad (processor.selectedPad.load(), false); refreshChopControls(); };
+            content = panel;
+            name = "Rezalica - Sampling";
+        }
+        else if (which == 1)
+        {
+            content = new rz::BrowserPanel (processor);
+            name = "Rezalica - Sample Browser";
         }
         else
         {
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Open project",
-                                                    "This file could not be opened as a Rezalica project.");
+            content = new rz::MasterFxPanel (processor);
+            name = "Rezalica - Master FX";
         }
-    });
+        w = std::make_unique<rz::ToolWindow> (name, content, lnf, which == 1);
+        juce::Component::SafePointer<juce::TextButton> safeButton (&button);
+        w->onClose = [safeButton] { if (safeButton != nullptr) safeButton->setToggleState (false, juce::dontSendNotification); };
+    }
+    const bool show = ! w->isVisible();
+    w->setVisible (show);
+    if (show)
+        w->toFront (true);
+    button.setToggleState (show, juce::dontSendNotification);
+}
+
+void RezalicaEditor::autosave()
+{
+    lastAutosaveTime = juce::Time::getMillisecondCounterHiRes();
+    juce::MemoryBlock state;
+    processor.getStateInformation (state);
+    if (state == lastAutosavedState)
+        return; // nothing changed since the last autosave
+    auto file = rz::AppSettings::getAutosaveFile();
+    file.getParentDirectory().createDirectory();
+    if (auto xml = juce::AudioProcessor::getXmlFromBinary (state.getData(), (int) state.getSize()))
+    {
+        xml->setAttribute ("autosaveOf", processor.currentProjectFile.getFullPathName());
+        if (xml->writeTo (file))
+        {
+            lastAutosavedState = state;
+            autosaveLabel.setText ("Autosaved " + juce::Time::getCurrentTime().formatted ("%H:%M"), juce::dontSendNotification);
+        }
+    }
+}
+
+void RezalicaEditor::checkCrashRecovery()
+{
+    auto flag = rz::AppSettings::getRunningFlag();
+    auto autosaved = rz::AppSettings::getAutosaveFile();
+    const bool crashed = flag.existsAsFile() && autosaved.existsAsFile();
+    flag.getParentDirectory().createDirectory();
+    flag.replaceWithText (juce::Time::getCurrentTime().toISO8601 (true)); // removed again on a clean exit
+    if (! crashed)
+        return;
+
+    juce::Component::SafePointer<RezalicaEditor> safe (this);
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Rezalica was not closed properly",
+                                        "Rezalica did not close normally last time (crash or power cut).\n"
+                                        "Restore the automatically saved project from "
+                                            + autosaved.getLastModificationTime().formatted ("%d.%m.%Y %H:%M") + "?",
+                                        "Restore", "No", this,
+                                        juce::ModalCallbackFunction::create ([safe, autosaved] (int ok)
+    {
+        if (safe == nullptr || ok == 0) return;
+        auto xml = juce::XmlDocument::parse (autosaved);
+        const juce::File original (xml != nullptr ? xml->getStringAttribute ("autosaveOf") : juce::String());
+        if (safe->processor.loadProjectFromFile (autosaved))
+        {
+            safe->processor.currentProjectFile = original; // Save goes back to the real project file
+            safe->updateWindowTitle();
+            safe->selectPad (safe->processor.selectedPad.load());
+            safe->refreshChopControls();
+        }
+    }));
 }
 
 void RezalicaEditor::saveProject (bool saveAs)
@@ -815,6 +976,8 @@ void RezalicaEditor::saveProject (bool saveAs)
     {
         if (! processor.saveProjectToFile (processor.currentProjectFile))
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save project", "The project could not be saved.");
+        else
+            rz::AppSettings::addRecentProject (processor.currentProjectFile);
         updateWindowTitle();
         return;
     }
@@ -834,6 +997,8 @@ void RezalicaEditor::saveProject (bool saveAs)
             f = f.withFileExtension ("rezalica");
         if (! processor.saveProjectToFile (f))
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save project", "The project could not be saved.");
+        else
+            rz::AppSettings::addRecentProject (f);
         updateWindowTitle();
     });
 }
@@ -1037,6 +1202,20 @@ void RezalicaEditor::resized()
     }
     b.removeFromTop (10);
 
+    if (isStandalone)
+    {
+        // second row: tools of the standalone app
+        toolRowArea = b.removeFromTop (28);
+        auto t = toolRowArea;
+        t.removeFromLeft (175);
+        samplingButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (4);
+        browserButton.setBounds (t.removeFromLeft (90)); t.removeFromLeft (4);
+        masterFxButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (16);
+        metronome.setBounds (t.removeFromLeft (200));
+        autosaveLabel.setBounds (t.removeFromRight (200));
+        b.removeFromTop (8);
+    }
+
     fxArea = b.removeFromBottom (176);
     b.removeFromBottom (10);
 
@@ -1069,9 +1248,10 @@ void RezalicaEditor::resized()
 
         s.removeFromTop (8);
         auto toggles = s.removeFromTop (30);
-        const int tw = toggles.getWidth() / 4;
+        const int tw = toggles.getWidth() / 5;
         for (auto* t : { &loopButton, &reverseButton, &gateButton, &muteButton })
             t->setBounds (toggles.removeFromLeft (tw).reduced (3, 0));
+        chokeBox.setBounds (toggles.reduced (3, 0));
     }
 
     // ---- pads ----

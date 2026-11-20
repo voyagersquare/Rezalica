@@ -12,8 +12,16 @@ const double delayDivisionBeats[] { 0.0, 1.0, 0.5, 0.75, 0.25, 2.0 / 3.0, 1.0 / 
 }
 
 //==============================================================================
-RezalicaProcessor::RezalicaProcessor()
-    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+juce::AudioProcessor::BusesProperties RezalicaProcessor::makeBuses (bool withInput)
+{
+    auto b = BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true);
+    if (withInput)
+        b = b.withInput ("Input", juce::AudioChannelSet::stereo(), true);
+    return b;
+}
+
+RezalicaProcessor::RezalicaProcessor (bool withInput)
+    : AudioProcessor (makeBuses (withInput)),
       apvts (*this, nullptr, "PARAMS", createLayout())
 {
     formatManager.registerBasicFormats();
@@ -47,7 +55,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout RezalicaProcessor::createLay
 
 bool RezalicaProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+    const auto in = layouts.getMainInputChannelSet();
+    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
+        && (in.isDisabled() || in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo());
 }
 
 void RezalicaProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -56,6 +66,9 @@ void RezalicaProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     engine.prepare (sampleRate);
     sequencer.prepare (sampleRate);
     dryBuffer.setSize (2, juce::jmax (1, samplesPerBlock));
+    masterFx.prepare (sampleRate, juce::jmax (1, samplesPerBlock));
+    clickLength = juce::jmax (1, (int) (sampleRate * 0.035));
+    clickSamplesLeft = 0;
     for (int i = 0; i < rz::numPads; ++i)
     {
         padFx[(size_t) i].prepare (sampleRate, samplesPerBlock);
@@ -147,6 +160,9 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 {
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
+    // sampling: the sound card input arrives in the first channels
+    if (const int inCh = juce::jmin (getTotalNumInputChannels(), buffer.getNumChannels()); inCh > 0)
+        recorder.capture (rz::AudioRecorder::input, buffer.getArrayOfReadPointers(), inCh, numSamples);
     buffer.clear();
 
     if (dryBuffer.getNumSamples() < numSamples)
@@ -193,6 +209,9 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         {
             addTaggedEvent (offset, evOffTag, -1, 0.0f, 0.0f, tag, mode == rz::NoteClip::melodic);
         });
+
+    if (sequencer.justRestarted)
+        recorder.sequencerStarted(); // resampling a pattern starts exactly with it
 
     if (wasRunning && ! sequencer.isRunning())
     {
@@ -369,6 +388,99 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         for (int ch = 0; ch < outChannels; ++ch)
             buffer.addFrom (ch, 0, bus, ch, 0, numSamples, master);
     }
+
+    // ---- master chain, resampling, metronome ----
+    masterFx.process (buffer, numSamples, masterFxSettings);
+    recorder.capture (rz::AudioRecorder::output, buffer.getArrayOfReadPointers(), outChannels, numSamples);
+
+    if (sequencer.numClicks > 0 || clickSamplesLeft > 0)
+    {
+        const float level = juce::jlimit (0.0f, 1.0f, sequencer.metronomeLevel.load()) * 0.5f;
+        int ci = 0;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            while (ci < sequencer.numClicks && sequencer.clicks[(size_t) ci].offset <= i)
+            {
+                clickSamplesLeft = clickLength;
+                clickPhase = 0.0;
+                clickFreq = sequencer.clicks[(size_t) ci].downbeat ? 1760.0 : 1175.0; // A6 on the 1, D6 on the other beats
+                ++ci;
+            }
+            if (clickSamplesLeft <= 0) continue;
+            const float env = (float) clickSamplesLeft / (float) clickLength;
+            const float v = (float) std::sin (clickPhase) * env * env * level;
+            clickPhase += juce::MathConstants<double>::twoPi * clickFreq / currentSampleRate;
+            --clickSamplesLeft;
+            for (int ch = 0; ch < outChannels; ++ch)
+                buffer.addSample (ch, i, v);
+        }
+    }
+}
+
+//==============================================================================
+juce::File RezalicaProcessor::getRecordingFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Recordings");
+}
+
+bool RezalicaProcessor::startRecording (rz::AudioRecorder::Source source, bool patternLength, bool waitForSignal)
+{
+    if (recorder.isBusy()) return false;
+    if (source == rz::AudioRecorder::input && ! hasAudioInput()) return false;
+    const double sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
+    if (source == rz::AudioRecorder::output && patternLength)
+    {
+        // one loop of the selected pattern, from its first step
+        const double bpm = juce::jmax (20.0f, sequencer.syncToHost.load() ? sequencer.effectiveBpm.load() : sequencer.bpm.load());
+        const int len = juce::jlimit (1, rz::Sequencer::maxSteps, sequencer.length[(size_t) sequencer.currentPattern.load()].load());
+        const int samples = (int) std::llround (len * rz::Sequencer::stepLengthPpq * 60.0 / bpm * sr);
+        recorder.start (source, samples, false, true, sr);
+        sequencer.syncToHost = false;
+        sequencer.playPattern();
+        return true;
+    }
+    recorder.start (source, (int) (sr * 600.0), waitForSignal, false, sr); // up to 10 minutes
+    return true;
+}
+
+juce::File RezalicaProcessor::collectRecording (int pad)
+{
+    juce::AudioBuffer<float> take;
+    double sr = 44100.0;
+    if (! recorder.takeRecording (take, sr))
+        return {};
+
+    auto folder = getRecordingFolder();
+    folder.createDirectory();
+    auto file = folder.getNonexistentChildFile ((recorder.getSource() == rz::AudioRecorder::input ? "Sample " : "Resample ")
+                                                + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S"), ".wav", false);
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> os (file.createOutputStream());
+        if (os == nullptr) return {};
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), sr, 2, 24, {}, 0));
+        if (w == nullptr) return {};
+        os.release();
+        if (! w->writeFromAudioSampleBuffer (take, 0, take.getNumSamples()))
+            return {};
+    }
+
+    pad = juce::jlimit (0, rz::numPads - 1, pad);
+    pushUndo ("Record to " + rz::padLabel (pad));
+    const bool ok = pad == selectedPad.load() ? loadFileForChopping (file) : loadFileToPad (pad, file);
+    return ok ? file : juce::File();
+}
+
+void RezalicaProcessor::previewFile (const juce::File& file)
+{
+    engine.stopPreview();
+    if (! file.existsAsFile() || lazyActive.load() || lazyStarting)
+        return;
+    previewData = loadSample (file);
+    if (previewData == nullptr)
+        return;
+    engine.setPreviewSample (previewData);
+    engine.startPreview();
 }
 
 //==============================================================================
@@ -891,7 +1003,7 @@ bool RezalicaProcessor::loadProjectFromFile (const juce::File& file)
 
 void RezalicaProcessor::newProject()
 {
-    auto fresh = std::make_unique<RezalicaProcessor>();
+    auto fresh = std::make_unique<RezalicaProcessor> (false);
     juce::MemoryBlock state;
     fresh->getStateInformation (state);
     stopAll();
@@ -911,7 +1023,6 @@ juce::File RezalicaProcessor::exportPatternMidi (int pattern, bool stepPart, boo
     const double bpm = juce::jmax (20.0f, sequencer.effectiveBpm.load());
     const int len = juce::jlimit (1, rz::Sequencer::maxSteps, sequencer.length[(size_t) pattern].load());
     const double ticksPerStep = 240.0; // 960 per quarter note
-    const double swingSteps = juce::jlimit (0.0f, 1.0f, sequencer.swing.load()) * 0.5;
 
     juce::MidiMessageSequence track;
     track.addEvent (juce::MidiMessage::tempoMetaEvent ((int) std::round (60000000.0 / bpm)), 0.0);
@@ -930,12 +1041,13 @@ juce::File RezalicaProcessor::exportPatternMidi (int pattern, bool stepPart, boo
         for (int pad = 0; pad < rz::numPads; ++pad)
             for (int st = 0; st < len; ++st)
                 if (const int v = sequencer.getStep (pattern, pad, st); v > 0)
-                    addNote (midiBaseNote + pad, st + ((st & 1) != 0 ? swingSteps : 0.0) + sequencer.getNudge (pattern, pad, st) * 0.01, 0.9, v);
+                    addNote (midiBaseNote + pad, st + sequencer.swingOffsetSteps (pattern, st) + sequencer.getNudge (pattern, pad, st) * 0.01, 0.9, v);
 
     if (pianoPart)
         for (auto& n : sequencer.getClip (pattern)->notes)
             if (n.start < (float) len)
-                addNote (n.kind == rz::NoteClip::melodic ? n.row : midiBaseNote + n.row, n.start, n.length, n.velocity);
+                addNote (n.kind == rz::NoteClip::melodic ? n.row : midiBaseNote + n.row,
+                         n.start + (n.start == std::floor (n.start) ? sequencer.swingOffsetSteps (pattern, (long long) n.start) : 0.0), n.length, n.velocity);
 
     track.addEvent (juce::MidiMessage::endOfTrack(), len * ticksPerStep);
     track.updateMatchedPairs();
@@ -965,7 +1077,7 @@ juce::File RezalicaProcessor::exportPatternWav (int pattern, bool stepPart, bool
 
     juce::MemoryBlock state;
     getStateInformation (state);
-    auto offlinePtr = std::make_unique<RezalicaProcessor>(); // on the heap: the processor is large
+    auto offlinePtr = std::make_unique<RezalicaProcessor> (false); // on the heap: the processor is large
     auto& offline = *offlinePtr;
     offline.setStateInformation (state.getData(), (int) state.getSize());
 
@@ -979,6 +1091,9 @@ juce::File RezalicaProcessor::exportPatternWav (int pattern, bool stepPart, bool
         seq.setClip (pattern, empty);
     }
     seq.currentPattern = pattern;
+    seq.metronome = false;
+    seq.recording = false;
+    seq.pianoRecording = false;
     seq.syncToHost = false;
     seq.bpm = (float) bpm;
 
@@ -1034,7 +1149,6 @@ bool RezalicaProcessor::exportSongMidi (const juce::File& file)
 
     const double bpm = juce::jmax (20.0f, sequencer.effectiveBpm.load());
     const double ticksPerStep = 240.0;
-    const double swingSteps = juce::jlimit (0.0f, 1.0f, sequencer.swing.load()) * 0.5;
 
     juce::MidiMessageSequence track;
     track.addEvent (juce::MidiMessage::tempoMetaEvent ((int) std::round (60000000.0 / bpm)), 0.0);
@@ -1058,10 +1172,12 @@ bool RezalicaProcessor::exportSongMidi (const juce::File& file)
         for (int pad = 0; pad < rz::numPads; ++pad)
             for (int stp = 0; stp < len; ++stp)
                 if (const int v = sequencer.getStep (sg.pattern, pad, stp); v > 0)
-                    addNote (midiBaseNote + pad, stp + ((stp & 1) != 0 ? swingSteps : 0.0) + sequencer.getNudge (sg.pattern, pad, stp) * 0.01, 0.9, v);
+                    addNote (midiBaseNote + pad, stp + sequencer.swingOffsetSteps (sg.pattern, stp) + sequencer.getNudge (sg.pattern, pad, stp) * 0.01, 0.9, v);
         for (auto& note : sequencer.getClip (sg.pattern)->notes)
             if (note.start < (float) len)
-                addNote (note.kind == rz::NoteClip::melodic ? note.row : midiBaseNote + note.row, note.start, note.length, note.velocity);
+                addNote (note.kind == rz::NoteClip::melodic ? note.row : midiBaseNote + note.row,
+                         note.start + (note.start == std::floor (note.start) ? sequencer.swingOffsetSteps (sg.pattern, (long long) note.start) : 0.0),
+                         note.length, note.velocity);
     }
 
     track.addEvent (juce::MidiMessage::endOfTrack(), total / rz::Sequencer::stepLengthPpq * ticksPerStep);
@@ -1088,12 +1204,16 @@ bool RezalicaProcessor::exportSongWav (const juce::File& file)
 
     juce::MemoryBlock state;
     getStateInformation (state);
-    auto offlinePtr = std::make_unique<RezalicaProcessor>(); // on the heap: the processor is large
+    auto offlinePtr = std::make_unique<RezalicaProcessor> (false); // on the heap: the processor is large
     auto& offline = *offlinePtr;
     offline.setStateInformation (state.getData(), (int) state.getSize());
     auto& seq = offline.getSequencer();
     seq.songMode = true;
     seq.songLoop = false;
+    seq.songStartStep = 0;     // the whole song
+    seq.metronome = false;
+    seq.recording = false;
+    seq.pianoRecording = false;
     seq.syncToHost = false;
     seq.bpm = (float) bpm;
 
@@ -1507,6 +1627,7 @@ juce::ValueTree RezalicaProcessor::padToValueTree (int pad) const
     t.setProperty ("reverse", ps.reverse.load(), nullptr);
     t.setProperty ("gate", ps.gate.load(), nullptr);
     t.setProperty ("mute", ps.mute.load(), nullptr);
+    t.setProperty ("choke", ps.chokeGroup.load(), nullptr);
     t.appendChild (ps.effects.toValueTree(), nullptr);
     return t;
 }
@@ -1525,6 +1646,7 @@ void RezalicaProcessor::padFromValueTree (int pad, const juce::ValueTree& t)
     ps.reverse = (bool) t.getProperty ("reverse", false);
     ps.gate = (bool) t.getProperty ("gate", false);
     ps.mute = (bool) t.getProperty ("mute", false);
+    ps.chokeGroup = (int) t.getProperty ("choke", 0);
     ps.effects.fromValueTree (t.getChildWithName ("FX"));
 }
 
@@ -1774,6 +1896,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         p.setProperty ("loop", ps.loop.load(), nullptr);
         p.setProperty ("reverse", ps.reverse.load(), nullptr);
         p.setProperty ("gate", ps.gate.load(), nullptr);
+        p.setProperty ("choke", ps.chokeGroup.load(), nullptr);
         p.appendChild (ps.effects.toValueTree(), nullptr);
         if (auto ws = engine.getPadSample (i); ws != nullptr && ws->isWarped())
         {
@@ -1793,7 +1916,9 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
     seq.setProperty ("pattern", sequencer.currentPattern.load(), nullptr);
     seq.setProperty ("sync", sequencer.syncToHost.load(), nullptr);
     seq.setProperty ("bpm", sequencer.bpm.load(), nullptr);
-    seq.setProperty ("swing", sequencer.swing.load(), nullptr);
+    seq.setProperty ("metronome", sequencer.metronome.load(), nullptr);
+    seq.setProperty ("countIn", sequencer.countInBars.load(), nullptr);
+    seq.setProperty ("clickLevel", sequencer.metronomeLevel.load(), nullptr);
     for (int i = 0; i < rz::Sequencer::numPatterns; ++i)
     {
         juce::ValueTree pat ("PATTERN");
@@ -1802,12 +1927,16 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         pat.setProperty ("steps", sequencer.getPatternData (i).toBase64Encoding(), nullptr);
         pat.setProperty ("stride", rz::Sequencer::maxSteps, nullptr);
         pat.setProperty ("name", sequencer.patternNames[(size_t) i], nullptr);
+        pat.setProperty ("colour", (juce::int64) sequencer.patternColours[(size_t) i], nullptr);
+        pat.setProperty ("swing", sequencer.patternSwing[(size_t) i].load(), nullptr);
+        pat.setProperty ("swingGrid", sequencer.swingGrid[(size_t) i].load(), nullptr);
         pat.setProperty ("nudge", sequencer.getNudgeData (i).toBase64Encoding(), nullptr);
         pat.appendChild (sequencer.getClip (i)->toValueTree(), nullptr);
         seq.appendChild (pat, nullptr);
     }
     root.appendChild (seq, nullptr);
     root.appendChild (sequencer.songToValueTree(), nullptr);
+    root.appendChild (masterFxSettings.toValueTree(), nullptr);
 
     juce::ValueTree chop ("CHOP");
     chop.setProperty ("mode", chopMode, nullptr);
@@ -1875,6 +2004,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         ps.loop = (bool) p.getProperty ("loop", false);
         ps.reverse = (bool) p.getProperty ("reverse", false);
         ps.gate = (bool) p.getProperty ("gate", false);
+        ps.chokeGroup = (int) p.getProperty ("choke", 0);
         ps.effects.fromValueTree (p.getChildWithName ("FX"));
         ps.mute = (bool) p.getProperty ("mute", false);
 
@@ -1952,7 +2082,10 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         sequencer.currentPattern = juce::jlimit (0, rz::Sequencer::numPatterns - 1, (int) seq.getProperty ("pattern", 0));
         sequencer.syncToHost = (bool) seq.getProperty ("sync", true);
         sequencer.bpm = (float) seq.getProperty ("bpm", 90.0f);
-        sequencer.swing = (float) seq.getProperty ("swing", 0.0f);
+        const float oldSwing = (float) seq.getProperty ("swing", 0.0f); // older projects: one swing for all patterns
+        sequencer.metronome = (bool) seq.getProperty ("metronome", false);
+        sequencer.countInBars = (int) seq.getProperty ("countIn", 0);
+        sequencer.metronomeLevel = (float) seq.getProperty ("clickLevel", 0.5f);
 
         for (auto pat : seq)
         {
@@ -1964,6 +2097,9 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
             mb.fromBase64Encoding (pat.getProperty ("steps").toString());
             sequencer.setPatternData (i, mb, (int) pat.getProperty ("stride", 32));
             sequencer.patternNames[(size_t) i] = pat.getProperty ("name").toString();
+            sequencer.patternColours[(size_t) i] = (juce::uint32) (juce::int64) pat.getProperty ("colour", 0);
+            sequencer.patternSwing[(size_t) i] = (float) pat.getProperty ("swing", oldSwing);
+            sequencer.swingGrid[(size_t) i] = (int) pat.getProperty ("swingGrid", 0);
             juce::MemoryBlock nb;
             nb.fromBase64Encoding (pat.getProperty ("nudge").toString());
             sequencer.setNudgeData (i, nb);
@@ -1975,6 +2111,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
     }
 
     sequencer.songFromValueTree (root.getChildWithName ("SONG"));
+    masterFxSettings.fromValueTree (root.getChildWithName ("MASTERFX"));
 
     auto chop = root.getChildWithName ("CHOP");
     chopSource = nullptr;
