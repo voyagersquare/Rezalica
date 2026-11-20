@@ -50,7 +50,8 @@ private:
     // header
     juce::TextButton loadChopButton { "LOAD SAMPLE" }, lazyButton { "LAZY CHOP" }, seqButton { "STEP SEQ" }, pianoRollButton { "PIANO ROLL" }, stopButton { "STOP ALL" },
                      undoButton { "UNDO" }, redoButton { "REDO" },
-                     fileButton { "FILE" }, sceneButton { "SCENE" }; // FILE / SCENE: standalone app only
+                     fileButton { "FILE" }, sceneButton { "SCENE" },  // FILE / SCENE / PLAY / STOP: standalone app only
+                     playButton { "PLAY" }, stopPlayButton { "STOP" };
     bool isStandalone = false;
     void showFileMenu();
     void showAudioSettings();

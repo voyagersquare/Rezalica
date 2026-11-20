@@ -74,7 +74,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     // standalone app: project files and audio device settings (in a DAW the DAW does this)
     isStandalone = processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
-    for (auto* b : { &fileButton, &sceneButton })
+    for (auto* b : { &fileButton, &sceneButton, &playButton, &stopPlayButton })
     {
         b->setWantsKeyboardFocus (false);
         addChildComponent (*b);
@@ -83,6 +83,16 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     fileButton.setTooltip ("New / Open / Save / Save As project, Export Song, Audio Settings");
     sceneButton.setTooltip ("Scenes and song: chain patterns into scenes, scenes into a song");
     styleToggle (sceneButton, juce::Colour (0xffffc94a));
+    styleToggle (playButton, juce::Colour (0xff6fd36f));
+    playButton.setTooltip ("Play the selected pattern: step sequencer + piano roll (space bar). Independent of scenes / song");
+    stopPlayButton.setTooltip ("Stop (space bar)");
+    playButton.onClick = [this]
+    {
+        auto& s = processor.getSequencer();
+        if (playButton.getToggleState()) s.playPattern(); else s.stopPlayback();
+        grabKeyboardFocus();
+    };
+    stopPlayButton.onClick = [this] { processor.getSequencer().stopPlayback(); grabKeyboardFocus(); };
     fileButton.onClick = [this] { showFileMenu(); };
     sceneButton.onClick = [this] { toggleSceneWindow(); };
     undoButton.onClick = [this] { if (processor.undo()) selectPad (processor.selectedPad.load()); };
@@ -375,7 +385,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     lastPlayedCounter = processor.getEngine().playedCounter.load();
 
-    setSize (isStandalone ? 1390 : 1240, 748);
+    setSize (isStandalone ? 1530 : 1240, 748);
     setBank (startBank);
     selectPad (juce::jlimit (0, rz::numPads - 1, processor.selectedPad.load()));
     refreshPadNames();
@@ -572,6 +582,15 @@ void RezalicaEditor::timerCallback()
         seqButton.setToggleState (sequencerWindow->isVisible(), juce::dontSendNotification);
 
     warpButton.setButtonText (processor.isWarpBusy() ? "WARP..." : "WARP");
+
+    if (isStandalone)
+    {
+        playButton.setToggleState (processor.getSequencer().isPlayingPattern(), juce::dontSendNotification);
+        // keep the space bar working: if nothing in the app has the keyboard focus, take it back
+        if (juce::Component::getCurrentlyFocusedComponent() == nullptr && isShowing() && juce::Process::isForegroundProcess()
+            && juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
+            grabKeyboardFocus();
+    }
     undoButton.setEnabled (processor.canUndo());
     redoButton.setEnabled (processor.canRedo());
     undoButton.setTooltip (processor.canUndo() ? "Undo: " + processor.getUndoName() + "  (Ctrl+Z)" : "Nothing to undo");
@@ -902,8 +921,8 @@ bool RezalicaEditor::keyPressed (const juce::KeyPress& key)
 
     if (key == juce::KeyPress::spaceKey)
     {
-        auto& seq = processor.getSequencer();
-        seq.internalPlay = ! seq.internalPlay.load();
+        // the sampler's PLAY / STOP: the selected pattern, whatever the scenes / song contain
+        processor.getSequencer().togglePatternPlay();
         return true;
     }
     if (key == juce::KeyPress::escapeKey)
@@ -992,7 +1011,11 @@ void RezalicaEditor::resized()
             fileButton.setBounds (fr.removeFromLeft (60));
             fr.removeFromLeft (4);
             sceneButton.setBounds (fr.removeFromLeft (70));
-            h.removeFromLeft (60 + 4 + 70 + 12);
+            fr.removeFromLeft (12);
+            playButton.setBounds (fr.removeFromLeft (64));
+            fr.removeFromLeft (4);
+            stopPlayButton.setBounds (fr.removeFromLeft (64));
+            h.removeFromLeft (60 + 4 + 70 + 12 + 64 + 4 + 64 + 12);
         }
         masterKnob.setBounds (h.removeFromRight (130).withSizeKeepingCentre (130, 44));
         h.removeFromRight (10);

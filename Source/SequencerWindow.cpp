@@ -287,7 +287,11 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p)
     recButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffe0413a));
     syncButton.setColour (juce::TextButton::buttonOnColourId, colours::accent2);
 
-    playButton.onClick = [this] { processor.getSequencer().internalPlay = playButton.getToggleState(); };
+    playButton.onClick = [this]
+    {
+        auto& s = processor.getSequencer();
+        if (playButton.getToggleState()) s.playPattern(); else s.stopPlayback();
+    };
     recButton.onClick  = [this] { processor.getSequencer().recording = recButton.getToggleState(); };
     syncButton.onClick = [this] { processor.getSequencer().syncToHost = syncButton.getToggleState(); };
 
@@ -389,6 +393,7 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p)
     addAndMakeVisible (grid);
 
     syncControls();
+    setWantsKeyboardFocus (true);
     setSize (1120, 660);
     startTimerHz (30);
 }
@@ -401,7 +406,7 @@ SequencerPanel::~SequencerPanel()
 void SequencerPanel::syncControls()
 {
     auto& s = processor.getSequencer();
-    playButton.setToggleState (s.internalPlay.load(), juce::dontSendNotification);
+    playButton.setToggleState (s.isPlayingPattern(), juce::dontSendNotification);
     recButton.setToggleState (s.recording.load(), juce::dontSendNotification);
     syncButton.setToggleState (s.syncToHost.load(), juce::dontSendNotification);
     patternBox.setSelectedId (s.currentPattern.load() + 1, juce::dontSendNotification);
@@ -434,6 +439,14 @@ void SequencerPanel::timerCallback()
     syncControls();
     grid.repaint();
 }
+
+bool SequencerPanel::keyPressed (const juce::KeyPress& k)
+{
+    if (k == juce::KeyPress::spaceKey) { processor.getSequencer().togglePatternPlay(); return true; }
+    return false;
+}
+
+void SequencerPanel::mouseDown (const juce::MouseEvent&) { grabKeyboardFocus(); }
 
 void SequencerPanel::paint (juce::Graphics& g)
 {

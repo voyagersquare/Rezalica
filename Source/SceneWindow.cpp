@@ -209,31 +209,20 @@ ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), scenes (p), song 
     };
     toggle (playButton, colours::accent);
     toggle (loopButton, colours::accent2);
-    toggle (songModeButton, juce::Colour (0xffffc94a));
     stopButton.setWantsKeyboardFocus (false);
     addAndMakeVisible (stopButton);
 
-    playButton.setTooltip ("Play the song from the start (switches SONG MODE on)");
-    songModeButton.setTooltip ("On: PLAY follows the song (scenes). Off: the selected pattern loops as before");
+    playButton.setTooltip ("Play the song from the start (space bar in this window). The sampler's PLAY plays just the selected pattern");
     loopButton.setTooltip ("Start the song again when it ends");
 
     playButton.onClick = [this]
     {
         auto& s = processor.getSequencer();
-        if (playButton.getToggleState())
-        {
-            s.songMode = true;
-            s.restartRequested = true; // from the beginning of the song
-            s.internalPlay = true;
-        }
-        else
-        {
-            s.internalPlay = false;
-        }
+        if (playButton.getToggleState()) s.playSong(); // from the beginning of the song
+        else                             s.stopPlayback();
     };
-    stopButton.onClick = [this] { processor.getSequencer().internalPlay = false; processor.stopAll(); };
+    stopButton.onClick = [this] { processor.getSequencer().stopPlayback(); processor.stopAll(); };
     loopButton.onClick = [this] { processor.getSequencer().songLoop = loopButton.getToggleState(); };
-    songModeButton.onClick = [this] { processor.getSequencer().songMode = songModeButton.getToggleState(); };
 
     for (auto* b : { &page1, &page2 })
     {
@@ -281,9 +270,12 @@ ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), scenes (p), song 
 
     addAndMakeVisible (scenes);
     addAndMakeVisible (song);
+    songTimer.setTooltip ("Song time  |  bar . beat . 16th");
+    addAndMakeVisible (songTimer);
     setSize (1180, 700);
+    setWantsKeyboardFocus (true);
     timerCallback(); // show tempo, length and position right away
-    startTimerHz (15);
+    startTimerHz (20);
 }
 
 ScenePanel::~ScenePanel()
@@ -294,9 +286,8 @@ ScenePanel::~ScenePanel()
 void ScenePanel::timerCallback()
 {
     auto& s = processor.getSequencer();
-    playButton.setToggleState (s.songMode.load() && s.internalPlay.load(), juce::dontSendNotification);
+    playButton.setToggleState (s.isPlayingSong(), juce::dontSendNotification);
     loopButton.setToggleState (s.songLoop.load(), juce::dontSendNotification);
-    songModeButton.setToggleState (s.songMode.load(), juce::dontSendNotification);
     if (! bpmSlider.isMouseButtonDown())
         bpmSlider.setValue (s.syncToHost.load() ? s.effectiveBpm.load() : s.bpm.load(), juce::dontSendNotification);
 
@@ -308,6 +299,22 @@ void ScenePanel::timerCallback()
     const int steps = s.songLengthSteps();
     lengthLabel.setText ("Song: " + juce::String (steps) + " steps  |  " + juce::String (total / 4.0, 0) + " bars  |  "
                          + timeString (total * 60.0 / bpm), juce::dontSendNotification);
+
+    // song clock
+    {
+        const float pos = s.songPosPpq.load();
+        const bool on = s.isPlayingSong() && pos >= 0.0f;
+        const double q = on ? (double) pos : 0.0;
+        const double secs = q * 60.0 / bpm;
+        const int tenths = (int) std::floor (secs * 10.0);
+        songTimer.time = juce::String (tenths / 600).paddedLeft ('0', 2) + ":" + juce::String ((tenths / 10) % 60).paddedLeft ('0', 2)
+                       + "." + juce::String (tenths % 10);
+        const int sixteenths = (int) std::floor (q * 4.0 + 1.0e-6);
+        songTimer.bars = juce::String (sixteenths / 16 + 1) + "." + juce::String ((sixteenths / 4) % 4 + 1) + "." + juce::String (sixteenths % 4 + 1);
+        songTimer.total = timeString (total * 60.0 / bpm) + "  (" + juce::String (total / 4.0, 0) + " bars)";
+        songTimer.running = on;
+        songTimer.repaint();
+    }
 
     const int ps = s.songPosStep.load();
     if (s.songMode.load() && s.isRunning() && ps >= 0)
@@ -327,12 +334,23 @@ void ScenePanel::timerCallback()
     }
     else
     {
-        positionLabel.setText (s.songMode.load() ? "SONG MODE (stopped)" : "Pattern mode: the selected pattern loops", juce::dontSendNotification);
+        positionLabel.setText (s.isPlayingPattern() ? "Playing the selected pattern (sampler PLAY)"
+                               : "Stopped  -  PLAY SONG or space bar plays the song", juce::dontSendNotification);
     }
 
     scenes.repaint();
     song.repaint();
 }
+
+bool ScenePanel::keyPressed (const juce::KeyPress& k)
+{
+    if (k != juce::KeyPress::spaceKey) return false;
+    auto& s = processor.getSequencer();
+    if (s.isPlayingSong()) s.stopPlayback(); else s.playSong(); // space in the SCENE window: the song
+    return true;
+}
+
+void ScenePanel::mouseDown (const juce::MouseEvent&) { grabKeyboardFocus(); }
 
 void ScenePanel::paint (juce::Graphics& g)
 {
@@ -342,13 +360,15 @@ void ScenePanel::paint (juce::Graphics& g)
 void ScenePanel::resized()
 {
     auto b = getLocalBounds().reduced (10);
-    auto top = b.removeFromTop (32);
+    auto top = b.removeFromTop (40);
     playButton.setBounds (top.removeFromLeft (110)); top.removeFromLeft (6);
     stopButton.setBounds (top.removeFromLeft (70)); top.removeFromLeft (6);
     loopButton.setBounds (top.removeFromLeft (70)); top.removeFromLeft (6);
-    songModeButton.setBounds (top.removeFromLeft (110)); top.removeFromLeft (12);
+    top.removeFromLeft (6);
     bpmSlider.setBounds (top.removeFromLeft (120)); top.removeFromLeft (12);
-    lengthLabel.setBounds (top.removeFromRight (330));
+    songTimer.setBounds (top.removeFromRight (270).withSizeKeepingCentre (270, 40));
+    top.removeFromRight (10);
+    lengthLabel.setBounds (top.removeFromRight (300));
     positionLabel.setBounds (top);
 
     b.removeFromTop (8);

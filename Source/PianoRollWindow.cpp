@@ -738,7 +738,7 @@ bool PianoRollEditor::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress::spaceKey)
     {
         auto& seq = processor.getSequencer();
-        seq.internalPlay = ! seq.internalPlay.load();
+        seq.togglePatternPlay();
         return true;
     }
     return false;
@@ -989,7 +989,11 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
     toggle (playButton, colours::accent);
     toggle (recButton, juce::Colour (0xffe0413a));
     toggle (syncButton, colours::accent2);
-    playButton.onClick = [this] { processor.getSequencer().internalPlay = playButton.getToggleState(); };
+    playButton.onClick = [this]
+    {
+        auto& s = processor.getSequencer();
+        if (playButton.getToggleState()) s.playPattern(); else s.stopPlayback();
+    };
     recButton.onClick = [this] { processor.getSequencer().pianoRecording = recButton.getToggleState(); };
     syncButton.onClick = [this] { processor.getSequencer().syncToHost = syncButton.getToggleState(); };
     recButton.setTooltip ("Record pads (drums) or MIDI keys (melodic) into the piano roll while it plays");
@@ -1127,7 +1131,7 @@ void PianoRollPanel::fillPadBox()
 void PianoRollPanel::syncControls()
 {
     auto& s = processor.getSequencer();
-    playButton.setToggleState (s.internalPlay.load(), juce::dontSendNotification);
+    playButton.setToggleState (s.isPlayingPattern(), juce::dontSendNotification);
     recButton.setToggleState (s.pianoRecording.load(), juce::dontSendNotification);
     syncButton.setToggleState (s.syncToHost.load(), juce::dontSendNotification);
     patternBox.setSelectedId (s.currentPattern.load() + 1, juce::dontSendNotification);

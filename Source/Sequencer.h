@@ -354,7 +354,7 @@ public:
             }
         };
 
-        if (songMode.load())
+        if (songMode.load() && songLengthSteps() > 0)  // an empty song plays the selected pattern
         {
             // SONG: the song steps play their scenes, the scenes play their patterns one after another
             std::array<SongSegment, maxSegments> segs;
@@ -370,9 +370,11 @@ public:
                 songPosStep = -1;
                 songPosSlot = -1;
                 patternPosSteps = -1.0f;
+                songPosPpq = -1.0f;
             }
             else
             {
+                songPosPpq = (float) (loopSong ? std::fmod (ppqStart, total) : ppqStart); // for the SCENE timer
                 const long long c0 = loopSong ? (long long) std::floor (ppqStart / total) : 0;
                 const long long c1 = loopSong ? (long long) std::floor ((ppqEnd - 1.0e-9) / total) : 0;
                 for (long long c = c0; c <= c1; ++c)
@@ -401,6 +403,7 @@ public:
             const double s = ppqStart / stepLengthPpq;
             patternPosSteps = (float) std::fmod (std::fmod (s, (double) len) + len, (double) len);
             songPosStep = -1;
+            songPosPpq = -1.0f;
             renderRange (pattern, 0.0, true, ppqStart, ppqEnd);
         }
 
@@ -579,7 +582,19 @@ public:
 
     std::atomic<bool> songMode { false }, songLoop { false };
     std::atomic<bool> restartRequested { false }; // internal clock back to the start
+
+    // ---- transport (message thread) ----
+    /** PLAY of the sampler: the selected pattern (step sequencer + piano roll) loops, independent of the song. */
+    void playPattern() { songMode = false; restartRequested = true; internalPlay = true; }
+    /** PLAY SONG of the SCENE window. */
+    void playSong() { songMode = true; restartRequested = true; internalPlay = true; }
+    void stopPlayback() { internalPlay = false; }
+    /** Space bar / PLAY button toggle for the sampler. */
+    void togglePatternPlay() { if (internalPlay.load()) stopPlayback(); else playPattern(); }
+    bool isPlayingSong() const { return internalPlay.load() && songMode.load() && songLengthSteps() > 0; }
+    bool isPlayingPattern() const { return internalPlay.load() && ! isPlayingSong(); }
     std::atomic<int> songPosStep { -1 }, songPosSlot { -1 };
+    std::atomic<float> songPosPpq { -1.0f };   // position in the song (quarter notes), -1 when the song isn't playing
 
     std::atomic<int> currentPattern { 0 };
     std::atomic<int> currentStep { -1 };

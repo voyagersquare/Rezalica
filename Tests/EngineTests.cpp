@@ -1025,6 +1025,47 @@ int main (int argc, char** argv)
         check (loopHits == 3, "LOOP starts the song again");
         sq.songLoop = false;
 
+        // song timer: position in the song while it plays
+        sq.playSong();
+        for (int i = 0; i < 48000 * 3 / 128; ++i) sp.processBlock (blk, none);   // 3 s
+        const float posQ = sq.songPosPpq.load();
+        std::cout << "       song timer after 3 s: " << posQ << " quarter notes\n";
+        check (std::abs (posQ - 6.0f) < 0.05f && sq.isPlayingSong(), "song timer follows the song (3 s = 6 beats at 120 BPM)");
+
+        // the sampler's PLAY plays the selected pattern, even though a song exists and was playing
+        sq.currentPattern = 1;   // P2: A3 every half bar
+        sq.playPattern();
+        a3 = sp.getEngine().hitCounter[2].load(); a1 = sp.getEngine().hitCounter[0].load();
+        {
+            int last = a3;
+            std::cout << "       sampler PLAY A3 times:";
+            for (int i = 0; i < (int) (48000 * 2.9 / 128); ++i)   // 2.9 s: P2 (1 s long) starts 3 times
+            {
+                sp.processBlock (blk, none);
+                if (sp.getEngine().hitCounter[2].load() != last) { last = sp.getEngine().hitCounter[2].load(); std::cout << " " << i * 128 / 48000.0; }
+            }
+            std::cout << "\n";
+        }
+        std::cout << "       sampler PLAY: A3 hits " << sp.getEngine().hitCounter[2].load() - a3 << ", A1 hits " << sp.getEngine().hitCounter[0].load() - a1
+                  << ", playing pattern " << sq.isPlayingPattern() << "\n";
+        check (sp.getEngine().hitCounter[2].load() - a3 == 3 && sp.getEngine().hitCounter[0].load() == a1 && sq.isPlayingPattern(),
+               "sampler PLAY loops the selected pattern, independent of the song");
+        sq.stopPlayback();
+        for (int i = 0; i < 20; ++i) sp.processBlock (blk, none);
+
+        // an empty song never makes the sampler silent
+        for (int st = 0; st < rz::Sequencer::maxSongSteps; ++st) sq.setSongStep (st, -1);
+        sq.songMode = true;
+        sq.restartRequested = true;
+        sq.internalPlay = true;
+        a3 = sp.getEngine().hitCounter[2].load();
+        for (int i = 0; i < 48000 * 2 / 128; ++i) sp.processBlock (blk, none);
+        sq.stopPlayback();
+        check (sp.getEngine().hitCounter[2].load() - a3 == 2, "with an empty song the selected pattern plays");
+        sq.setSongStep (0, 0); sq.setSongStep (1, 1); sq.setSongStep (2, 0);
+        sq.currentPattern = 0;
+        for (int i = 0; i < 20; ++i) sp.processBlock (blk, none);
+
         // export
         auto wavFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_song.wav");
         auto midFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_song.mid");
