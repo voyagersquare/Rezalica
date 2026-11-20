@@ -1023,6 +1023,109 @@ juce::File RezalicaProcessor::exportPatternWav (int pattern, bool stepPart, bool
     return file;
 }
 
+bool RezalicaProcessor::exportSongMidi (const juce::File& file)
+{
+    std::array<rz::Sequencer::SongSegment, rz::Sequencer::maxSegments> segs;
+    double total = 0.0;
+    const int n = sequencer.buildSong (segs, total);
+    if (n == 0)
+        return false;
+
+    const double bpm = juce::jmax (20.0f, sequencer.effectiveBpm.load());
+    const double ticksPerStep = 240.0;
+    const double swingSteps = juce::jlimit (0.0f, 1.0f, sequencer.swing.load()) * 0.5;
+
+    juce::MidiMessageSequence track;
+    track.addEvent (juce::MidiMessage::tempoMetaEvent ((int) std::round (60000000.0 / bpm)), 0.0);
+    track.addEvent (juce::MidiMessage::timeSignatureMetaEvent (4, 4), 0.0);
+
+    for (int si = 0; si < n; ++si)
+    {
+        const auto& sg = segs[(size_t) si];
+        if (sg.pattern < 0) continue;
+        const double segSteps = sg.start / rz::Sequencer::stepLengthPpq;
+        const int len = juce::jlimit (1, rz::Sequencer::maxSteps, sequencer.length[(size_t) sg.pattern].load());
+        auto addNote = [&] (int note, double startSteps, double lengthSteps, int velocity)
+        {
+            if (note < 0 || note > 127) return;
+            const double st = juce::jlimit (0.0, (double) len, startSteps);
+            const double on = (segSteps + st) * ticksPerStep;
+            const double off = (segSteps + juce::jmin ((double) len, st + lengthSteps)) * ticksPerStep;
+            track.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) juce::jlimit (1, 127, velocity)), on);
+            track.addEvent (juce::MidiMessage::noteOff (1, note), juce::jmax (on + 1.0, off));
+        };
+        for (int pad = 0; pad < rz::numPads; ++pad)
+            for (int stp = 0; stp < len; ++stp)
+                if (const int v = sequencer.getStep (sg.pattern, pad, stp); v > 0)
+                    addNote (midiBaseNote + pad, stp + ((stp & 1) != 0 ? swingSteps : 0.0) + sequencer.getNudge (sg.pattern, pad, stp) * 0.01, 0.9, v);
+        for (auto& note : sequencer.getClip (sg.pattern)->notes)
+            if (note.start < (float) len)
+                addNote (note.kind == rz::NoteClip::melodic ? note.row : midiBaseNote + note.row, note.start, note.length, note.velocity);
+    }
+
+    track.addEvent (juce::MidiMessage::endOfTrack(), total / rz::Sequencer::stepLengthPpq * ticksPerStep);
+    track.updateMatchedPairs();
+    juce::MidiFile mf;
+    mf.setTicksPerQuarterNote (960);
+    mf.addTrack (track);
+    file.deleteFile();
+    juce::FileOutputStream out (file);
+    return out.openedOk() && mf.writeTo (out);
+}
+
+bool RezalicaProcessor::exportSongWav (const juce::File& file)
+{
+    std::array<rz::Sequencer::SongSegment, rz::Sequencer::maxSegments> segs;
+    double total = 0.0;
+    if (sequencer.buildSong (segs, total) == 0)
+        return false;
+
+    const double bpm = juce::jmax (20.0f, sequencer.effectiveBpm.load());
+    const double sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
+    const int songSamples = (int) std::llround (total * 60.0 / bpm * sr);
+    const int tailSamples = (int) (sr * 3.0); // let reverb / delay ring out at the end
+
+    juce::MemoryBlock state;
+    getStateInformation (state);
+    RezalicaProcessor offline;
+    offline.setStateInformation (state.getData(), (int) state.getSize());
+    auto& seq = offline.getSequencer();
+    seq.songMode = true;
+    seq.songLoop = false;
+    seq.syncToHost = false;
+    seq.bpm = (float) bpm;
+
+    const int block = 512;
+    offline.setRateAndBufferSizeDetails (sr, block);
+    offline.prepareToPlay (sr, block);
+    seq.internalPlay = true;
+
+    const int totalSamples = songSamples + tailSamples;
+    juce::AudioBuffer<float> out (2, totalSamples);
+    juce::AudioBuffer<float> buf (2, block);
+    juce::MidiBuffer noMidi;
+    for (int pos = 0; pos < totalSamples; pos += block)
+    {
+        const int n = juce::jmin (block, totalSamples - pos);
+        juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+        offline.processBlock (sub, noMidi);
+        noMidi.clear();
+        for (int ch = 0; ch < 2; ++ch)
+            out.copyFrom (ch, pos, sub, ch, 0, n);
+    }
+
+    file.deleteFile();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::OutputStream> os (file.createOutputStream());
+    if (os == nullptr)
+        return false;
+    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), sr, 2, 24, {}, 0));
+    if (w == nullptr)
+        return false;
+    os.release();
+    return w->writeFromAudioSampleBuffer (out, 0, totalSamples);
+}
+
 juce::File RezalicaProcessor::getRenderFolder()
 {
     return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Rendered");
@@ -1701,6 +1804,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         seq.appendChild (pat, nullptr);
     }
     root.appendChild (seq, nullptr);
+    root.appendChild (sequencer.songToValueTree(), nullptr);
 
     juce::ValueTree chop ("CHOP");
     chop.setProperty ("mode", chopMode, nullptr);
@@ -1865,6 +1969,8 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
                 sequencer.setClip (i, new rz::NoteClip());
         }
     }
+
+    sequencer.songFromValueTree (root.getChildWithName ("SONG"));
 
     auto chop = root.getChildWithName ("CHOP");
     chopSource = nullptr;

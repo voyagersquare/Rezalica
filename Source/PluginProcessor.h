@@ -109,6 +109,10 @@ public:
     juce::File exportPatternMidi (int pattern, bool stepPart, bool pianoPart);
     juce::File exportPatternWav (int pattern, bool stepPart, bool pianoPart);
 
+    // ---- export the whole song (SCENE window) ----
+    bool exportSongWav (const juce::File& file);
+    bool exportSongMidi (const juce::File& file);
+
     // manual chop markers (switch the chop mode to Manual)
     void addSlicePoint (float normalisedPosition);
     void removeSlicePoint (int index);

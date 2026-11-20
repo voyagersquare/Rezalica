@@ -1,6 +1,7 @@
 // Headless smoke test: chops a generated sample, plays it via MIDI and the sequencer, checks output.
 #include "../Source/PluginProcessor.h"
 #include "../Source/PluginEditor.h"
+#include "../Source/SceneWindow.h"
 #include "../Source/TimeStretch.h"
 #include <iostream>
 
@@ -958,6 +959,99 @@ int main (int argc, char** argv)
         check (rz::NoteClip().mode == rz::NoteClip::melodic, "piano roll opens in melodic mode");
     }
 
+    // ---- SCENES / SONG ----
+    {
+        RezalicaProcessor sp;
+        sp.prepareToPlay (48000.0, 512);
+        auto& sq = sp.getSequencer();
+        sq.syncToHost = false;
+        sq.bpm = 120.0f;                     // 1 bar = 2 s
+        sp.chopFileToPads (file, RezalicaProcessor::chop8);
+        sq.length[0] = 16; sq.setStep (0, 0, 0, 127);   // P1: 1 bar, A1 on beat 1
+        sq.length[1] = 8;  sq.setStep (1, 2, 0, 127);   // P2: half a bar, A3 at its start
+        sq.setSceneSlot (0, 0, 0); sq.setSceneSlot (0, 1, 1);   // SCENE 1 = P1, P2  (3 s)
+        sq.setSceneSlot (1, 0, 1);                             // SCENE 2 = P2      (1 s)
+        sq.setSongStep (0, 0); sq.setSongStep (1, 1); sq.setSongStep (2, 0); // SONG = S1, S2, S1 (7 s)
+
+        std::array<rz::Sequencer::SongSegment, rz::Sequencer::maxSegments> segs;
+        double total = 0.0;
+        const int nSeg = sq.buildSong (segs, total);
+        check (nSeg == 5 && std::abs (total - 14.0) < 1.0e-9, "song timeline: 5 patterns, 14 beats (7 s at 120 BPM)");
+
+        // play the song and note when A1 / A3 are hit
+        std::vector<double> hitsA1, hitsA3;
+        sq.songMode = true;
+        sq.restartRequested = true;
+        sq.internalPlay = true;
+        juce::AudioBuffer<float> blk (2, 128);
+        juce::MidiBuffer none;
+        int a1 = sp.getEngine().hitCounter[0].load(), a3 = sp.getEngine().hitCounter[2].load();
+        bool endedOk = false;
+        for (int i = 0; i < 48000 * 9 / 128; ++i)
+        {
+            sp.processBlock (blk, none);
+            const double t = (i + 1) * 128 / 48000.0;
+            if (sp.getEngine().hitCounter[0].load() != a1) { hitsA1.push_back (t); a1 = sp.getEngine().hitCounter[0].load(); }
+            if (sp.getEngine().hitCounter[2].load() != a3) { hitsA3.push_back (t); a3 = sp.getEngine().hitCounter[2].load(); }
+            if (t > 7.1 && ! sq.internalPlay.load()) endedOk = true;
+        }
+        auto near = [] (const std::vector<double>& v, std::initializer_list<double> want)
+        {
+            if (v.size() != want.size()) return false;
+            size_t k = 0;
+            for (double w : want) if (std::abs (v[k++] - w) > 0.01) return false;
+            return true;
+        };
+        std::cout << "       song: A1 hits at";
+        for (auto t : hitsA1) std::cout << " " << t;
+        std::cout << "  | A3 hits at";
+        for (auto t : hitsA3) std::cout << " " << t;
+        std::cout << "\n";
+        check (near (hitsA1, { 0.0, 4.0 }), "song: P1 plays at 0 s and 4 s (scene 1, scene 1 again)");
+        check (near (hitsA3, { 2.0, 3.0, 6.0 }), "song: P2 plays at 2 s, 3 s (scene 2) and 6 s");
+        check (endedOk, "song stops at its end");
+
+        // loop
+        sq.songLoop = true;
+        sq.restartRequested = true;
+        sq.internalPlay = true;
+        int loopHits = 0; a1 = sp.getEngine().hitCounter[0].load();
+        for (int i = 0; i < 48000 * 8 / 128; ++i)  // 8 s: 0, 4 s and 7 s (= 0 of the second round)
+        {
+            sp.processBlock (blk, none);
+            if (sp.getEngine().hitCounter[0].load() != a1) { ++loopHits; a1 = sp.getEngine().hitCounter[0].load(); }
+        }
+        sq.internalPlay = false;
+        check (loopHits == 3, "LOOP starts the song again");
+        sq.songLoop = false;
+
+        // export
+        auto wavFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_song.wav");
+        auto midFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_song.mid");
+        check (sp.exportSongWav (wavFile), "export song as WAV");
+        std::unique_ptr<juce::AudioFormatReader> r (sp.getFormatManager().createReaderFor (wavFile));
+        check (r != nullptr && (int) r->lengthInSamples == 48000 * 10, "song WAV = 7 s song + 3 s tail");
+        r.reset();
+        check (sp.exportSongMidi (midFile), "export song as MIDI");
+        juce::MidiFile mf;
+        juce::FileInputStream in (midFile);
+        int notes = 0;
+        if (in.openedOk() && mf.readFrom (in))
+            for (auto* ev : *mf.getTrack (0))
+                if (ev->message.isNoteOn()) ++notes;
+        check (notes == 5, "song MIDI has every hit of the song (5)");
+        wavFile.deleteFile();
+        midFile.deleteFile();
+
+        // saved with the project
+        juce::MemoryBlock st;
+        sp.getStateInformation (st);
+        RezalicaProcessor r5;
+        r5.setStateInformation (st.getData(), (int) st.getSize());
+        check (r5.getSequencer().getSongStep (1) == 1 && r5.getSequencer().getSceneSlot (0, 1) == 1 && r5.getSequencer().songLengthSteps() == 3,
+               "scenes and song are saved with the project");
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);
@@ -1079,6 +1173,18 @@ int main (int argc, char** argv)
             wvw.setPad (0);
             save (wvw, "warpview.png");
             wvw.setLookAndFeel (nullptr);
+        }
+        {
+            auto& qs = q.getSequencer();
+            qs.setSceneSlot (0, 0, 0); qs.setSceneSlot (0, 1, 1); qs.setSceneSlot (0, 2, 0); qs.setSceneSlot (0, 3, 2);
+            qs.setSceneSlot (1, 0, 3); qs.setSceneSlot (1, 1, 3);
+            qs.setSceneSlot (2, 0, 4);
+            const int songSc[] { 0, 0, 1, 0, 2, 2, 1, 0 };
+            for (int st = 0; st < 8; ++st) qs.setSongStep (st, songSc[st]);
+            rz::ScenePanel scp (q);
+            scp.setLookAndFeel (&lnf);
+            save (scp, "scenes.png");
+            scp.setLookAndFeel (nullptr);
         }
         {
             rz::StretchPanel sp (q);

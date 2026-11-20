@@ -74,16 +74,17 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     // standalone app: project files and audio device settings (in a DAW the DAW does this)
     isStandalone = processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
-    for (auto* b : { &fileButton, &audioButton })
+    for (auto* b : { &fileButton, &sceneButton })
     {
         b->setWantsKeyboardFocus (false);
         addChildComponent (*b);
         b->setVisible (isStandalone);
     }
-    fileButton.setTooltip ("New / Open / Save / Save As project   (Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S)");
-    audioButton.setTooltip ("Audio settings: driver type (ASIO, Windows Audio, DirectSound), device, sample rate, buffer size, MIDI inputs");
+    fileButton.setTooltip ("New / Open / Save / Save As project, Export Song, Audio Settings");
+    sceneButton.setTooltip ("Scenes and song: chain patterns into scenes, scenes into a song");
+    styleToggle (sceneButton, juce::Colour (0xffffc94a));
     fileButton.onClick = [this] { showFileMenu(); };
-    audioButton.onClick = [this] { showAudioSettings(); };
+    sceneButton.onClick = [this] { toggleSceneWindow(); };
     undoButton.onClick = [this] { if (processor.undo()) selectPad (processor.selectedPad.load()); };
     redoButton.onClick = [this] { if (processor.redo()) selectPad (processor.selectedPad.load()); };
     styleToggle (pianoRollButton, rz::colours::accent2);
@@ -388,6 +389,7 @@ RezalicaEditor::~RezalicaEditor()
     processor.padsChanged.removeChangeListener (this);
     sequencerWindow = nullptr;
     stretchWindow = nullptr;
+    sceneWindow = nullptr;
     pianoRollWindow = nullptr;
     setLookAndFeel (nullptr);
 }
@@ -670,6 +672,9 @@ void RezalicaEditor::showFileMenu()
     m.addItem (3, "Save Project           Ctrl+S");
     m.addItem (4, "Save Project As...     Ctrl+Shift+S");
     m.addSeparator();
+    m.addItem (7, "Export Song as WAV...");
+    m.addItem (8, "Export Song as MIDI...");
+    m.addSeparator();
     m.addItem (5, "Audio Settings...");
     if (processor.currentProjectFile.existsAsFile())
     {
@@ -688,8 +693,54 @@ void RezalicaEditor::showFileMenu()
             case 4: safe->saveProject (true); break;
             case 5: safe->showAudioSettings(); break;
             case 6: safe->processor.currentProjectFile.revealToUser(); break;
+            case 7: safe->exportSong (false); break;
+            case 8: safe->exportSong (true); break;
             default: break;
         }
+    });
+}
+
+void RezalicaEditor::toggleSceneWindow()
+{
+    if (sceneWindow == nullptr)
+    {
+        sceneWindow = std::make_unique<rz::SceneWindow> (processor, lnf);
+        sceneWindow->onClose = [this] { sceneButton.setToggleState (false, juce::dontSendNotification); };
+    }
+    const bool show = ! sceneWindow->isVisible();
+    sceneWindow->setVisible (show);
+    if (show)
+        sceneWindow->toFront (true);
+    sceneButton.setToggleState (show, juce::dontSendNotification);
+}
+
+void RezalicaEditor::exportSong (bool asMidi)
+{
+    if (processor.getSequencer().songLengthSteps() == 0)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Export song",
+                                                "The song is empty. Open SCENE and put scenes on the song steps first.");
+        return;
+    }
+    auto folder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Export");
+    folder.createDirectory();
+    const auto name = processor.currentProjectFile != juce::File() ? processor.currentProjectFile.getFileNameWithoutExtension() : juce::String ("Rezalica Song");
+    const juce::String ext = asMidi ? ".mid" : ".wav";
+    fileChooser = std::make_unique<juce::FileChooser> (asMidi ? "Export the song as MIDI" : "Export the song as WAV",
+                                                       folder.getChildFile (name + ext), asMidi ? "*.mid" : "*.wav");
+    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [this, asMidi, ext] (const juce::FileChooser& fc)
+    {
+        auto f = fc.getResult();
+        if (f == juce::File()) return;
+        if (! f.hasFileExtension (ext.substring (1)))
+            f = f.withFileExtension (ext);
+        const bool ok = asMidi ? processor.exportSongMidi (f) : processor.exportSongWav (f);
+        if (ok)
+            f.revealToUser();
+        else
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Export song", "The song could not be exported.");
     });
 }
 
@@ -940,8 +991,8 @@ void RezalicaEditor::resized()
             auto fr = h.withSizeKeepingCentre (h.getWidth(), 30);
             fileButton.setBounds (fr.removeFromLeft (60));
             fr.removeFromLeft (4);
-            audioButton.setBounds (fr.removeFromLeft (66));
-            h.removeFromLeft (60 + 4 + 66 + 12);
+            sceneButton.setBounds (fr.removeFromLeft (70));
+            h.removeFromLeft (60 + 4 + 70 + 12);
         }
         masterKnob.setBounds (h.removeFromRight (130).withSizeKeepingCentre (130, 44));
         h.removeFromRight (10);

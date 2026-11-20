@@ -112,9 +112,14 @@ Tipkovnica računala svira trenutno odabranu banku:
 
 ## Samostalna aplikacija (Standalone)
 
-- **FILE**: New Project (Ctrl+N), Open Project… (Ctrl+O), Save Project (Ctrl+S), Save Project As… (Ctrl+Shift+S), Audio Settings…
+- **FILE**: New Project (Ctrl+N), Open Project… (Ctrl+O), Save Project (Ctrl+S), Save Project As… (Ctrl+Shift+S), Export Song as WAV / MIDI…, Audio Settings…
   - Projekti se spremaju kao `.rezalica` datoteke (zadano u `Dokumenti/Rezalica/Projects`). Samplovi se pamte po putanji.
-- **AUDIO**: postavke zvuka:
+- **SCENE**: slaganje pjesme.
+  - **Scena** je spremnik za patterne: svaka scena ima do 8 mjesta, a svakom mjestu klikom biraš pattern (npr. Scena 1 = P1, P2, P1, P3). Patterni u sceni sviraju jedan za drugim, a desni klik prazni mjesto.
+  - **Pjesma** se slaže u mreži kao u step sekvenceru: redovi su scene 1–8, stupci koraci pjesme (do 64). Klik stavlja scenu na taj korak pjesme, a ponovni klik je miče. Prazan korak pjesme je takt tišine.
+  - PLAY SONG svira pjesmu od početka, STOP je zaustavlja, LOOP je ponavlja, a SONG MODE bira sviraju li pjesma ili samo odabrani pattern. Step sekvencer i piano roll prate pattern koji upravo svira.
+  - FILE → **Export Song as WAV…** (cijela pjesma + 3 s repa) i **Export Song as MIDI…**
+- **Audio Settings…** (u FILE izborniku): postavke zvuka:
   - vrsta drivera: **ASIO** (ASIO4ALL, FlexASIO i ASIO driveri zvučnih kartica), Windows Audio (i Exclusive / Low Latency), DirectSound
   - izlazni i ulazni uređaj, aktivni kanali, sample rate, buffer size (latencija), probni ton i MIDI ulazi (kontroleri)
 - ASIO podrška ugrađuje se pri automatskoj izradi pomoću službenog Steinberg ASIO SDK-a (ASIO je zaštitni znak tvrtke Steinberg Media Technologies GmbH).

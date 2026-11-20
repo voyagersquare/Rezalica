@@ -8,6 +8,7 @@
 #include "StretchWindow.h"
 #include "PianoRollWindow.h"
 #include "BankControls.h"
+#include "SceneWindow.h"
 
 class RezalicaEditor : public juce::AudioProcessorEditor,
                        private juce::Timer,
@@ -49,7 +50,7 @@ private:
     // header
     juce::TextButton loadChopButton { "LOAD SAMPLE" }, lazyButton { "LAZY CHOP" }, seqButton { "STEP SEQ" }, pianoRollButton { "PIANO ROLL" }, stopButton { "STOP ALL" },
                      undoButton { "UNDO" }, redoButton { "REDO" },
-                     fileButton { "FILE" }, audioButton { "AUDIO" }; // FILE / AUDIO: standalone app only
+                     fileButton { "FILE" }, sceneButton { "SCENE" }; // FILE / SCENE: standalone app only
     bool isStandalone = false;
     void showFileMenu();
     void showAudioSettings();
@@ -57,6 +58,9 @@ private:
     void openProject();
     void saveProject (bool saveAs);
     void updateWindowTitle();
+    void toggleSceneWindow();
+    void exportSong (bool asMidi);
+    std::unique_ptr<rz::SceneWindow> sceneWindow;
     bool lastLazyState = false;
     juce::ComboBox chopModeBox;
     juce::Slider sensitivitySlider;

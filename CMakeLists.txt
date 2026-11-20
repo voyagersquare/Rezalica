@@ -40,7 +40,8 @@ target_sources(Rezalica PRIVATE
     Source/WaveformView.cpp
     Source/SequencerWindow.cpp
     Source/StretchWindow.cpp
-    Source/PianoRollWindow.cpp)
+    Source/PianoRollWindow.cpp
+    Source/SceneWindow.cpp)
 
 target_compile_definitions(Rezalica PUBLIC
     JUCE_WEB_BROWSER=0
