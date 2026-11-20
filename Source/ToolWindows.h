@@ -62,7 +62,9 @@ public:
 private:
     bool dragStarted = false;
     void selectionChanged() override;
-    void fileClicked (const juce::File&, const juce::MouseEvent&) override {}
+    void fileClicked (const juce::File&, const juce::MouseEvent&) override;
+    void showFavoritesMenu();
+    void showItemMenu (const juce::File&);
     void fileDoubleClicked (const juce::File&) override;
     void browserRootChanged (const juce::File&) override {}
     void timerCallback() override;
@@ -77,6 +79,7 @@ private:
     juce::DirectoryContentsList contents { &filter, thread };
     juce::FileListComponent list { contents };
     juce::ComboBox places;
+    juce::TextButton favoritesButton { "FAVORITES" };
     juce::TextButton upButton { "UP" }, folderButton { "FOLDER..." }, loadButton { "LOAD TO PAD" }, loadNextButton { "LOAD + NEXT PAD" },
                      stopButton { "STOP" };
     juce::ToggleButton autoPreview { "Preview on click" };

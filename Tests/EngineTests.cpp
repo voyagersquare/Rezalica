@@ -2,6 +2,7 @@
 #include "../Source/PluginProcessor.h"
 #include "../Source/PluginEditor.h"
 #include "../Source/SceneWindow.h"
+#include "../Source/AppSettings.h"
 #include "../Source/TimeStretch.h"
 #include <iostream>
 
@@ -1388,6 +1389,20 @@ int main (int argc, char** argv)
         check (pb.isInterestedInDragSource (d), "pads accept files dragged from the browser");
         pb.itemDropped (d);
         check (e.getEngine().getPadSample (7) != nullptr, "dropping a browser file on a pad loads it");
+    }
+
+    // ---- browser favourites ----
+    {
+        const auto before = rz::AppSettings::getFavorites();
+        auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("Rezalica Fav Test");
+        dir.createDirectory();
+        rz::AppSettings::setFavorite (dir, true);
+        const bool added = rz::AppSettings::isFavorite (dir) && rz::AppSettings::getFavorites().size() == before.size() + 1;
+        rz::AppSettings::setFavorite (dir, true); // twice: still once
+        const bool once = rz::AppSettings::getFavorites().size() == before.size() + 1;
+        rz::AppSettings::setFavorite (dir, false);
+        check (added && once && ! rz::AppSettings::isFavorite (dir), "folders can be added to / removed from FAVORITES");
+        dir.deleteRecursively();
     }
 
     // Copy / paste pad

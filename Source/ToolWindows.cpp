@@ -209,12 +209,15 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
     places.setWantsKeyboardFocus (false);
     places.onChange = [this]
     {
-        const int i = places.getSelectedItemIndex();
+        const int i = places.getSelectedId() - 1;
         if (i >= 0 && i < placeFiles.size()) setFolder (placeFiles[i]);
     };
     addAndMakeVisible (places);
 
-    for (auto* b : { &upButton, &folderButton, &loadButton, &loadNextButton, &stopButton })
+    favoritesButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffffc94a).withAlpha (0.25f));
+    favoritesButton.setTooltip ("Your favourite sample folders (right-click a folder in the list to add it)");
+    favoritesButton.onClick = [this] { showFavoritesMenu(); };
+    for (auto* b : { &favoritesButton, &upButton, &folderButton, &loadButton, &loadNextButton, &stopButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (*b);
@@ -280,6 +283,14 @@ void BrowserPanel::fillPlaces()
         placeFiles.add (f);
         places.addItem (name, placeFiles.size());
     };
+    const auto favorites = AppSettings::getFavorites();
+    if (! favorites.isEmpty())
+    {
+        places.addSectionHeading ("Favorites");
+        for (auto& f : favorites)
+            add (juce::String (juce::CharPointer_UTF8 ("\xe2\x98\x85 ")) + juce::File (f).getFileName(), juce::File (f));
+        places.addSeparator();
+    }
     add ("Rezalica recordings", RezalicaProcessor::getRecordingFolder());
     add ("Music", juce::File::getSpecialLocation (juce::File::userMusicDirectory));
     add ("Desktop", juce::File::getSpecialLocation (juce::File::userDesktopDirectory));
@@ -299,9 +310,84 @@ void BrowserPanel::setFolder (const juce::File& f)
     pathLabel.setText (f.getFullPathName(), juce::dontSendNotification);
     AppSettings::get().setValue ("browserFolder", f.getFullPathName());
     AppSettings::get().saveIfNeeded();
-    places.setSelectedItemIndex (placeFiles.indexOf (f), juce::dontSendNotification);
-    if (places.getSelectedItemIndex() < 0)
+    places.setSelectedId (placeFiles.indexOf (f) + 1, juce::dontSendNotification);
+    if (places.getSelectedId() == 0)
         places.setText (f.getFileName(), juce::dontSendNotification);
+    favoritesButton.setButtonText (AppSettings::isFavorite (f) ? juce::String (juce::CharPointer_UTF8 ("FAVORITES \xe2\x98\x85")) : juce::String ("FAVORITES"));
+}
+
+void BrowserPanel::fileClicked (const juce::File& f, const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+        showItemMenu (f);
+}
+
+void BrowserPanel::showItemMenu (const juce::File& f)
+{
+    juce::PopupMenu m;
+    const auto folder = f.isDirectory() ? f : f.getParentDirectory();
+    const bool fav = AppSettings::isFavorite (folder);
+    m.addSectionHeader (f.getFileName());
+    if (f.isDirectory())
+        m.addItem (1, "Open folder");
+    else
+    {
+        m.addItem (4, "Load onto the selected pad");
+        m.addItem (5, "Preview");
+    }
+    m.addSeparator();
+    m.addItem (2, fav ? "Remove \"" + folder.getFileName() + "\" from FAVORITES" : "Add \"" + folder.getFileName() + "\" to FAVORITES");
+    m.addItem (3, "Show in Explorer");
+    juce::Component::SafePointer<BrowserPanel> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options(), [safe, f, folder, fav] (int r)
+    {
+        if (safe == nullptr) return;
+        if (r == 1) safe->setFolder (f);
+        else if (r == 2)
+        {
+            AppSettings::setFavorite (folder, ! fav);
+            safe->fillPlaces();
+            safe->setFolder (safe->contents.getDirectory());
+        }
+        else if (r == 3) f.revealToUser();
+        else if (r == 4) safe->loadToPad (f, false);
+        else if (r == 5) safe->processor.previewFile (f);
+    });
+}
+
+void BrowserPanel::showFavoritesMenu()
+{
+    juce::PopupMenu m;
+    const auto favorites = AppSettings::getFavorites();
+    const auto current = contents.getDirectory();
+    m.addSectionHeader ("FAVORITES");
+    for (int i = 0; i < favorites.size(); ++i)
+    {
+        const juce::File f (favorites[i]);
+        m.addItem (100 + i, f.getFileName() + "    (" + f.getParentDirectory().getFullPathName() + ")", f.isDirectory(), f == current);
+    }
+    if (favorites.isEmpty())
+        m.addItem (99, "(no favourites yet: right-click a folder in the list)", false);
+    m.addSeparator();
+    const bool fav = AppSettings::isFavorite (current);
+    m.addItem (1, fav ? "Remove this folder from FAVORITES" : "Add this folder to FAVORITES");
+    if (! favorites.isEmpty())
+    {
+        juce::PopupMenu remove;
+        for (int i = 0; i < favorites.size(); ++i)
+            remove.addItem (300 + i, juce::File (favorites[i]).getFileName());
+        m.addSubMenu ("Remove from FAVORITES", remove);
+    }
+    juce::Component::SafePointer<BrowserPanel> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&favoritesButton), [safe, favorites, current, fav] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (r >= 100 && r < 100 + favorites.size()) { safe->setFolder (juce::File (favorites[r - 100])); return; }
+        if (r == 1) AppSettings::setFavorite (current, ! fav);
+        else if (r >= 300 && r < 300 + favorites.size()) AppSettings::setFavorite (juce::File (favorites[r - 300]), false);
+        safe->fillPlaces();
+        safe->setFolder (safe->contents.getDirectory());
+    });
 }
 
 void BrowserPanel::selectionChanged()
@@ -378,7 +464,9 @@ void BrowserPanel::resized()
     folderButton.setBounds (top.removeFromRight (90)); top.removeFromRight (6);
     places.setBounds (top);
     b.removeFromTop (4);
-    pathLabel.setBounds (b.removeFromTop (18));
+    auto favRow = b.removeFromTop (26);
+    favoritesButton.setBounds (favRow.removeFromLeft (120)); favRow.removeFromLeft (8);
+    pathLabel.setBounds (favRow);
     b.removeFromTop (4);
 
     auto bottom = b.removeFromBottom (18);

@@ -53,6 +53,27 @@ struct AppSettings
         get().saveIfNeeded();
     }
 
+    // ---- favourite folders of the sample browser ----
+    static juce::StringArray getFavorites()
+    {
+        juce::StringArray list;
+        list.addTokens (get().getValue ("favoriteFolders"), "|", {});
+        list.removeEmptyStrings();
+        return list;
+    }
+
+    static bool isFavorite (const juce::File& f) { return getFavorites().contains (f.getFullPathName()); }
+
+    static void setFavorite (const juce::File& f, bool add)
+    {
+        auto list = getFavorites();
+        list.removeString (f.getFullPathName());
+        if (add)
+            list.add (f.getFullPathName());
+        get().setValue ("favoriteFolders", list.joinIntoString ("|"));
+        get().saveIfNeeded();
+    }
+
     // ---- autosave / crash recovery ----
     static juce::File getAutosaveFile()  { return getFolder().getChildFile ("Autosave").getChildFile ("autosave.rezalica"); }
     static juce::File getRunningFlag()   { return getFolder().getChildFile ("Autosave").getChildFile ("running.flag"); }

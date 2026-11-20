@@ -121,6 +121,7 @@ Tipkovnica računala svira trenutno odabranu banku:
   - **RESAMPLE**: snima ono što Rezalica svira (padovi, efekti, sekvencer, master). „One loop of the pattern“ pokreće odabrani pattern od početka i snimi točno jedan njegov krug.
   - Snimka se sprema kao WAV u `Dokumenti/Rezalica/Recordings` i odmah je spremna za rezanje (chop mod ili LAZY CHOP). UNDO vraća stari sample.
 - **BROWSER**: stoji lijevo u glavnom prozoru i ostaje otvoren između pokretanja. Klik preslušava, dupli klik (ili LOAD TO PAD) učitava na odabrani pad, a LOAD + NEXT PAD učita pa prijeđe na sljedeći pad. Datoteku možeš i **povući** na bilo koji pad ili u prozor za samplove (te van, u DAW ili mapu).
+  - **FAVORITES**: desni klik na bilo koju mapu u browseru → „Add to FAVORITES“ (ponovni desni klik je uklanja). Gumb FAVORITES prikazuje omiljene mape i skače u njih, a nalaze se i na vrhu padajućeg izbornika mjesta (označene zvjezdicom). Pamte se između pokretanja.
 - **MASTER FX**: na cijelom izlazu EQ (low 100 Hz, mid s frekvencijom, high 8 kHz), kompresor (threshold, ratio, attack, release, makeup, prikaz GR) i limiter (ceiling). Sprema se s projektom i ulazi u export.
 - **CHOKE** (pored MUTE na padu): padovi iste choke grupe (1–8) prekidaju jedan drugog, npr. otvoreni i zatvoreni hi-hat.
 - **PLAY / STOP** (i **razmaknica**): sampler svira odabrani pattern (step sekvencer + piano roll) bez obzira na scene i pjesmu. Ako je pattern prazan (nema koraka ni nota), PLAY svira sample odabranog pada: s uključenim LOOP-om ga vrti do STOP-a, bez LOOP-a ga odsvira jednom.
