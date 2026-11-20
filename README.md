@@ -110,6 +110,15 @@ Tipkovnica računala svira trenutno odabranu banku:
 - Audio datoteku možeš povući i ispustiti na pad (učitava se na taj pad) ili na valni oblik (reže se preko svih padova).
 - **Ableton Live:** da bi tipkovnica računala svirala padove, klikni u prozor plugina. Ableton tipke šalje pluginu samo dok je njegov prozor u fokusu.
 
+## Samostalna aplikacija (Standalone)
+
+- **FILE**: New Project (Ctrl+N), Open Project… (Ctrl+O), Save Project (Ctrl+S), Save Project As… (Ctrl+Shift+S), Audio Settings…
+  - Projekti se spremaju kao `.rezalica` datoteke (zadano u `Dokumenti/Rezalica/Projects`). Samplovi se pamte po putanji.
+- **AUDIO**: postavke zvuka:
+  - vrsta drivera: **ASIO** (ASIO4ALL, FlexASIO i ASIO driveri zvučnih kartica), Windows Audio (i Exclusive / Low Latency), DirectSound
+  - izlazni i ulazni uređaj, aktivni kanali, sample rate, buffer size (latencija), probni ton i MIDI ulazi (kontroleri)
+- ASIO podrška ugrađuje se pri automatskoj izradi pomoću službenog Steinberg ASIO SDK-a (ASIO je zaštitni znak tvrtke Steinberg Media Technologies GmbH).
+
 ## Instalacija (Windows)
 
 1. Na GitHubu otvori **Actions**, pa zadnji uspješni **Build**.
@@ -119,7 +128,7 @@ Tipkovnica računala svira trenutno odabranu banku:
 
 ## Samostalna izrada (build)
 
-Potrebni su CMake 3.22+ i Visual Studio 2022 s komponentom „Desktop development with C++”. JUCE se preuzima automatski.
+Potrebni su CMake 3.22+ i Visual Studio 2022 s komponentom „Desktop development with C++”. JUCE se preuzima automatski. Za ASIO u samostalnoj aplikaciji preuzmi Steinberg ASIO SDK i dodaj `-DREZALICA_ASIO_SDK=<mapa SDK-a>` (mapa koja sadrži `common/iasiodrv.h`).
 
 ```bash
 cmake -B build

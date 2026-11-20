@@ -1,4 +1,6 @@
 #include "PluginEditor.h"
+#include <juce_audio_utils/juce_audio_utils.h>
+#include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 
 namespace
 {
@@ -69,6 +71,19 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         addAndMakeVisible (bb);
     }
     seqButton.onClick = [this] { toggleSequencerWindow(); };
+
+    // standalone app: project files and audio device settings (in a DAW the DAW does this)
+    isStandalone = processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
+    for (auto* b : { &fileButton, &audioButton })
+    {
+        b->setWantsKeyboardFocus (false);
+        addChildComponent (*b);
+        b->setVisible (isStandalone);
+    }
+    fileButton.setTooltip ("New / Open / Save / Save As project   (Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S)");
+    audioButton.setTooltip ("Audio settings: driver type (ASIO, Windows Audio, DirectSound), device, sample rate, buffer size, MIDI inputs");
+    fileButton.onClick = [this] { showFileMenu(); };
+    audioButton.onClick = [this] { showAudioSettings(); };
     undoButton.onClick = [this] { if (processor.undo()) selectPad (processor.selectedPad.load()); };
     redoButton.onClick = [this] { if (processor.redo()) selectPad (processor.selectedPad.load()); };
     styleToggle (pianoRollButton, rz::colours::accent2);
@@ -359,7 +374,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     lastPlayedCounter = processor.getEngine().playedCounter.load();
 
-    setSize (1240, 748);
+    setSize (isStandalone ? 1390 : 1240, 748);
     setBank (startBank);
     selectPad (juce::jlimit (0, rz::numPads - 1, processor.selectedPad.load()));
     refreshPadNames();
@@ -645,6 +660,122 @@ void RezalicaEditor::showBankMenu (int bank)
     });
 }
 
+//==============================================================================
+void RezalicaEditor::showFileMenu()
+{
+    juce::PopupMenu m;
+    m.addItem (1, "New Project            Ctrl+N");
+    m.addItem (2, "Open Project...        Ctrl+O");
+    m.addSeparator();
+    m.addItem (3, "Save Project           Ctrl+S");
+    m.addItem (4, "Save Project As...     Ctrl+Shift+S");
+    m.addSeparator();
+    m.addItem (5, "Audio Settings...");
+    if (processor.currentProjectFile.existsAsFile())
+    {
+        m.addSeparator();
+        m.addItem (6, "Show project in folder");
+    }
+    juce::Component::SafePointer<RezalicaEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&fileButton), [safe] (int r)
+    {
+        if (safe == nullptr) return;
+        switch (r)
+        {
+            case 1: safe->newProject(); break;
+            case 2: safe->openProject(); break;
+            case 3: safe->saveProject (false); break;
+            case 4: safe->saveProject (true); break;
+            case 5: safe->showAudioSettings(); break;
+            case 6: safe->processor.currentProjectFile.revealToUser(); break;
+            default: break;
+        }
+    });
+}
+
+void RezalicaEditor::showAudioSettings()
+{
+    // JUCE's audio settings: device type (ASIO incl. ASIO4ALL and interface drivers, Windows Audio,
+    // Windows Audio exclusive / low latency, DirectSound), output / input device, sample rate,
+    // buffer size, active channels, test tone and MIDI inputs
+    if (auto* holder = juce::StandalonePluginHolder::getInstance())
+        holder->showAudioSettingsDialog();
+}
+
+void RezalicaEditor::newProject()
+{
+    juce::Component::SafePointer<RezalicaEditor> safe (this);
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "New project",
+                                        "Start a new, empty project? Unsaved changes are lost.", "New project", "Cancel", this,
+                                        juce::ModalCallbackFunction::create ([safe] (int ok)
+    {
+        if (safe == nullptr || ok == 0) return;
+        safe->processor.newProject();
+        safe->updateWindowTitle();
+        safe->selectPad (0);
+    }));
+}
+
+void RezalicaEditor::openProject()
+{
+    auto start = processor.currentProjectFile.existsAsFile() ? processor.currentProjectFile.getParentDirectory()
+                                                             : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica");
+    fileChooser = std::make_unique<juce::FileChooser> ("Open a Rezalica project", start, "*.rezalica");
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc)
+    {
+        auto f = fc.getResult();
+        if (! f.existsAsFile()) return;
+        if (processor.loadProjectFromFile (f))
+        {
+            updateWindowTitle();
+            selectPad (processor.selectedPad.load());
+        }
+        else
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Open project",
+                                                    "This file could not be opened as a Rezalica project.");
+        }
+    });
+}
+
+void RezalicaEditor::saveProject (bool saveAs)
+{
+    if (! saveAs && processor.currentProjectFile != juce::File())
+    {
+        if (! processor.saveProjectToFile (processor.currentProjectFile))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save project", "The project could not be saved.");
+        updateWindowTitle();
+        return;
+    }
+
+    auto folder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Projects");
+    folder.createDirectory();
+    auto suggestion = processor.currentProjectFile != juce::File() ? processor.currentProjectFile
+                                                                   : folder.getNonexistentChildFile ("Rezalica Project", ".rezalica", false);
+    fileChooser = std::make_unique<juce::FileChooser> ("Save the Rezalica project", suggestion, "*.rezalica");
+    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [this] (const juce::FileChooser& fc)
+    {
+        auto f = fc.getResult();
+        if (f == juce::File()) return;
+        if (! f.hasFileExtension ("rezalica"))
+            f = f.withFileExtension ("rezalica");
+        if (! processor.saveProjectToFile (f))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save project", "The project could not be saved.");
+        updateWindowTitle();
+    });
+}
+
+void RezalicaEditor::updateWindowTitle()
+{
+    if (! isStandalone) return;
+    if (auto* top = getTopLevelComponent(); top != nullptr && top != this)
+        top->setName ("Rezalica" + (processor.currentProjectFile != juce::File()
+                                        ? " - " + processor.currentProjectFile.getFileNameWithoutExtension() : juce::String()));
+}
+
 void RezalicaEditor::togglePianoRoll()
 {
     if (pianoRollWindow == nullptr)
@@ -653,6 +784,9 @@ void RezalicaEditor::togglePianoRoll()
         pianoRollWindow->onClose = [this] { pianoRollButton.setToggleState (false, juce::dontSendNotification); };
     }
     const bool show = ! pianoRollWindow->isVisible();
+    if (show)
+        if (auto* panel = dynamic_cast<rz::PianoRollPanel*> (pianoRollWindow->getContentComponent()))
+            panel->showMelodic();
     pianoRollWindow->setVisible (show);
     if (show)
         pianoRollWindow->toFront (true);
@@ -689,6 +823,12 @@ bool RezalicaEditor::keyPressed (const juce::KeyPress& key)
     {
         const int code = key.getKeyCode();
         const auto ch = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
+        if (isStandalone)
+        {
+            if (code == 'S' || ch == 's' || ch == 19) { saveProject (key.getModifiers().isShiftDown()); return true; }
+            if (code == 'O' || ch == 'o' || ch == 15) { openProject(); return true; }
+            if (code == 'N' || ch == 'n' || ch == 14) { newProject(); return true; }
+        }
         if (code == 'Z' || ch == 'z' || ch == 26)
         {
             if (key.getModifiers().isShiftDown() ? processor.redo() : processor.undo())
@@ -795,6 +935,14 @@ void RezalicaEditor::resized()
     {
         auto h = headerArea;
         h.removeFromLeft (175);
+        if (isStandalone)
+        {
+            auto fr = h.withSizeKeepingCentre (h.getWidth(), 30);
+            fileButton.setBounds (fr.removeFromLeft (60));
+            fr.removeFromLeft (4);
+            audioButton.setBounds (fr.removeFromLeft (66));
+            h.removeFromLeft (60 + 4 + 66 + 12);
+        }
         masterKnob.setBounds (h.removeFromRight (130).withSizeKeepingCentre (130, 44));
         h.removeFromRight (10);
         auto row = h.withSizeKeepingCentre (h.getWidth(), 30);

@@ -48,7 +48,15 @@ private:
 
     // header
     juce::TextButton loadChopButton { "LOAD SAMPLE" }, lazyButton { "LAZY CHOP" }, seqButton { "STEP SEQ" }, pianoRollButton { "PIANO ROLL" }, stopButton { "STOP ALL" },
-                     undoButton { "UNDO" }, redoButton { "REDO" };
+                     undoButton { "UNDO" }, redoButton { "REDO" },
+                     fileButton { "FILE" }, audioButton { "AUDIO" }; // FILE / AUDIO: standalone app only
+    bool isStandalone = false;
+    void showFileMenu();
+    void showAudioSettings();
+    void newProject();
+    void openProject();
+    void saveProject (bool saveAs);
+    void updateWindowTitle();
     bool lastLazyState = false;
     juce::ComboBox chopModeBox;
     juce::Slider sensitivitySlider;

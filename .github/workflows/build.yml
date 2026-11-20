@@ -11,8 +11,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Steinberg ASIO SDK (for ASIO drivers like ASIO4ALL in the standalone app).
+      # If the download fails the build continues without ASIO.
+      - name: Get ASIO SDK
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri "https://www.steinberg.net/asiosdk" -OutFile asiosdk.zip -UserAgent "Mozilla/5.0" -MaximumRedirection 10
+          Expand-Archive asiosdk.zip -DestinationPath asiosdk
+          $h = Get-ChildItem asiosdk -Recurse -Filter iasiodrv.h | Select-Object -First 1
+          if ($h) {
+            $root = Split-Path (Split-Path $h.FullName)
+            "ASIO_SDK=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            Write-Host "ASIO SDK found at $root"
+          } else { Write-Host "iasiodrv.h not found in the download" }
+
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        shell: pwsh
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release "-DREZALICA_ASIO_SDK=$env:ASIO_SDK"
 
       - name: Build
         run: cmake --build build --config Release --parallel

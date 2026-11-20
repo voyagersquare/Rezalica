@@ -26,7 +26,7 @@ struct NoteClip : public juce::ReferenceCountedObject
     using Ptr = juce::ReferenceCountedObjectPtr<NoteClip>;
     enum Mode { drum = 0, melodic = 1 };
 
-    int mode = drum;          // which part the piano roll shows / edits (both parts always play)
+    int mode = melodic;       // which part the piano roll shows / edits (both parts always play)
     int targetPad = 0;        // melodic notes play this pad's sample chromatically (C3 = original pitch)
     std::vector<PianoNote> notes;
 

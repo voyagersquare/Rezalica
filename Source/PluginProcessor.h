@@ -97,6 +97,12 @@ public:
     bool consolidatePad (int pad);
     static juce::File getRenderFolder();
 
+    // ---- projects (standalone app: New / Open / Save / Save As) ----
+    bool saveProjectToFile (const juce::File& file);
+    bool loadProjectFromFile (const juce::File& file);
+    void newProject();
+    juce::File currentProjectFile;
+
     // ---- export a pattern for dragging into the DAW ----
     static juce::File getExportFolder();
     /** stepPart / pianoPart: which part of the pattern to export. */

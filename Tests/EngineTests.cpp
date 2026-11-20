@@ -939,6 +939,25 @@ int main (int argc, char** argv)
         for (int i = 0; i < 40; ++i) juce::Thread::sleep (25);
     }
 
+    // ---- Standalone projects: Save / Save As / Open / New ----
+    {
+        auto proj = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_test_project.rezalica");
+        proj.deleteFile();
+        p.getEngine().getPad (7).gainDb = -7.5f;
+        check (p.saveProjectToFile (proj) && proj.existsAsFile() && p.currentProjectFile == proj, "save project");
+        RezalicaProcessor other;
+        check (other.loadProjectFromFile (proj) && other.getEngine().getPadSample (7) != nullptr
+               && std::abs (other.getEngine().getPad (7).gainDb.load() + 7.5f) < 1.0e-4f
+               && other.getSequencer().getStep (0, 0, 4) == p.getSequencer().getStep (0, 0, 4),
+               "open project restores pads, settings and patterns");
+        other.newProject();
+        check (other.getEngine().getPadSample (7) == nullptr && other.currentProjectFile == juce::File(), "new project starts empty");
+        check (! other.loadProjectFromFile (file), "a non-project file is refused");
+        p.getEngine().getPad (7).gainDb = 0.0f;
+        proj.deleteFile();
+        check (rz::NoteClip().mode == rz::NoteClip::melodic, "piano roll opens in melodic mode");
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);

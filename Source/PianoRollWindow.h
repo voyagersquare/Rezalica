@@ -124,6 +124,8 @@ class PianoRollPanel : public juce::Component,
 public:
     explicit PianoRollPanel (RezalicaProcessor& p);
     ~PianoRollPanel() override;
+    /** The piano roll opens in melodic mode. */
+    void showMelodic() { editor.refreshFromSequencer(); editor.setViewMode (NoteClip::melodic); syncControls(); }
     void paint (juce::Graphics&) override;
     void resized() override;
 

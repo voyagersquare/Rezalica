@@ -48,6 +48,17 @@ target_compile_definitions(Rezalica PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_MODAL_LOOPS_PERMITTED=1)
 
+# ASIO for the standalone app (Windows): point REZALICA_ASIO_SDK at the Steinberg ASIO SDK folder
+# (the one that contains common/iasiodrv.h). Without it the app still has Windows Audio / DirectSound.
+set(REZALICA_ASIO_SDK "" CACHE PATH "Steinberg ASIO SDK folder (optional, Windows)")
+if(WIN32 AND REZALICA_ASIO_SDK AND EXISTS "${REZALICA_ASIO_SDK}/common/iasiodrv.h")
+    message(STATUS "Rezalica: ASIO support enabled (${REZALICA_ASIO_SDK})")
+    target_compile_definitions(Rezalica PUBLIC JUCE_ASIO=1)
+    target_include_directories(Rezalica PUBLIC "${REZALICA_ASIO_SDK}/common")
+else()
+    message(STATUS "Rezalica: ASIO support not enabled (no ASIO SDK given)")
+endif()
+
 target_link_libraries(Rezalica
     PRIVATE
         juce::juce_audio_utils

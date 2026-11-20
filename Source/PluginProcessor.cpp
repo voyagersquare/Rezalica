@@ -860,6 +860,47 @@ juce::File RezalicaProcessor::getWarpFolder()
     return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Warped");
 }
 
+bool RezalicaProcessor::saveProjectToFile (const juce::File& file)
+{
+    juce::MemoryBlock state;
+    getStateInformation (state);
+    auto xml = getXmlFromBinary (state.getData(), (int) state.getSize());
+    if (xml == nullptr)
+        return false;
+    file.getParentDirectory().createDirectory();
+    if (! xml->writeTo (file))
+        return false;
+    currentProjectFile = file;
+    return true;
+}
+
+bool RezalicaProcessor::loadProjectFromFile (const juce::File& file)
+{
+    auto xml = juce::XmlDocument::parse (file);
+    if (xml == nullptr || ! xml->hasTagName ("REZALICA"))
+        return false;
+    juce::MemoryBlock state;
+    copyXmlToBinary (*xml, state);
+    stopAll();
+    setStateInformation (state.getData(), (int) state.getSize());
+    undoStack.clear();
+    redoStack.clear();
+    currentProjectFile = file;
+    return true;
+}
+
+void RezalicaProcessor::newProject()
+{
+    RezalicaProcessor fresh;
+    juce::MemoryBlock state;
+    fresh.getStateInformation (state);
+    stopAll();
+    setStateInformation (state.getData(), (int) state.getSize());
+    undoStack.clear();
+    redoStack.clear();
+    currentProjectFile = juce::File();
+}
+
 juce::File RezalicaProcessor::getExportFolder()
 {
     return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Export");
