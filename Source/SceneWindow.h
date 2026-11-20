@@ -121,7 +121,7 @@ class SceneWindow : public juce::DocumentWindow
 {
 public:
     SceneWindow (RezalicaProcessor& p, juce::LookAndFeel& lnf)
-        : juce::DocumentWindow ("Rezalica - Scene / Song", colours::background, juce::DocumentWindow::closeButton)
+        : juce::DocumentWindow ("Rezalica - Song", colours::background, juce::DocumentWindow::closeButton)
     {
         setLookAndFeel (&lnf);
         setUsingNativeTitleBar (true);

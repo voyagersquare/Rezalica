@@ -1341,6 +1341,55 @@ int main (int argc, char** argv)
         re.deleteFile();
     }
 
+    // ---- PLAY with an empty pattern plays the selected pad's sample ----
+    {
+        auto ep = std::make_unique<RezalicaProcessor> (false);
+        auto& e = *ep;
+        e.prepareToPlay (48000.0, 480);
+        auto& sq = e.getSequencer();
+        sq.syncToHost = false;
+        e.selectedPad = 0;
+        e.loadFileForChopping (file);   // 2 s sample
+        sq.currentPattern = 4;
+        check (sq.isPatternEmpty (4), "pattern 5 is empty");
+        juce::AudioBuffer<float> blk (2, 480);
+        juce::MidiBuffer none;
+        auto runFor = [&] (double secs) { for (int i = 0; i < (int) (48000 * secs / 480); ++i) e.processBlock (blk, none); };
+
+        e.getEngine().getPad (0).loop = true;
+        sq.playPattern();
+        runFor (0.1);
+        const bool started = e.getEngine().isPadSounding (0);
+        runFor (5.0);                                // 2.5 loops of the sample
+        const bool stillLooping = e.getEngine().isPadSounding (0) && e.getEngine().hitCounter[0].load() == 1;
+        sq.stopPlayback();
+        runFor (0.2);
+        check (started && stillLooping && ! e.getEngine().isPadSounding (0), "PLAY on an empty pattern loops the selected pad (LOOP on) until STOP");
+
+        e.getEngine().getPad (0).loop = false;
+        sq.playPattern();
+        runFor (2.5);                                // longer than the sample: plays once
+        check (! e.getEngine().isPadSounding (0) && e.getEngine().hitCounter[0].load() == 2, "without LOOP the sample plays once");
+        sq.stopPlayback();
+        runFor (0.1);
+
+        e.loadFileToPad (3, file);
+        sq.setStep (4, 3, 4, 127);                   // not empty any more: the pattern plays, not the pad
+        const int before = e.getEngine().hitCounter[0].load();
+        sq.playPattern();
+        runFor (1.0);
+        sq.stopPlayback();
+        check (! sq.isPatternEmpty (4) && e.getEngine().hitCounter[0].load() == before && e.getEngine().hitCounter[3].load() > 0,
+               "a pattern with steps plays its steps, not the selected pad");
+
+        // drag & drop from the browser onto a pad
+        rz::PadButton pb (e, 7, "x");
+        juce::DragAndDropTarget::SourceDetails d ("rzfile:" + file.getFullPathName(), nullptr, {});
+        check (pb.isInterestedInDragSource (d), "pads accept files dragged from the browser");
+        pb.itemDropped (d);
+        check (e.getEngine().getPadSample (7) != nullptr, "dropping a browser file on a pad loads it");
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);

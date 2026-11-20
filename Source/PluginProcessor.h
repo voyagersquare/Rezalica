@@ -252,6 +252,8 @@ private:
     int clickSamplesLeft = 0, clickLength = 1;
     double clickPhase = 0.0, clickFreq = 1000.0;
     rz::SampleData::Ptr previewData;
+    static constexpr int playSampleTag = (1 << 28) + 7; // PLAY of an empty pattern plays the selected pad
+    bool playingSampleOnPlay = false;
     double currentSampleRate = 44100.0;
 
     std::atomic<float>* pMaster = nullptr;

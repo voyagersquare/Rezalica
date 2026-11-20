@@ -7,7 +7,8 @@ namespace rz
 {
 /** One of the 16 performance pads. Click to play, right-click for a menu, drop a file to load it. */
 class PadButton : public juce::Component,
-                  public juce::FileDragAndDropTarget
+                  public juce::FileDragAndDropTarget,
+                  public juce::DragAndDropTarget
 {
 public:
     PadButton (RezalicaProcessor& p, int padIndex, const juce::String& keyHint)
@@ -111,6 +112,12 @@ public:
 
     void fileDragEnter (const juce::StringArray&, int, int) override { dragOver = true; flashLevel = 0.4f; repaint(); }
     void fileDragExit (const juce::StringArray&) override            { dragOver = false; flashLevel = 0.0f; repaint(); }
+    // drag & drop from Rezalica's sample browser (description "rzfile:<path>")
+    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description.toString().startsWith ("rzfile:"); }
+    void itemDragEnter (const SourceDetails&) override { fileDragEnter ({}, 0, 0); }
+    void itemDragExit (const SourceDetails&) override { fileDragExit ({}); }
+    void itemDropped (const SourceDetails& d) override { filesDropped (juce::StringArray (d.description.toString().fromFirstOccurrenceOf ("rzfile:", false, false)), 0, 0); }
+
 
     void filesDropped (const juce::StringArray& files, int, int) override
     {

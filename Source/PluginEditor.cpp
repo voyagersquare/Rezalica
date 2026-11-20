@@ -94,7 +94,24 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     browserButton.setTooltip ("Sample browser: preview files and load them onto pads");
     masterFxButton.setTooltip ("EQ, compressor and limiter on Rezalica's output");
     samplingButton.onClick = [this] { toggleToolWindow (samplingWindow, samplingButton, 0); };
-    browserButton.onClick = [this] { toggleToolWindow (browserWindow, browserButton, 1); };
+    browserButton.onClick = [this] { toggleBrowser(); };
+    sceneButton.setButtonText ("SONG");
+    sceneButton.setTooltip ("Song: chain patterns into the scene, the scene into a song");
+    tempoSlider.setSliderStyle (juce::Slider::LinearBar);
+    tempoSlider.setRange (40.0, 240.0, 0.1);
+    tempoSlider.setTextValueSuffix (" BPM");
+    tempoSlider.setWantsKeyboardFocus (false);
+    tempoSlider.setColour (juce::Slider::trackColourId, rz::colours::panelLight.brighter (0.15f));
+    tempoSlider.setTooltip ("Project tempo: the sequencer, song, metronome and warped samples follow it (drag or double-click to type)");
+    tempoSlider.onValueChange = [this] { processor.getSequencer().bpm = (float) tempoSlider.getValue(); };
+    tempoSlider.setValue (processor.getSequencer().bpm.load(), juce::dontSendNotification);
+    addChildComponent (tempoSlider);
+    tempoSlider.setVisible (isStandalone);
+    if (isStandalone)
+    {
+        loadChopButton.setVisible (false); // the BROWSER loads samples in the standalone app
+        stopButton.setVisible (false);
+    }
     masterFxButton.onClick = [this] { toggleToolWindow (masterFxWindow, masterFxButton, 2); };
     if (isStandalone)
         if (auto* holder = juce::StandalonePluginHolder::getInstance())
@@ -420,6 +437,8 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     if (isStandalone)
     {
         lastAutosaveTime = juce::Time::getMillisecondCounterHiRes();
+        if (rz::AppSettings::get().getBoolValue ("browserOpen", false))
+            toggleBrowser(); // the docked browser stays open between sessions
         juce::Component::SafePointer<RezalicaEditor> safe (this);
         juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->checkCrashRecovery(); });
     }
@@ -436,7 +455,7 @@ RezalicaEditor::~RezalicaEditor()
     processor.padsChanged.removeChangeListener (this);
     sequencerWindow = nullptr;
     samplingWindow = nullptr;
-    browserWindow = nullptr;
+    browserPanel = nullptr;
     masterFxWindow = nullptr;
     if (isStandalone)
         rz::AppSettings::getRunningFlag().deleteFile(); // a clean exit: nothing to recover next time
@@ -633,7 +652,12 @@ void RezalicaEditor::timerCallback()
     {
         playButton.setToggleState (processor.getSequencer().isPlayingPattern(), juce::dontSendNotification);
         if (samplingWindow != nullptr) samplingButton.setToggleState (samplingWindow->isVisible(), juce::dontSendNotification);
-        if (browserWindow != nullptr) browserButton.setToggleState (browserWindow->isVisible(), juce::dontSendNotification);
+        browserButton.setToggleState (browserPanel != nullptr && browserPanel->isVisible(), juce::dontSendNotification);
+        if (! tempoSlider.isMouseButtonDown())
+        {
+            auto& sq = processor.getSequencer();
+            tempoSlider.setValue (sq.syncToHost.load() ? sq.effectiveBpm.load() : sq.bpm.load(), juce::dontSendNotification);
+        }
         if (masterFxWindow != nullptr) masterFxButton.setToggleState (masterFxWindow->isVisible(), juce::dontSendNotification);
         if (juce::Time::getMillisecondCounterHiRes() - lastAutosaveTime > 60000.0)
             autosave();
@@ -919,6 +943,31 @@ void RezalicaEditor::toggleToolWindow (std::unique_ptr<rz::ToolWindow>& w, juce:
     button.setToggleState (show, juce::dontSendNotification);
 }
 
+void RezalicaEditor::toggleBrowser()
+{
+    if (browserPanel == nullptr)
+    {
+        browserPanel = std::make_unique<rz::BrowserPanel> (processor);
+        addChildComponent (*browserPanel);
+    }
+    browserPanel->setVisible (! browserPanel->isVisible());
+    browserButton.setToggleState (browserPanel->isVisible(), juce::dontSendNotification);
+    rz::AppSettings::get().setValue ("browserOpen", browserPanel->isVisible());
+    rz::AppSettings::get().saveIfNeeded();
+    resized();
+    repaint();
+}
+
+bool RezalicaEditor::shouldDropFilesWhenDraggedExternally (const juce::DragAndDropTarget::SourceDetails& d, juce::StringArray& files, bool& canMove)
+{
+    // browser files can also be dragged out of Rezalica (into a DAW or a folder)
+    const auto desc = d.description.toString();
+    if (! desc.startsWith ("rzfile:")) return false;
+    files.add (desc.fromFirstOccurrenceOf ("rzfile:", false, false));
+    canMove = false;
+    return true;
+}
+
 void RezalicaEditor::autosave()
 {
     lastAutosaveTime = juce::Time::getMillisecondCounterHiRes();
@@ -1174,18 +1223,20 @@ void RezalicaEditor::resized()
         {
             auto fr = h.withSizeKeepingCentre (h.getWidth(), 30);
             fileButton.setBounds (fr.removeFromLeft (60));
-            fr.removeFromLeft (4);
-            sceneButton.setBounds (fr.removeFromLeft (70));
             fr.removeFromLeft (12);
             playButton.setBounds (fr.removeFromLeft (64));
             fr.removeFromLeft (4);
             stopPlayButton.setBounds (fr.removeFromLeft (64));
-            h.removeFromLeft (60 + 4 + 70 + 12 + 64 + 4 + 64 + 12);
+            h.removeFromLeft (60 + 12 + 64 + 4 + 64 + 12);
         }
         masterKnob.setBounds (h.removeFromRight (130).withSizeKeepingCentre (130, 44));
         h.removeFromRight (10);
         auto row = h.withSizeKeepingCentre (h.getWidth(), 30);
-        loadChopButton.setBounds (row.removeFromLeft (112)); row.removeFromLeft (6);
+        if (loadChopButton.isVisible())
+        {
+            loadChopButton.setBounds (row.removeFromLeft (112));
+            row.removeFromLeft (6);
+        }
         chopModeBox.setBounds (row.removeFromLeft (112)); row.removeFromLeft (6);
         if (sensitivitySlider.isVisible())
         {
@@ -1195,9 +1246,18 @@ void RezalicaEditor::resized()
         lazyButton.setBounds (row.removeFromLeft (96)); row.removeFromLeft (10);
         undoButton.setBounds (row.removeFromLeft (62)); row.removeFromLeft (4);
         redoButton.setBounds (row.removeFromLeft (62)); row.removeFromLeft (8);
-        stopButton.setBounds (row.removeFromRight (86)); row.removeFromRight (6);
+        if (stopButton.isVisible())
+        {
+            stopButton.setBounds (row.removeFromRight (86));
+            row.removeFromRight (6);
+        }
         pianoRollButton.setBounds (row.removeFromRight (100)); row.removeFromRight (6);
         seqButton.setBounds (row.removeFromRight (90)); row.removeFromRight (6);
+        if (isStandalone)
+        {
+            sceneButton.setBounds (row.removeFromRight (70));
+            row.removeFromRight (6);
+        }
         sliceCountLabel.setBounds (row);
     }
     b.removeFromTop (10);
@@ -1211,9 +1271,17 @@ void RezalicaEditor::resized()
         samplingButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (4);
         browserButton.setBounds (t.removeFromLeft (90)); t.removeFromLeft (4);
         masterFxButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (16);
-        metronome.setBounds (t.removeFromLeft (200));
+        metronome.setBounds (t.removeFromLeft (200)); t.removeFromLeft (6);
+        tempoSlider.setBounds (t.removeFromLeft (120));
         autosaveLabel.setBounds (t.removeFromRight (200));
         b.removeFromTop (8);
+
+        if (browserPanel != nullptr && browserPanel->isVisible())
+        {
+            browserArea = b.removeFromLeft (340);
+            browserPanel->setBounds (browserArea);
+            b.removeFromLeft (10);
+        }
     }
 
     fxArea = b.removeFromBottom (176);

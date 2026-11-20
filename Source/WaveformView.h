@@ -11,6 +11,7 @@ namespace rz
       Shift+wheel or the scroll bar scrolls */
 class WaveformView : public juce::Component,
                      public juce::FileDragAndDropTarget,
+                     public juce::DragAndDropTarget,
                      private juce::ScrollBar::Listener
 {
 public:
@@ -38,6 +39,12 @@ public:
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void fileDragEnter (const juce::StringArray&, int, int) override { dragOver = true; repaint(); }
     void fileDragExit (const juce::StringArray&) override { dragOver = false; repaint(); }
+    // drag & drop from Rezalica's sample browser (description "rzfile:<path>")
+    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description.toString().startsWith ("rzfile:"); }
+    void itemDragEnter (const SourceDetails&) override { fileDragEnter ({}, 0, 0); }
+    void itemDragExit (const SourceDetails&) override { fileDragExit ({}); }
+    void itemDropped (const SourceDetails& d) override { filesDropped (juce::StringArray (d.description.toString().fromFirstOccurrenceOf ("rzfile:", false, false)), 0, 0); }
+
     void filesDropped (const juce::StringArray& files, int, int) override;
 
 private:

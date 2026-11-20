@@ -203,6 +203,7 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
     list.setColour (juce::DirectoryContentsDisplayComponent::highlightColourId, colours::accent.withAlpha (0.55f));
     list.setColour (juce::DirectoryContentsDisplayComponent::highlightedTextColourId, juce::Colours::white);
     list.setRowHeight (22);
+    list.addMouseListener (this, true); // drag files out of the list onto pads / the sample view
     addAndMakeVisible (list);
 
     places.setWantsKeyboardFocus (false);
@@ -243,7 +244,7 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
     pathLabel.setColour (juce::Label::textColourId, colours::dim);
     pathLabel.setFont (juce::FontOptions (11.0f));
     targetLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-    helpLabel.setText ("Click: preview   Double-click: load onto the selected pad   Enter: load", juce::dontSendNotification);
+    helpLabel.setText ("Click: preview   Double-click: load   Drag: onto a pad or the sample view", juce::dontSendNotification);
     helpLabel.setColour (juce::Label::textColourId, colours::dim);
     helpLabel.setFont (juce::FontOptions (11.0f));
     for (auto* l : { &pathLabel, &targetLabel, &helpLabel })
@@ -332,10 +333,36 @@ void BrowserPanel::loadToPad (const juce::File& f, bool nextPad)
     }
 }
 
+void BrowserPanel::mouseDrag (const juce::MouseEvent& e)
+{
+    if (dragStarted || e.getDistanceFromDragStart() < 6 || ! list.isParentOf (e.eventComponent))
+        return;
+    const auto f = list.getSelectedFile();
+    if (! f.existsAsFile())
+        return;
+    dragStarted = true;
+    processor.previewFile ({});
+    // a small label as the drag image
+    juce::Image img (juce::Image::ARGB, 220, 24, true);
+    {
+        juce::Graphics g (img);
+        g.setColour (colours::accent.withAlpha (0.85f));
+        g.fillRoundedRectangle (0.0f, 0.0f, 220.0f, 24.0f, 5.0f);
+        g.setColour (juce::Colours::black);
+        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.drawText (f.getFileName(), 8, 0, 204, 24, juce::Justification::centredLeft, true);
+    }
+    if (auto* container = juce::DragAndDropContainer::findParentDragContainerFor (this))
+        container->startDragging ("rzfile:" + f.getFullPathName(), &list, juce::ScaledImage (img), true);
+    else
+        juce::DragAndDropContainer::performExternalDragDropOfFiles ({ f.getFullPathName() }, false, this);
+}
+
 void BrowserPanel::timerCallback()
 {
     const int pad = processor.selectedPad.load();
-    targetLabel.setText ("Selected pad: " + padLabel (pad) + "  (" + processor.getPadName (pad) + ")", juce::dontSendNotification);
+    const auto name = processor.getPadName (pad);
+    targetLabel.setText ("Selected pad: " + padLabel (pad) + "  " + (name.isNotEmpty() ? "(" + name + ")" : juce::String ("(empty)")), juce::dontSendNotification);
 }
 
 void BrowserPanel::paint (juce::Graphics& g)
@@ -357,11 +384,13 @@ void BrowserPanel::resized()
     auto bottom = b.removeFromBottom (18);
     helpLabel.setBounds (bottom);
     b.removeFromBottom (6);
+    auto options = b.removeFromBottom (26);
+    stopButton.setBounds (options.removeFromRight (70)); options.removeFromRight (6);
+    autoPreview.setBounds (options);
+    b.removeFromBottom (4);
     auto btns = b.removeFromBottom (30);
-    loadButton.setBounds (btns.removeFromLeft (120)); btns.removeFromLeft (6);
-    loadNextButton.setBounds (btns.removeFromLeft (140)); btns.removeFromLeft (6);
-    stopButton.setBounds (btns.removeFromRight (70)); btns.removeFromRight (6);
-    autoPreview.setBounds (btns);
+    loadButton.setBounds (btns.removeFromLeft (btns.getWidth() * 45 / 100)); btns.removeFromLeft (6);
+    loadNextButton.setBounds (btns);
     b.removeFromBottom (6);
     targetLabel.setBounds (b.removeFromBottom (22));
     b.removeFromBottom (4);

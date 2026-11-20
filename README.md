@@ -120,11 +120,13 @@ Tipkovnica računala svira trenutno odabranu banku:
   - **INPUT**: snima ulaz zvučne kartice (mikrofon, line in, gramofon). „Start on sound“ čeka i kreće točno na prvom zvuku. Ulazni uređaj biraš u Audio Settings.
   - **RESAMPLE**: snima ono što Rezalica svira (padovi, efekti, sekvencer, master). „One loop of the pattern“ pokreće odabrani pattern od početka i snimi točno jedan njegov krug.
   - Snimka se sprema kao WAV u `Dokumenti/Rezalica/Recordings` i odmah je spremna za rezanje (chop mod ili LAZY CHOP). UNDO vraća stari sample.
-- **BROWSER**: pregled mapa sa samplovima. Klik preslušava, dupli klik (ili Enter / LOAD TO PAD) učitava na odabrani pad, a LOAD + NEXT PAD učita pa prijeđe na sljedeći pad.
+- **BROWSER**: stoji lijevo u glavnom prozoru i ostaje otvoren između pokretanja. Klik preslušava, dupli klik (ili LOAD TO PAD) učitava na odabrani pad, a LOAD + NEXT PAD učita pa prijeđe na sljedeći pad. Datoteku možeš i **povući** na bilo koji pad ili u prozor za samplove (te van, u DAW ili mapu).
 - **MASTER FX**: na cijelom izlazu EQ (low 100 Hz, mid s frekvencijom, high 8 kHz), kompresor (threshold, ratio, attack, release, makeup, prikaz GR) i limiter (ceiling). Sprema se s projektom i ulazi u export.
 - **CHOKE** (pored MUTE na padu): padovi iste choke grupe (1–8) prekidaju jedan drugog, npr. otvoreni i zatvoreni hi-hat.
-- **PLAY / STOP** (i **razmaknica**): sampler svira odabrani pattern (step sekvencer + piano roll) bez obzira na scene i pjesmu. Razmaknica radi u glavnom prozoru, step sekvenceru i piano rollu, a u prozoru SCENE pokreće pjesmu.
-- **SCENE**: slaganje pjesme.
+- **PLAY / STOP** (i **razmaknica**): sampler svira odabrani pattern (step sekvencer + piano roll) bez obzira na scene i pjesmu. Ako je pattern prazan (nema koraka ni nota), PLAY svira sample odabranog pada: s uključenim LOOP-om ga vrti do STOP-a, bez LOOP-a ga odsvira jednom.
+- **Tempo** (polje „BPM“ pored CLICK-a): tempo projekta. Prate ga sekvencer, pjesma, metronom (CLICK) i warpani samplovi.
+- U standalone verziji nema gumba LOAD SAMPLE ni STOP ALL: samplovi se učitavaju iz BROWSER-a ili povlačenjem datoteke, a ESC zaustavlja sve. Razmaknica radi u glavnom prozoru, step sekvenceru i piano rollu, a u prozoru SCENE pokreće pjesmu.
+- **SONG** (desno, pored STEP SEQ): slaganje pjesme.
   - **SCENE** ima **128 mjesta** (stranice 1–32 / 33–64 / 65–96 / 97–128). Klik na mjesto bira pattern, a desni klik prazni mjesto. Patterni sviraju jedan za drugim.
   - **Povlačenje** patterna mišem ga premješta (zamjena s mjestom na koje ga spustiš), a **Ctrl + povlačenje** ga kopira.
   - **Dupli klik** na P1, P2 … otvara **RENAME**: ime patterna (npr. „Intro“, „Refren“) i njegova **boja**. Boja se bira i iz izbornika mjesta. Ime i boja spremaju se s projektom. Prazno ime vraća P1, P2…

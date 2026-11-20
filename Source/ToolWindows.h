@@ -56,8 +56,11 @@ public:
     ~BrowserPanel() override;
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override { dragStarted = false; }
 
 private:
+    bool dragStarted = false;
     void selectionChanged() override;
     void fileClicked (const juce::File&, const juce::MouseEvent&) override {}
     void fileDoubleClicked (const juce::File&) override;

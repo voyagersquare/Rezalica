@@ -211,7 +211,23 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         });
 
     if (sequencer.justRestarted)
+    {
         recorder.sequencerStarted(); // resampling a pattern starts exactly with it
+        // PLAY with an empty pattern (no steps, no piano roll notes): the selected pad's sample plays
+        // (with LOOP it loops until STOP, else it plays once)
+        if (! sequencer.isPlayingSong() && sequencer.isPatternEmpty (sequencer.currentPattern.load()))
+        {
+            addTaggedEvent (0, evOffTag, -1, 0.0f, 0.0f, playSampleTag, true);
+            addTaggedEvent (0, evOnTag, selectedPad.load(), 1.0f, 0.0f, playSampleTag, false);
+            playingSampleOnPlay = true;
+        }
+    }
+
+    if (playingSampleOnPlay && ! sequencer.isRunning())
+    {
+        addTaggedEvent (0, evOffTag, -1, 0.0f, 0.0f, playSampleTag, true); // STOP ends it
+        playingSampleOnPlay = false;
+    }
 
     if (wasRunning && ! sequencer.isRunning())
     {

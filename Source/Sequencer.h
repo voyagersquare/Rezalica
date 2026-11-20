@@ -459,6 +459,20 @@ public:
         }
     }
 
+    /** True when a pattern has no steps (within its length) and no piano roll notes. */
+    bool isPatternEmpty (int pattern) const
+    {
+        if (pattern < 0 || pattern >= numPatterns) return true;
+        const int len = juce::jlimit (1, maxSteps, length[(size_t) pattern].load());
+        for (int pad = 0; pad < numPads; ++pad)
+            for (int st = 0; st < len; ++st)
+                if (getStep (pattern, pad, st) > 0) return false;
+        const juce::SpinLock::ScopedTryLockType tl (clipLock);
+        if (! tl.isLocked()) return false;
+        auto c = clips[(size_t) pattern];
+        return c == nullptr || c->notes.empty();
+    }
+
     /** Writes a live pad hit into the current step pattern (when recording). */
     void recordHit (int pad, float velocity, int sampleOffset)
     {

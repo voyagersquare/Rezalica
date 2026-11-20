@@ -14,6 +14,7 @@
 #include "MetronomeControls.h"
 
 class RezalicaEditor : public juce::AudioProcessorEditor,
+                       public juce::DragAndDropContainer,   // files dragged from the docked sample browser
                        private juce::Timer,
                        private juce::ChangeListener
 {
@@ -59,7 +60,12 @@ private:
     rz::MetronomeControls metronome;
     juce::Label autosaveLabel;
     juce::Rectangle<int> toolRowArea;
-    std::unique_ptr<rz::ToolWindow> samplingWindow, browserWindow, masterFxWindow;
+    std::unique_ptr<rz::ToolWindow> samplingWindow, masterFxWindow;
+    std::unique_ptr<rz::BrowserPanel> browserPanel;   // docked on the left of the main window
+    juce::Rectangle<int> browserArea;
+    void toggleBrowser();
+    juce::Slider tempoSlider;                          // project tempo (the metronome and sequencer follow it)
+    bool shouldDropFilesWhenDraggedExternally (const juce::DragAndDropTarget::SourceDetails&, juce::StringArray&, bool&) override;
     void toggleToolWindow (std::unique_ptr<rz::ToolWindow>& w, juce::TextButton& button, int which);
     // autosave / crash recovery / recent projects (standalone)
     void autosave();

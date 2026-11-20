@@ -172,7 +172,7 @@ void WaveformView::paint (juce::Graphics& g)
     {
         g.setColour (dim);
         g.setFont (juce::FontOptions (15.0f));
-        g.drawFittedText ("Drop an audio file here (or use LOAD SAMPLE) to load it on the selected pad,\nthen choose a chop mode to slice it. Right-click a pad for more options.",
+        g.drawFittedText ("Drop an audio file here (from the BROWSER or your file manager) to load it on the selected pad,\nthen choose a chop mode to slice it. Right-click a pad for more options.",
                           getLocalBounds().reduced (20), juce::Justification::centred, 3);
         return;
     }
