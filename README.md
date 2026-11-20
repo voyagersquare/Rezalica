@@ -91,6 +91,10 @@
   - pamti zadnjih 40 koraka, a uputa na gumbu pokazuje što će se poništiti
 - **Kopije su samostalne**: pad kopiran s Copy/Paste ili isti sample učitan na drugi pad dobiva vlastitu kopiju. Warp, Time Stretch i Render na jednom padu ne diraju njegove kopije. Isječci iz istog reza (Chop) i dalje se obrađuju zajedno.
 
+## Izgled
+
+Sučelje izgleda kao hardverski sampler: brušena srebrna ploča, crni paneli s crvenim tiskom, sive gumene tipke s LED lampicom kad su uključene, crni knobovi s kremastim pokazivačem i crvenom skalom, kremasti gumeni padovi i crveni LED zaslon za tempo (BPM: povuci gore/dolje, Shift = fino, kotačić, dupli klik = upis). Isto je u standalone verziji i u VST pluginu.
+
 ## Sviranje
 
 | Banka | MIDI note |

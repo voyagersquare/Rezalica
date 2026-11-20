@@ -15,7 +15,7 @@ void styleToggle (juce::TextButton& b, juce::Colour on = rz::colours::accent)
 } // namespace
 
 RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
-    : AudioProcessorEditor (&p), processor (p), metronome (p.getSequencer()), waveform (p)
+    : AudioProcessorEditor (&p), processor (p), metronome (p.getSequencer()), ledBpm (p.getSequencer()), waveform (p)
 {
     setLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
@@ -105,8 +105,8 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     tempoSlider.setTooltip ("Project tempo: the sequencer, song, metronome and warped samples follow it (drag or double-click to type)");
     tempoSlider.onValueChange = [this] { processor.getSequencer().bpm = (float) tempoSlider.getValue(); };
     tempoSlider.setValue (processor.getSequencer().bpm.load(), juce::dontSendNotification);
-    addChildComponent (tempoSlider);
-    tempoSlider.setVisible (isStandalone);
+    addChildComponent (tempoSlider);   // kept for its callbacks; the LED display shows the tempo now
+    addAndMakeVisible (ledBpm);
     if (isStandalone)
     {
         loadChopButton.setVisible (false); // the BROWSER loads samples in the standalone app
@@ -167,7 +167,11 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     addAndMakeVisible (sensitivitySlider);
 
     attachSlider (masterKnob, "master");
-    masterKnob.slider.setSliderStyle (juce::Slider::LinearBar);
+    masterKnob.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    masterKnob.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 14);
+    masterKnob.slider.setColour (juce::Slider::textBoxTextColourId, rz::colours::ink);
+    masterKnob.label.setColour (juce::Label::textColourId, rz::colours::ink);
+    masterKnob.label.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     masterKnob.slider.setNumDecimalPlacesToDisplay (1);
     masterKnob.slider.setTextValueSuffix (" dB");
     masterKnob.slider.setColour (juce::Slider::trackColourId, rz::colours::accent.withAlpha (0.5f));
@@ -460,7 +464,11 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     lastPlayedCounter = processor.getEngine().playedCounter.load();
 
-    setSize (isStandalone ? 1530 : 1240, isStandalone ? 784 : 748);
+    // on the silver faceplate the print is dark
+    sliceCountLabel.setColour (juce::Label::textColourId, rz::colours::ink);
+    autosaveLabel.setColour (juce::Label::textColourId, rz::colours::ink.withAlpha (0.7f));
+    fxTitle.setColour (juce::Label::textColourId, juce::Colours::white);
+    setSize (isStandalone ? 1530 : 1240, isStandalone ? 784 : 772);
     if (isStandalone)
     {
         lastAutosaveTime = juce::Time::getMillisecondCounterHiRes();
@@ -606,7 +614,8 @@ void RezalicaEditor::refreshPadNames()
         const auto letter = juce::String::charToString ((juce::juce_wchar) ('A' + b));
         const bool muted = processor.isBankMuted (b);
         bankButtons[(size_t) b].setButtonText (letter + (used ? " *" : "") + (muted ? " M" : ""));
-        bankButtons[(size_t) b].setColour (juce::TextButton::buttonColourId, muted ? juce::Colour (0xff8a2a26) : rz::colours::panelLight);
+        if (muted) bankButtons[(size_t) b].setColour (juce::TextButton::buttonColourId, juce::Colour (0xff8a2a26));
+        else       bankButtons[(size_t) b].removeColour (juce::TextButton::buttonColourId); // grey rubber
         bankButtons[(size_t) b].setColour (juce::TextButton::buttonOnColourId, muted ? juce::Colour (0xffe0413a) : rz::colours::accent);
         bankButtons[(size_t) b].repaint();
     }
@@ -1226,41 +1235,102 @@ bool RezalicaEditor::keyStateChanged (bool)
 }
 
 //==============================================================================
+void RezalicaEditor::renderFaceplate()
+{
+    const int w = juce::jmax (1, getWidth()), h = juce::jmax (1, getHeight());
+    if (faceplate.isValid() && faceplate.getWidth() == w && faceplate.getHeight() == h)
+        return;
+    faceplate = juce::Image (juce::Image::RGB, w, h, false);
+    juce::Graphics g (faceplate);
+    using namespace rz::colours;
+    // brushed aluminium: a soft vertical sheen plus fine horizontal grain
+    g.setGradientFill (juce::ColourGradient (silver.brighter (0.12f), 0.0f, 0.0f, silverDark, 0.0f, (float) h, false));
+    g.fillAll();
+    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.18f), (float) w * 0.3f, 0.0f,
+                                             juce::Colours::transparentWhite, (float) w * 0.75f, (float) h, false));
+    g.fillAll();
+    juce::Random rnd (303);
+    for (int y = 0; y < h; ++y)
+    {
+        const float a = rnd.nextFloat() * 0.06f;
+        g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (a));
+        const int x0 = rnd.nextInt (juce::jmax (1, w / 3));
+        g.drawHorizontalLine (y, (float) x0, (float) (x0 + w / 2 + rnd.nextInt (juce::jmax (1, w / 2))));
+    }
+}
+
 void RezalicaEditor::paint (juce::Graphics& g)
 {
     using namespace rz::colours;
-    g.fillAll (background);
+    // dark bezel around a silver faceplate
+    g.fillAll (juce::Colour (0xff0d0d0e));
+    {
+        juce::Graphics::ScopedSaveState ss (g);
+        juce::Path face;
+        face.addRoundedRectangle (getLocalBounds().toFloat().reduced (5.0f), 12.0f);
+        g.reduceClipRegion (face);
+        if (faceplate.isValid())
+            g.drawImageAt (faceplate, 0, 0);
+        else
+            g.fillAll (silver);
+    }
+    g.setColour (juce::Colours::black.withAlpha (0.5f));
+    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (5.0f), 12.0f, 1.5f);
 
+    // black display panels with red print (like the top section of a hardware sampler)
     auto drawPanel = [&] (juce::Rectangle<int> r, const juce::String& title)
     {
+        auto f = r.toFloat();
+        g.setColour (juce::Colours::white.withAlpha (0.35f));               // bevel highlight under the panel
+        g.drawRoundedRectangle (f.translated (0.0f, 1.0f), 6.0f, 1.0f);
         g.setColour (panel);
-        g.fillRoundedRectangle (r.toFloat(), 8.0f);
-        g.setColour (outline);
-        g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 8.0f, 1.0f);
+        g.fillRoundedRectangle (f, 6.0f);
+        g.setColour (accent.withAlpha (0.55f));
+        g.drawRoundedRectangle (f.reduced (3.5f), 4.0f, 1.0f);
         if (title.isNotEmpty())
         {
-            g.setColour (dim);
+            g.setColour (accent);
             g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
             g.drawText (title, r.reduced (10, 6).removeFromTop (14), juce::Justification::topLeft);
         }
     };
 
-    // title
-    g.setColour (accent);
-    g.setFont (juce::FontOptions (26.0f, juce::Font::bold));
-    g.drawText ("REZALICA", headerArea.withWidth (160).withTrimmedBottom (10), juce::Justification::centredLeft);
-    g.setColour (dim);
-    g.setFont (juce::FontOptions (10.0f));
-    g.drawText ("SLICE SAMPLER  4 x 16 PADS", headerArea.withWidth (160).withTrimmedTop (28), juce::Justification::centredLeft);
+    // logo
+    g.setColour (ink);
+    g.setFont (juce::FontOptions (30.0f, juce::Font::bold).withStyle ("Bold Italic"));
+    g.drawText ("REZALICA", logoArea.withHeight (40).translated (2, 0), juce::Justification::centredLeft);
+    g.setColour (accent.darker (0.15f));
+    g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+    g.drawText ("SLICE SAMPLER  4 x 16 PADS", logoArea.withTrimmedTop (36).withHeight (14).translated (3, 0), juce::Justification::centredLeft);
+
+    // red band behind the effects title
+    if (fxTitle.isVisible())
+    {
+        auto t = fxTitle.getBounds().toFloat();
+        const float tw = juce::GlyphArrangement::getStringWidth (fxTitle.getFont(), fxTitle.getText()) + 24.0f;
+        g.setColour (accent);
+        g.fillRoundedRectangle (t.withWidth (juce::jmin (t.getWidth(), tw)).withX (t.getX() - 4.0f), 4.0f);
+    }
 
     drawPanel (sampleArea, {});
     {
+        // pads sit on the faceplate, in a slightly recessed area
+        auto pf = padArea.toFloat();
+        g.setColour (juce::Colours::black.withAlpha (0.12f));
+        g.fillRoundedRectangle (pf, 8.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.drawRoundedRectangle (pf.reduced (0.5f), 8.0f, 1.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.4f));
+        g.drawRoundedRectangle (pf.translated (0.0f, 1.0f).reduced (0.5f), 8.0f, 1.0f);
         const int bank = processor.currentBank.load();
         const int lo = RezalicaProcessor::midiBaseNote + bank * rz::padsPerBank;
-        drawPanel (padArea, "BANK " + juce::String::charToString ((juce::juce_wchar) ('A' + bank))
-                              + "   MIDI " + juce::MidiMessage::getMidiNoteName (lo, true, true, 3)
-                              + "-" + juce::MidiMessage::getMidiNoteName (lo + 15, true, true, 3)
-                              + "   keys 1-4 Q-R A-F Z-V");
+        g.setColour (ink);
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        g.drawText ("BANK " + juce::String::charToString ((juce::juce_wchar) ('A' + bank))
+                        + "   MIDI " + juce::MidiMessage::getMidiNoteName (lo, true, true, 3)
+                        + "-" + juce::MidiMessage::getMidiNoteName (lo + 15, true, true, 3)
+                        + "   keys 1-4 Q-R A-F Z-V",
+                    padArea.reduced (10, 6).removeFromTop (14), juce::Justification::topLeft);
     }
     drawPanel (filterArea, {});
     drawPanel (satArea, {});
@@ -1270,9 +1340,20 @@ void RezalicaEditor::paint (juce::Graphics& g)
 
 void RezalicaEditor::resized()
 {
-    auto b = getLocalBounds().reduced (12);
+    renderFaceplate();
+    auto b = getLocalBounds().reduced (14);
 
-    headerArea = b.removeFromTop (40);
+    // top block: buttons on the left, LED tempo display + master volume knob on the right
+    auto topBlock = b.removeFromTop (isStandalone ? 78 : 64);
+    logoArea = topBlock.withWidth (175);
+    {
+        auto right = topBlock.removeFromRight (214);
+        masterKnob.setBounds (right.removeFromRight (104));
+        right.removeFromRight (12);
+        ledBpm.setBounds (right.withSizeKeepingCentre (right.getWidth(), 54));
+        topBlock.removeFromRight (10);
+    }
+    headerArea = isStandalone ? topBlock.removeFromTop (40) : topBlock;
     {
         auto h = headerArea;
         h.removeFromLeft (175);
@@ -1286,8 +1367,6 @@ void RezalicaEditor::resized()
             stopPlayButton.setBounds (fr.removeFromLeft (64));
             h.removeFromLeft (60 + 12 + 64 + 4 + 64 + 12);
         }
-        masterKnob.setBounds (h.removeFromRight (130).withSizeKeepingCentre (130, 44));
-        h.removeFromRight (10);
         auto row = h.withSizeKeepingCentre (h.getWidth(), 30);
         if (loadChopButton.isVisible())
         {
@@ -1317,21 +1396,23 @@ void RezalicaEditor::resized()
         }
         sliceCountLabel.setBounds (row);
     }
-    b.removeFromTop (10);
-
     if (isStandalone)
     {
         // second row: tools of the standalone app
-        toolRowArea = b.removeFromTop (28);
+        topBlock.removeFromTop (10);
+        toolRowArea = topBlock.removeFromTop (28);
         auto t = toolRowArea;
         t.removeFromLeft (175);
         samplingButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (4);
         browserButton.setBounds (t.removeFromLeft (90)); t.removeFromLeft (4);
         masterFxButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (16);
-        metronome.setBounds (t.removeFromLeft (200)); t.removeFromLeft (6);
-        tempoSlider.setBounds (t.removeFromLeft (120));
-        autosaveLabel.setBounds (t.removeFromRight (200));
-        b.removeFromTop (8);
+        metronome.setBounds (t.removeFromLeft (200));
+        autosaveLabel.setBounds (t.removeFromRight (160));
+    }
+    b.removeFromTop (12);
+
+    if (isStandalone)
+    {
 
         if (browserPanel != nullptr && browserPanel->isVisible())
         {

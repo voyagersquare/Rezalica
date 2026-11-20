@@ -49,40 +49,48 @@ public:
         using namespace colours;
         auto b = getLocalBounds().toFloat().reduced (3.0f);
 
-        auto base = name.isEmpty() ? juce::Colour (0xff2a2c32) : juce::Colour (0xff3a3d45);
-        if (held) base = base.brighter (0.15f);
-        g.setColour (base.interpolatedWith (accent, flashLevel * 0.85f));
-        g.fillRoundedRectangle (b, 7.0f);
-
+        // cream rubber pad: drop shadow, soft dome highlight, lights up warm when hit
+        auto base = name.isEmpty() ? padCream.darker (0.08f) : padCream;
+        if (held) base = base.darker (0.12f);
+        base = base.interpolatedWith (juce::Colour (0xffff6a3d), flashLevel * 0.75f);
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillRoundedRectangle (b.translated (0.0f, held ? 1.0f : 2.5f), 6.0f);
+        auto body = held ? b.translated (0.0f, 1.0f) : b;
+        g.setGradientFill (juce::ColourGradient (base.brighter (0.10f), body.getX(), body.getY(),
+                                                 base.darker (0.10f), body.getX(), body.getBottom(), false));
+        g.fillRoundedRectangle (body, 6.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.35f));
+        g.drawRoundedRectangle (body.reduced (1.5f), 5.0f, 1.0f);
         if (multiSelected)
         {
-            g.setColour (juce::Colour (0xffffc94a).withAlpha (0.16f));
-            g.fillRoundedRectangle (b, 7.0f);
+            g.setColour (juce::Colour (0xffffc94a).withAlpha (0.22f));
+            g.fillRoundedRectangle (body, 6.0f);
         }
-        g.setColour (selected ? accent : multiSelected ? juce::Colour (0xffffc94a) : outline);
-        g.drawRoundedRectangle (b, 7.0f, selected || multiSelected ? 2.5f : 1.0f);
+        g.setColour (selected ? accent : multiSelected ? juce::Colour (0xffe0a020) : juce::Colours::black.withAlpha (0.45f));
+        g.drawRoundedRectangle (body, 6.0f, selected || multiSelected ? 2.5f : 1.0f);
+        b = body;
 
         auto inner = b.reduced (8.0f, 6.0f);
-        g.setColour (flashLevel > 0.5f ? juce::Colours::black : text);
-        g.setFont (juce::FontOptions (22.0f, juce::Font::bold));
+        g.setColour (ink);
+        g.setFont (juce::FontOptions (24.0f, juce::Font::bold));
         g.drawText (padLabel (index), inner.removeFromTop (26.0f), juce::Justification::topLeft);
 
         g.setFont (juce::FontOptions (11.0f));
-        g.setColour (flashLevel > 0.5f ? juce::Colours::black : dim);
+        g.setColour (ink.withAlpha (0.45f));
         g.drawText (key.toUpperCase(), b.reduced (8.0f, 6.0f), juce::Justification::topRight);
 
         if (hasFx)
         {
             auto badge = b.reduced (8.0f, 6.0f).removeFromBottom (14.0f).removeFromRight (22.0f);
-            g.setColour (accent2);
+            g.setColour (accent);
             g.fillRoundedRectangle (badge, 3.0f);
-            g.setColour (juce::Colours::black);
+            g.setColour (juce::Colours::white);
             g.setFont (juce::FontOptions (9.0f, juce::Font::bold));
             g.drawText ("FX", badge, juce::Justification::centred);
             inner.removeFromRight (24.0f);
         }
 
-        g.setColour (flashLevel > 0.5f ? juce::Colours::black : (name.isEmpty() ? dim : text));
+        g.setColour (name.isEmpty() ? ink.withAlpha (0.35f) : ink.withAlpha (0.8f));
         g.setFont (juce::FontOptions (12.0f));
         g.drawFittedText (name.isEmpty() ? juce::String ("empty") : name, inner.toNearestInt(), juce::Justification::bottomLeft, 2);
     }

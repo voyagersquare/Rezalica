@@ -11,6 +11,7 @@
 #include "SceneWindow.h"
 #include "ToolWindows.h"
 #include "AppSettings.h"
+#include "LedDisplay.h"
 #include "MetronomeControls.h"
 
 class RezalicaEditor : public juce::AudioProcessorEditor,
@@ -64,7 +65,11 @@ private:
     std::unique_ptr<rz::BrowserPanel> browserPanel;   // docked on the left of the main window
     juce::Rectangle<int> browserArea;
     void toggleBrowser();
-    juce::Slider tempoSlider;                          // project tempo (the metronome and sequencer follow it)
+    juce::Slider tempoSlider;                          // (replaced by the LED display)
+    rz::LedBpmDisplay ledBpm;                          // project tempo: red LED display, drag / wheel / double-click
+    juce::Rectangle<int> logoArea;
+    juce::Image faceplate;                             // brushed silver texture, rendered on resize
+    void renderFaceplate();
     bool shouldDropFilesWhenDraggedExternally (const juce::DragAndDropTarget::SourceDetails&, juce::StringArray&, bool&) override;
     void toggleToolWindow (std::unique_ptr<rz::ToolWindow>& w, juce::TextButton& button, int which);
     // autosave / crash recovery / recent projects (standalone)

@@ -214,7 +214,7 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
     };
     addAndMakeVisible (places);
 
-    favoritesButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffffc94a).withAlpha (0.25f));
+    favoritesButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffe9c46a));
     favoritesButton.setTooltip ("Your favourite sample folders (right-click a folder in the list to add it)");
     favoritesButton.onClick = [this] { showFavoritesMenu(); };
     for (auto* b : { &favoritesButton, &upButton, &folderButton, &loadButton, &loadNextButton, &stopButton })
