@@ -270,8 +270,10 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p)
     : processor (p),
       dragMidiButton ("DRAG MIDI", [this] { return processor.exportPatternMidi (processor.getSequencer().currentPattern.load(), true, false); }),
       dragWavButton ("DRAG WAV", [this] { return processor.exportPatternWav (processor.getSequencer().currentPattern.load(), true, false); }),
-      grid (p), metronome (p.getSequencer())
+      grid (p), metronome (p.getSequencer()), transport (p.getSequencer(), TransportBar::stepPattern)
 {
+    addAndMakeVisible (transport);
+    metronome.setShowClickButton (false); // the metronome key is in the transport block
     dragMidiButton.setTooltip ("Drag the pattern's steps into your DAW as a MIDI clip (click: show the file)");
     dragWavButton.setTooltip ("Drag the pattern's steps into your DAW as audio (rendered loop, click: show the file)");
     addAndMakeVisible (dragMidiButton);
@@ -484,8 +486,9 @@ void SequencerPanel::resized()
     auto b = getLocalBounds().reduced (10);
     auto top = b.removeFromTop (32);
 
-    playButton.setBounds (top.removeFromLeft (70)); top.removeFromLeft (6);
-    recButton.setBounds (top.removeFromLeft (60)); top.removeFromLeft (6);
+    playButton.setVisible (false);
+    recButton.setVisible (false);
+    transport.setBounds (top.removeFromLeft (transport.getIdealWidth (40))); top.removeFromLeft (8);
     syncButton.setBounds (top.removeFromLeft (100)); top.removeFromLeft (12);
     bpmSlider.setBounds (top.removeFromLeft (120)); top.removeFromLeft (12);
     patternBox.setBounds (top.removeFromLeft (110)); top.removeFromLeft (6);
@@ -507,7 +510,7 @@ void SequencerPanel::resized()
     bankRow.removeFromLeft (6);
     dragWavButton.setBounds (bankRow.removeFromLeft (110));
     bankRow.removeFromLeft (16);
-    metronome.setBounds (bankRow.removeFromLeft (200));
+    metronome.setBounds (bankRow.removeFromLeft (136));
     followButton.setBounds (bankRow.removeFromRight (80));
     bankRow.removeFromRight (8);
     for (int i = (int) pageButtons.size(); --i >= 0;)

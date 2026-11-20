@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "LookAndFeel.h"
+#include "TransportButton.h"
 
 namespace rz
 {
@@ -81,6 +82,7 @@ private:
     void timerCallback() override;
     RezalicaProcessor& processor;
     juce::TextButton playButton { "PLAY SONG" }, stopButton { "STOP" }, loopButton { "LOOP" };
+    TransportBar transport;
     std::array<juce::TextButton, 4> slotPages;
     std::array<juce::TextButton, 2> songPages;
     juce::ComboBox tracksBox;

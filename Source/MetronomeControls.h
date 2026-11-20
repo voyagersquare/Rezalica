@@ -31,11 +31,17 @@ public:
         startTimerHz (8);
     }
 
+    /** false: only the count-in menu (the CLICK key sits elsewhere, e.g. next to the transport). */
+    void setShowClickButton (bool show) { clickButton.setVisible (show); resized(); }
+
     void resized() override
     {
         auto b = getLocalBounds();
-        clickButton.setBounds (b.removeFromLeft (64));
-        b.removeFromLeft (4);
+        if (clickButton.isVisible())
+        {
+            clickButton.setBounds (b.removeFromLeft (64));
+            b.removeFromLeft (4);
+        }
         countInBox.setBounds (b);
     }
 

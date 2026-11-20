@@ -424,7 +424,7 @@ void SongGrid::mouseDrag (const juce::MouseEvent& e)
 }
 
 //==============================================================================
-ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), scene (p), song (p)
+ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), transport (p.getSequencer(), TransportBar::song), scene (p), song (p)
 {
     auto toggle = [this] (juce::TextButton& b, juce::Colour on)
     {
@@ -436,7 +436,9 @@ ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), scene (p), song (
     toggle (playButton, colours::accent);
     toggle (loopButton, colours::accent2);
     stopButton.setWantsKeyboardFocus (false);
-    addAndMakeVisible (stopButton);
+    playButton.setVisible (false);   // the transport block (PLAY / PAUSE / STOP / metronome) replaces them
+    addAndMakeVisible (transport);
+    transport.onStop = [this] { processor.stopAll(); };
     playButton.setTooltip ("Play the song from its start marker (space bar in this window). The sampler's PLAY plays just the selected pattern");
     loopButton.setTooltip ("Start the song again when it ends");
 
@@ -619,8 +621,7 @@ void ScenePanel::resized()
 {
     auto b = getLocalBounds().reduced (10);
     auto top = b.removeFromTop (40);
-    playButton.setBounds (top.removeFromLeft (110).withSizeKeepingCentre (110, 32)); top.removeFromLeft (6);
-    stopButton.setBounds (top.removeFromLeft (70).withSizeKeepingCentre (70, 32)); top.removeFromLeft (6);
+    transport.setBounds (top.removeFromLeft (transport.getIdealWidth (44)).withSizeKeepingCentre (transport.getIdealWidth (44), 38)); top.removeFromLeft (8);
     loopButton.setBounds (top.removeFromLeft (70).withSizeKeepingCentre (70, 32)); top.removeFromLeft (12);
     bpmSlider.setBounds (top.removeFromLeft (120).withSizeKeepingCentre (120, 30)); top.removeFromLeft (8);
     tracksBox.setBounds (top.removeFromLeft (100).withSizeKeepingCentre (100, 30)); top.removeFromLeft (12);

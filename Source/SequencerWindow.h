@@ -4,6 +4,7 @@
 #include "LookAndFeel.h"
 #include "DragExport.h"
 #include "MetronomeControls.h"
+#include "TransportButton.h"
 
 namespace rz
 {
@@ -63,6 +64,7 @@ private:
     DragExportButton dragMidiButton, dragWavButton;
     SequencerGrid grid;
     MetronomeControls metronome;
+    TransportBar transport;
 };
 
 class SequencerWindow : public juce::DocumentWindow

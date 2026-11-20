@@ -81,11 +81,30 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         b->setVisible (isStandalone);
     }
     // transport keys (symbols) next to the LED tempo display
-    for (auto* k : { &recKey, &playKey, &pauseKey, &stopKey })
+    for (auto* k : { &recKey, &playKey, &pauseKey, &stopKey, &clickKey })
     {
         addChildComponent (*k);
         k->setVisible (isStandalone);
     }
+    metronome.setShowClickButton (false); // the metronome key sits next to the transport now
+    clickKey.onClick = [this]
+    {
+        auto& s = processor.getSequencer();
+        s.metronome = ! s.metronome.load();
+        grabKeyboardFocus();
+    };
+    clickKey.onRightClick = [this]
+    {
+        auto& s = processor.getSequencer();
+        juce::PopupMenu m;
+        m.addSectionHeader ("Click volume");
+        for (int i = 1; i <= 10; ++i)
+            m.addItem (i, juce::String (i * 10) + " %", true, juce::roundToInt (s.metronomeLevel.load() * 10.0f) == i);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&clickKey), [this] (int r)
+        {
+            if (r > 0) processor.getSequencer().metronomeLevel = (float) r / 10.0f;
+        });
+    };
     recKey.onClick = [this]
     {
         auto& s = processor.getSequencer();
@@ -726,6 +745,13 @@ void RezalicaEditor::timerCallback()
             pauseKey.setActive (sq.isPaused());
             pauseKey.setBlink (sq.isPaused() && ! blinkOn);
             recKey.setActive (sq.recording.load());
+            clickKey.setActive (sq.metronome.load() || sq.countingIn.load());
+            {
+                // the pendulum swings with the beat while playing
+                const double ppqPerMs = juce::jmax (20.0f, sq.effectiveBpm.load()) / 60000.0;
+                const auto beat = (juce::int64) (juce::Time::getMillisecondCounterHiRes() * ppqPerMs);
+                clickKey.setSwing (sq.internalPlay.load() ? (beat % 2) == 0 : true);
+            }
             recKey.setBlink (sq.recording.load() && (sq.countingIn.load() || ! sq.internalPlay.load()) && ! blinkOn); // blinks while armed / counting in
         }
         if (! titleButtonsDone)
@@ -1394,7 +1420,7 @@ void RezalicaEditor::resized()
     auto topBlock = b.removeFromTop (isStandalone ? 78 : 64);
     logoArea = topBlock.withWidth (175);
     {
-        auto right = topBlock.removeFromRight (isStandalone ? 432 : 214);
+        auto right = topBlock.removeFromRight (isStandalone ? 484 : 214);
         masterKnob.setBounds (right.removeFromRight (104));
         right.removeFromRight (12);
         ledBpm.setBounds (right.removeFromRight (98).withSizeKeepingCentre (98, 54));
@@ -1402,8 +1428,8 @@ void RezalicaEditor::resized()
         {
             // REC  PLAY  PAUSE  STOP  next to the tempo display
             right.removeFromRight (10);
-            auto keys = right.removeFromRight (4 * 48 + 3 * 4).withSizeKeepingCentre (4 * 48 + 3 * 4, 44).translated (0, 6);
-            for (auto* k : { &stopKey, &pauseKey, &playKey, &recKey })
+            auto keys = right.removeFromRight (5 * 48 + 4 * 4).withSizeKeepingCentre (5 * 48 + 4 * 4, 44).translated (0, 6);
+            for (auto* k : { &clickKey, &stopKey, &pauseKey, &playKey, &recKey })
             {
                 k->setBounds (keys.removeFromRight (48));
                 keys.removeFromRight (4);
@@ -1460,7 +1486,7 @@ void RezalicaEditor::resized()
         samplingButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (4);
         browserButton.setBounds (t.removeFromLeft (90)); t.removeFromLeft (4);
         masterFxButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (16);
-        metronome.setBounds (t.removeFromLeft (200));
+        metronome.setBounds (t.removeFromLeft (136)); // count-in menu
         autosaveLabel.setBounds (t.removeFromRight (160));
     }
     b.removeFromTop (12);

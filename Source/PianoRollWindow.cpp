@@ -974,9 +974,12 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
     : processor (p), editor (p),
       dragMidiButton ("DRAG MIDI", [this] { return processor.exportPatternMidi (processor.getSequencer().currentPattern.load(), false, true); }),
       dragWavButton ("DRAG WAV", [this] { return processor.exportPatternWav (processor.getSequencer().currentPattern.load(), false, true); }),
-      metronome (p.getSequencer())
+      metronome (p.getSequencer()),
+      transport (p.getSequencer(), TransportBar::pianoPattern)
 {
     addAndMakeVisible (metronome);
+    addAndMakeVisible (transport);
+    metronome.setShowClickButton (false); // the metronome key is in the transport block
     dragMidiButton.setTooltip ("Drag the piano roll notes into your DAW as a MIDI clip (click: show the file)");
     dragWavButton.setTooltip ("Drag the piano roll part into your DAW as audio (rendered loop, click: show the file)");
     addAndMakeVisible (dragMidiButton);
@@ -1184,8 +1187,9 @@ void PianoRollPanel::resized()
     auto b = getLocalBounds().reduced (10);
 
     auto row1 = b.removeFromTop (30);
-    playButton.setBounds (row1.removeFromLeft (70)); row1.removeFromLeft (6);
-    recButton.setBounds (row1.removeFromLeft (60)); row1.removeFromLeft (6);
+    playButton.setVisible (false);
+    recButton.setVisible (false);
+    transport.setBounds (row1.removeFromLeft (transport.getIdealWidth (38))); row1.removeFromLeft (8);
     syncButton.setBounds (row1.removeFromLeft (100)); row1.removeFromLeft (10);
     bpmSlider.setBounds (row1.removeFromLeft (120)); row1.removeFromLeft (10);
     patternBox.setBounds (row1.removeFromLeft (110)); row1.removeFromLeft (6);
@@ -1209,7 +1213,7 @@ void PianoRollPanel::resized()
     row2.removeFromRight (6);
     dragMidiButton.setBounds (row2.removeFromRight (110));
     row2.removeFromRight (8);
-    metronome.setBounds (row2.removeFromLeft (juce::jmin (200, row2.getWidth())));
+    metronome.setBounds (row2.removeFromLeft (juce::jmin (136, row2.getWidth())));
 
     b.removeFromTop (6);
     infoLabel.setBounds (b.removeFromBottom (18));

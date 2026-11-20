@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "LookAndFeel.h"
 #include "MetronomeControls.h"
+#include "TransportButton.h"
 #include "DragExport.h"
 #include <set>
 
@@ -152,6 +153,7 @@ private:
     juce::Label infoLabel;
     DragExportButton dragMidiButton, dragWavButton;
     MetronomeControls metronome;
+    TransportBar transport;
 };
 
 class PianoRollWindow : public juce::DocumentWindow
