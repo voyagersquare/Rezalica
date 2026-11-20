@@ -74,12 +74,38 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     // standalone app: project files and audio device settings (in a DAW the DAW does this)
     isStandalone = processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
-    for (auto* b : { &fileButton, &sceneButton, &playButton, &stopPlayButton, &samplingButton, &browserButton, &masterFxButton })
+    for (auto* b : { &fileButton, &sceneButton, &samplingButton, &browserButton, &masterFxButton })
     {
         b->setWantsKeyboardFocus (false);
         addChildComponent (*b);
         b->setVisible (isStandalone);
     }
+    // transport keys (symbols) next to the LED tempo display
+    for (auto* k : { &recKey, &playKey, &pauseKey, &stopKey })
+    {
+        addChildComponent (*k);
+        k->setVisible (isStandalone);
+    }
+    recKey.onClick = [this]
+    {
+        auto& s = processor.getSequencer();
+        s.recording = ! s.recording.load();
+        grabKeyboardFocus();
+    };
+    playKey.onClick = [this]
+    {
+        auto& s = processor.getSequencer();
+        if (s.isPaused()) s.resumePlayback();
+        else if (! s.internalPlay.load()) s.playPattern();
+        grabKeyboardFocus();
+    };
+    pauseKey.onClick = [this]
+    {
+        auto& s = processor.getSequencer();
+        if (s.isPaused()) s.resumePlayback(); else s.pausePlayback();
+        grabKeyboardFocus();
+    };
+    stopKey.onClick = [this] { processor.getSequencer().stopPlayback(); grabKeyboardFocus(); };
     addChildComponent (metronome);
     metronome.setVisible (isStandalone);
     addChildComponent (autosaveLabel);
@@ -468,6 +494,12 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     sliceCountLabel.setColour (juce::Label::textColourId, rz::colours::ink);
     autosaveLabel.setColour (juce::Label::textColourId, rz::colours::ink.withAlpha (0.7f));
     fxTitle.setColour (juce::Label::textColourId, juce::Colours::white);
+    if (isStandalone)
+    {
+        // the window can be resized and maximised (full screen); the layout grows with it
+        setResizable (true, false);
+        setResizeLimits (1400, 740, 8000, 5000);
+    }
     setSize (isStandalone ? 1530 : 1240, isStandalone ? 784 : 772);
     if (isStandalone)
     {
@@ -687,7 +719,22 @@ void RezalicaEditor::timerCallback()
 
     if (isStandalone)
     {
-        playButton.setToggleState (processor.getSequencer().isPlayingPattern(), juce::dontSendNotification);
+        {
+            auto& sq = processor.getSequencer();
+            const bool blinkOn = (juce::Time::getMillisecondCounter() / 300) % 2 == 0;
+            playKey.setActive (sq.internalPlay.load());
+            pauseKey.setActive (sq.isPaused());
+            pauseKey.setBlink (sq.isPaused() && ! blinkOn);
+            recKey.setActive (sq.recording.load());
+            recKey.setBlink (sq.recording.load() && (sq.countingIn.load() || ! sq.internalPlay.load()) && ! blinkOn); // blinks while armed / counting in
+        }
+        if (! titleButtonsDone)
+            if (auto* dw = dynamic_cast<juce::DocumentWindow*> (getTopLevelComponent()); dw != nullptr && dw != (juce::Component*) this)
+            {
+                // minimise + maximise (full screen) + close, like every window
+                dw->setTitleBarButtonsRequired (juce::DocumentWindow::allButtons, false);
+                titleButtonsDone = true;
+            }
         if (samplingWindow != nullptr) samplingButton.setToggleState (samplingWindow->isVisible(), juce::dontSendNotification);
         browserButton.setToggleState (browserPanel != nullptr && browserPanel->isVisible(), juce::dontSendNotification);
         if (! tempoSlider.isMouseButtonDown())
@@ -1347,10 +1394,21 @@ void RezalicaEditor::resized()
     auto topBlock = b.removeFromTop (isStandalone ? 78 : 64);
     logoArea = topBlock.withWidth (175);
     {
-        auto right = topBlock.removeFromRight (214);
+        auto right = topBlock.removeFromRight (isStandalone ? 432 : 214);
         masterKnob.setBounds (right.removeFromRight (104));
         right.removeFromRight (12);
-        ledBpm.setBounds (right.withSizeKeepingCentre (right.getWidth(), 54));
+        ledBpm.setBounds (right.removeFromRight (98).withSizeKeepingCentre (98, 54));
+        if (isStandalone)
+        {
+            // REC  PLAY  PAUSE  STOP  next to the tempo display
+            right.removeFromRight (10);
+            auto keys = right.removeFromRight (4 * 48 + 3 * 4).withSizeKeepingCentre (4 * 48 + 3 * 4, 44).translated (0, 6);
+            for (auto* k : { &stopKey, &pauseKey, &playKey, &recKey })
+            {
+                k->setBounds (keys.removeFromRight (48));
+                keys.removeFromRight (4);
+            }
+        }
         topBlock.removeFromRight (10);
     }
     headerArea = isStandalone ? topBlock.removeFromTop (40) : topBlock;
@@ -1361,11 +1419,7 @@ void RezalicaEditor::resized()
         {
             auto fr = h.withSizeKeepingCentre (h.getWidth(), 30);
             fileButton.setBounds (fr.removeFromLeft (60));
-            fr.removeFromLeft (12);
-            playButton.setBounds (fr.removeFromLeft (64));
-            fr.removeFromLeft (4);
-            stopPlayButton.setBounds (fr.removeFromLeft (64));
-            h.removeFromLeft (60 + 12 + 64 + 4 + 64 + 12);
+            h.removeFromLeft (60 + 12);
         }
         auto row = h.withSizeKeepingCentre (h.getWidth(), 30);
         if (loadChopButton.isVisible())
@@ -1425,7 +1479,7 @@ void RezalicaEditor::resized()
     fxArea = b.removeFromBottom (176);
     b.removeFromBottom (10);
 
-    padArea = b.removeFromRight (420);
+    padArea = b.removeFromRight (juce::jmax (420, getWidth() * 27 / 100)); // bigger pads when the window is bigger
     b.removeFromRight (10);
     sampleArea = b;
 

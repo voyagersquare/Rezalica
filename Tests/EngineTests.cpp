@@ -1434,6 +1434,36 @@ int main (int argc, char** argv)
         }
     }
 
+    // ---- PAUSE carries on from the same place ----
+    {
+        auto pp2 = std::make_unique<RezalicaProcessor> (false);
+        auto& q = *pp2;
+        q.prepareToPlay (48000.0, 480);
+        auto& sq = q.getSequencer();
+        sq.syncToHost = false;
+        sq.bpm = 120.0f;
+        sq.length[0] = 64;
+        juce::AudioBuffer<float> blk (2, 480);
+        juce::MidiBuffer none;
+        auto runFor = [&] (double secs) { for (int i = 0; i < (int) (48000 * secs / 480); ++i) q.processBlock (blk, none); };
+        sq.playPattern();
+        runFor (1.0);                                   // 1 s = 8 steps
+        sq.pausePlayback();
+        runFor (0.5);
+        const bool stopped = ! sq.isRunning() && sq.isPaused();
+        sq.resumePlayback();
+        runFor (0.5);                                   // 4 more steps
+        const double pos = sq.getPlayPositionSteps();
+        std::cout << "       after pause + resume: step " << pos << "\n";
+        check (stopped && std::abs (pos - 12.0) < 0.3, "PAUSE stops, PLAY carries on from the same step");
+        sq.stopPlayback();
+        runFor (0.1);
+        sq.playPattern();
+        runFor (0.25);
+        check (std::abs (sq.getPlayPositionSteps() - 2.0) < 0.3, "STOP goes back to the start");
+        sq.stopPlayback();
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);

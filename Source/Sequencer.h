@@ -239,7 +239,12 @@ public:
 
         const bool restart = restartRequested.exchange (false); // always consume the request
         justRestarted = false;
-        if ((internal && ! wasInternal) || restart)
+        if (internal && ! wasInternal && ! restart && resumeFromPause.exchange (false))
+        {
+            // PLAY after PAUSE: carry on from where it stopped
+            lastPpqEnd = -1.0e9;
+        }
+        else if ((internal && ! wasInternal) || restart)
         {
             justRestarted = internal;
             // the song starts at its start marker; REC with count-in first plays 1-2 bars of clicks
@@ -735,15 +740,36 @@ public:
 
     std::atomic<bool> songMode { false }, songLoop { false };
     std::atomic<bool> restartRequested { false }; // internal clock back to the start
+    std::atomic<bool> paused { false }, resumeFromPause { false };
 
     // ---- transport (message thread) ----
     /** PLAY of the sampler: the selected pattern (step sequencer + piano roll) loops, independent of the song. */
-    void playPattern() { songMode = false; restartRequested = true; internalPlay = true; }
+    void playPattern()
+    {
+        if (paused.exchange (false) && ! songMode.load()) { resumeFromPause = true; internalPlay = true; return; } // resume after PAUSE
+        resumeFromPause = false;
+        songMode = false; restartRequested = true; internalPlay = true;
+    }
     /** PLAY SONG of the SCENE window. */
-    void playSong() { songMode = true; restartRequested = true; internalPlay = true; }
-    void stopPlayback() { internalPlay = false; }
+    void playSong() { paused = false; resumeFromPause = false; songMode = true; restartRequested = true; internalPlay = true; }
+    void stopPlayback() { paused = false; resumeFromPause = false; internalPlay = false; }
+    /** PAUSE: stops, the next PLAY carries on from the same place. */
+    void pausePlayback()
+    {
+        if (! internalPlay.load()) return;
+        paused = true;
+        internalPlay = false;
+    }
+    /** PLAY after PAUSE (pattern or song, whichever was paused). */
+    void resumePlayback()
+    {
+        if (! paused.exchange (false)) return;
+        resumeFromPause = true;
+        internalPlay = true;
+    }
+    bool isPaused() const { return paused.load(); }
     /** Space bar / PLAY button toggle for the sampler. */
-    void togglePatternPlay() { if (internalPlay.load()) stopPlayback(); else playPattern(); }
+    void togglePatternPlay() { if (internalPlay.load()) stopPlayback(); else if (paused.load()) resumePlayback(); else playPattern(); }
     bool isPlayingSong() const { return internalPlay.load() && songMode.load() && songLengthSteps() > 0; }
     bool isPlayingPattern() const { return internalPlay.load() && ! isPlayingSong(); }
     std::atomic<int> songPosStep { -1 };

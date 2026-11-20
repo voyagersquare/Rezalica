@@ -129,6 +129,8 @@ Tipkovnica računala svira trenutno odabranu banku:
 - **MASTER FX**: na cijelom izlazu EQ (low 100 Hz, mid s frekvencijom, high 8 kHz), kompresor (threshold, ratio, attack, release, makeup, prikaz GR) i limiter (ceiling). Sprema se s projektom i ulazi u export.
 - **Višestruki odabir padova**: klik na prvi pad, pa **Shift+klik** na zadnji označi sve između (npr. A1–A16), a **Ctrl+klik** dodaje ili miče pojedini pad. Označeni padovi imaju žuti okvir. Desni klik na bilo koji pad → **Clear all selected pads** isprazni sve odjednom (jedan UNDO ih vraća). ESC ili običan klik poništava odabir.
 - **CHOKE** (pored MUTE na padu): padovi iste choke grupe (1–8) prekidaju jedan drugog, npr. otvoreni i zatvoreni hi-hat.
+- **Transportne tipke** (gore desno, pored LED BPM zaslona): **REC** (snimanje odsviranog u odabrani pattern, s count-inom; trepće dok čeka), **PLAY**, **PAUSE** (zaustavi, PLAY nastavlja s istog mjesta) i **STOP** (natrag na početak).
+- Prozor se može povećati i **maksimizirati** (tipka u naslovnoj traci ili dupli klik na nju); valni oblik i padovi rastu s prozorom.
 - **PLAY / STOP** (i **razmaknica**): sampler svira odabrani pattern (step sekvencer + piano roll) bez obzira na scene i pjesmu. Ako je pattern prazan (nema koraka ni nota), PLAY svira sample odabranog pada: s uključenim LOOP-om ga vrti do STOP-a, bez LOOP-a ga odsvira jednom.
 - **Tempo** (polje „BPM“ pored CLICK-a): tempo projekta. Prate ga sekvencer, pjesma, metronom (CLICK) i warpani samplovi.
 - U standalone verziji nema gumba LOAD SAMPLE ni STOP ALL: samplovi se učitavaju iz BROWSER-a ili povlačenjem datoteke, a ESC zaustavlja sve. Razmaknica radi u glavnom prozoru, step sekvenceru i piano rollu, a u prozoru SCENE pokreće pjesmu.

@@ -12,6 +12,7 @@
 #include "ToolWindows.h"
 #include "AppSettings.h"
 #include "LedDisplay.h"
+#include "TransportButton.h"
 #include "MetronomeControls.h"
 
 class RezalicaEditor : public juce::AudioProcessorEditor,
@@ -66,7 +67,12 @@ private:
     juce::Rectangle<int> browserArea;
     void toggleBrowser();
     juce::Slider tempoSlider;                          // (replaced by the LED display)
-    rz::LedBpmDisplay ledBpm;                          // project tempo: red LED display, drag / wheel / double-click
+    rz::LedBpmDisplay ledBpm;
+    rz::TransportButton recKey { rz::TransportButton::record, "REC: record what you play into the selected pattern (uses the count-in)" },
+                        playKey { rz::TransportButton::play, "PLAY the selected pattern (space bar). After PAUSE it carries on" },
+                        pauseKey { rz::TransportButton::pause, "PAUSE: stop here, PLAY carries on from the same place" },
+                        stopKey { rz::TransportButton::stop, "STOP (back to the start)" };
+    bool titleButtonsDone = false;                          // project tempo: red LED display, drag / wheel / double-click
     juce::Rectangle<int> logoArea;
     juce::Image faceplate;                             // brushed silver texture, rendered on resize
     void renderFaceplate();
