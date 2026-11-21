@@ -113,7 +113,7 @@ Tempo (crveni LED BPM zaslon) je zajednički za glavni prozor, STEP SEQ, PIANO R
 
 ## Izgled
 
-Sučelje izgleda kao hardverski sampler: brušena srebrna ploča, crni paneli s crvenim tiskom, sive gumene tipke s LED lampicom kad su uključene, crni knobovi s kremastim pokazivačem i crvenom skalom, kremasti gumeni padovi i crveni LED zaslon za tempo (BPM: povuci gore/dolje, Shift = fino, kotačić, dupli klik = upis). Isto je u standalone verziji i u VST pluginu.
+Veliki prozor za waveform izgleda kao ekran starog televizora (kremasti okvir, zaobljeno staklo s odsjajem i linijama). Sve tipke zaglavlja su u jednom redu s transportom. Sučelje izgleda kao hardverski sampler: brušena srebrna ploča, crni paneli s crvenim tiskom, sive gumene tipke s LED lampicom kad su uključene, crni knobovi s kremastim pokazivačem i crvenom skalom, kremasti gumeni padovi i crveni LED zaslon za tempo (BPM: povuci gore/dolje, Shift = fino, kotačić, dupli klik = upis). Isto je u standalone verziji i u VST pluginu.
 
 ## Sviranje
 

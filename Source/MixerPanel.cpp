@@ -143,9 +143,13 @@ void MixerStrip::refresh()
 
 void MixerStrip::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat();
-    g.setColour (colours::panel);
+    auto r = getLocalBounds().toFloat().withTrimmedBottom (3.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.45f));
+    g.fillRoundedRectangle (r.translated (0.0f, 3.0f), 6.0f);
+    g.setGradientFill (juce::ColourGradient (colours::panel.brighter (0.18f), r.getX(), r.getY(), colours::panel.darker (0.35f), r.getX(), r.getBottom(), false));
     g.fillRoundedRectangle (r, 6.0f);
+    g.setColour (juce::Colours::white.withAlpha (0.15f));
+    g.drawHorizontalLine ((int) r.getY() + 1, r.getX() + 6.0f, r.getRight() - 6.0f);
     g.setColour ((bus == 0 ? colours::accent : colours::accent.withAlpha (0.5f)));
     g.drawRoundedRectangle (r.reduced (2.5f), 4.0f, 1.0f);
 }

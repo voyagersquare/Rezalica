@@ -29,6 +29,8 @@ public:
 
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
+    void paintMarkerOverlay (juce::Graphics&);
+    float crtRadius() const;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;

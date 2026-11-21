@@ -161,10 +161,18 @@ void WaveformView::paint (juce::Graphics& g)
 {
     using namespace colours;
     auto bounds = getLocalBounds().toFloat();
-    g.setColour (juce::Colour (0xff101114));
-    g.fillRoundedRectangle (bounds, 6.0f);
-    g.setColour (dragOver ? accent : outline);
-    g.drawRoundedRectangle (bounds.reduced (0.5f), 6.0f, dragOver ? 2.0f : 1.0f);
+    // an old TV screen: rounded glass, darker towards the corners
+    juce::Path crt;
+    crt.addRoundedRectangle (bounds, crtRadius());
+    g.reduceClipRegion (crt);
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff1f2a2e), bounds.getCentreX(), bounds.getCentreY() - bounds.getHeight() * 0.1f,
+                                             juce::Colour (0xff070a0b), bounds.getX(), bounds.getY(), true));
+    g.fillAll();
+    if (dragOver)
+    {
+        g.setColour (accent);
+        g.drawRoundedRectangle (bounds.reduced (1.0f), crtRadius(), 2.0f);
+    }
 
     auto area = waveArea();
 
@@ -358,7 +366,47 @@ void WaveformView::paint (juce::Graphics& g)
     }
 }
 
+float WaveformView::crtRadius() const
+{
+    return juce::jlimit (8.0f, 26.0f, (float) juce::jmin (getWidth(), getHeight()) * 0.07f);
+}
+
 void WaveformView::paintOverChildren (juce::Graphics& g)
+{
+    paintMarkerOverlay (g);
+
+    // the glass of an old TV: scan lines, dark corners, a soft reflection and the rim shadow
+    auto b = getLocalBounds().toFloat();
+    const float r = crtRadius();
+    juce::Path crt;
+    crt.addRoundedRectangle (b, r);
+    juce::Graphics::ScopedSaveState ss (g);
+    g.reduceClipRegion (crt);
+    g.setColour (juce::Colours::black.withAlpha (0.13f));
+    for (float y = b.getY() + 1.0f; y < b.getBottom(); y += 3.0f)
+        g.drawHorizontalLine ((int) y, b.getX(), b.getRight());
+    {
+        juce::ColourGradient vignette (juce::Colours::transparentBlack, b.getCentreX(), b.getCentreY(),
+                                       juce::Colours::black.withAlpha (0.55f), b.getX(), b.getY(), true);
+        vignette.addColour (0.65, juce::Colours::transparentBlack);
+        g.setGradientFill (vignette);
+        g.fillRect (b);
+    }
+    {
+        // reflection: a bright curved band in the upper part of the glass
+        juce::Path glare;
+        glare.addEllipse (b.getX() - b.getWidth() * 0.15f, b.getY() - b.getHeight() * 0.75f, b.getWidth() * 1.1f, b.getHeight() * 1.05f);
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.10f), b.getX(), b.getY(),
+                                                 juce::Colours::white.withAlpha (0.0f), b.getX(), b.getY() + b.getHeight() * 0.32f, false));
+        g.fillPath (glare);
+    }
+    g.setColour (juce::Colours::black.withAlpha (0.7f));
+    g.drawRoundedRectangle (b.reduced (1.0f), r, 3.0f);
+    g.setColour (juce::Colours::white.withAlpha (0.06f));
+    g.drawRoundedRectangle (b.reduced (4.0f), r - 3.0f, 1.0f);
+}
+
+void WaveformView::paintMarkerOverlay (juce::Graphics& g)
 {
     using namespace colours;
     if (sample == nullptr)

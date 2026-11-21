@@ -55,13 +55,19 @@ public:
         auto base = name.isEmpty() ? padCream.darker (0.08f) : padCream;
         if (held) base = base.darker (0.12f);
         base = base.interpolatedWith (juce::Colour (0xffff6a3d), flashLevel * 0.75f);
-        g.setColour (juce::Colours::black.withAlpha (0.45f));
-        g.fillRoundedRectangle (b.translated (0.0f, held ? 1.0f : 2.5f), 6.0f);
-        auto body = held ? b.translated (0.0f, 1.0f) : b;
-        g.setGradientFill (juce::ColourGradient (base.brighter (0.10f), body.getX(), body.getY(),
-                                                 base.darker (0.10f), body.getX(), body.getBottom(), false));
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillRoundedRectangle (b.translated (0.0f, held ? 1.0f : 4.0f), 6.0f);
+        auto body = held ? b.translated (0.0f, 2.5f) : b;
+        g.setGradientFill (juce::ColourGradient (base.brighter (0.2f), body.getX(), body.getY(),
+                                                 base.darker (0.22f), body.getX(), body.getBottom(), false));
         g.fillRoundedRectangle (body, 6.0f);
-        g.setColour (juce::Colours::white.withAlpha (0.35f));
+        // domed rubber: a soft highlight on the upper half, darker rim at the bottom
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (held ? 0.1f : 0.35f), body.getCentreX(), body.getY(),
+                                                 juce::Colours::transparentWhite, body.getCentreX(), body.getCentreY(), false));
+        g.fillRoundedRectangle (body.reduced (3.0f).withHeight (body.getHeight() * 0.5f), 5.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.18f));
+        g.drawHorizontalLine ((int) body.getBottom() - 2, body.getX() + 6.0f, body.getRight() - 6.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.45f));
         g.drawRoundedRectangle (body.reduced (1.5f), 5.0f, 1.0f);
         if (multiSelected)
         {

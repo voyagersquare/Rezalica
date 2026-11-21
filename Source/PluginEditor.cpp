@@ -144,7 +144,8 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     autosaveLabel.setVisible (isStandalone);
     autosaveLabel.setColour (juce::Label::textColourId, rz::colours::dim);
     autosaveLabel.setFont (juce::FontOptions (11.0f));
-    autosaveLabel.setJustificationType (juce::Justification::centredRight);
+    autosaveLabel.setJustificationType (juce::Justification::centredLeft);
+    autosaveLabel.setFont (juce::FontOptions (10.0f));
     styleToggle (samplingButton, juce::Colour (0xffe0413a));
     styleToggle (browserButton, rz::colours::accent2);
     styleToggle (masterFxButton, rz::colours::accent);
@@ -532,7 +533,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     lastPlayedCounter = processor.getEngine().playedCounter.load();
 
     // on the silver faceplate the print is dark
-    sliceCountLabel.setColour (juce::Label::textColourId, rz::colours::ink);
+    sliceCountLabel.setColour (juce::Label::textColourId, rz::colours::dim); // in the dark sample panel now
     autosaveLabel.setColour (juce::Label::textColourId, rz::colours::ink.withAlpha (0.7f));
     fxTitle.setColour (juce::Label::textColourId, juce::Colours::white);
     if (isStandalone)
@@ -1486,11 +1487,20 @@ void RezalicaEditor::paint (juce::Graphics& g)
     // black display panels with red print (like the top section of a hardware sampler)
     auto drawPanel = [&] (juce::Rectangle<int> r, const juce::String& title)
     {
+        if (r.isEmpty()) return;
         auto f = r.toFloat();
-        g.setColour (juce::Colours::white.withAlpha (0.35f));               // bevel highlight under the panel
-        g.drawRoundedRectangle (f.translated (0.0f, 1.0f), 6.0f, 1.0f);
-        g.setColour (panel);
+        // raised black panel: soft drop shadow, light top edge, dark bottom edge
+        for (int i = 4; i > 0; --i)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.06f * (float) i));
+            g.fillRoundedRectangle (f.translated (0.0f, (float) (5 - i)).expanded ((float) (5 - i) * 0.6f), 8.0f);
+        }
+        g.setGradientFill (juce::ColourGradient (panel.brighter (0.18f), f.getX(), f.getY(), panel.darker (0.35f), f.getX(), f.getBottom(), false));
         g.fillRoundedRectangle (f, 6.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.16f));
+        g.drawHorizontalLine ((int) f.getY() + 1, f.getX() + 6.0f, f.getRight() - 6.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.6f));
+        g.drawRoundedRectangle (f.reduced (0.5f), 6.0f, 1.0f);
         g.setColour (accent.withAlpha (0.55f));
         g.drawRoundedRectangle (f.reduced (3.5f), 4.0f, 1.0f);
         if (title.isNotEmpty())
@@ -1520,14 +1530,37 @@ void RezalicaEditor::paint (juce::Graphics& g)
 
     drawPanel (sampleArea, {});
     {
+        // the cream plastic frame of an old TV around the sample screen
+        auto screen = waveform.getBounds().toFloat();
+        const float rScreen = juce::jlimit (8.0f, 26.0f, juce::jmin (screen.getWidth(), screen.getHeight()) * 0.07f);
+        auto frame = screen.expanded ((float) tvBezel);
+        const float rFrame = rScreen + (float) tvBezel * 0.8f;
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillRoundedRectangle (frame.translated (0.0f, 3.0f), rFrame);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff1ecdf), frame.getX(), frame.getY(),
+                                                 juce::Colour (0xffb9b19c), frame.getX(), frame.getBottom(), false));
+        g.fillRoundedRectangle (frame, rFrame);
+        g.setColour (juce::Colours::white.withAlpha (0.7f));
+        g.drawRoundedRectangle (frame.reduced (1.5f), rFrame - 1.0f, 1.2f);
+        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.drawRoundedRectangle (frame.reduced (0.5f), rFrame, 1.0f);
+        // the dark lip where the glass sits in the frame
+        auto lip = screen.expanded (4.0f);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff1a1a1a), lip.getX(), lip.getY(),
+                                                 juce::Colour (0xff6d675a), lip.getX(), lip.getBottom(), false));
+        g.fillRoundedRectangle (lip, rScreen + 3.0f);
+    }
+    {
         // pads sit on the faceplate, in a slightly recessed area
         auto pf = padArea.toFloat();
-        g.setColour (juce::Colours::black.withAlpha (0.12f));
+        // a recessed well: dark top / left inner shadow, light bottom edge
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.28f), pf.getX(), pf.getY(),
+                                                 juce::Colours::black.withAlpha (0.06f), pf.getX(), pf.getY() + 40.0f, false));
         g.fillRoundedRectangle (pf, 8.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.35f));
-        g.drawRoundedRectangle (pf.reduced (0.5f), 8.0f, 1.0f);
-        g.setColour (juce::Colours::white.withAlpha (0.4f));
-        g.drawRoundedRectangle (pf.translated (0.0f, 1.0f).reduced (0.5f), 8.0f, 1.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.drawRoundedRectangle (pf.reduced (0.5f), 8.0f, 1.5f);
+        g.setColour (juce::Colours::white.withAlpha (0.55f));
+        g.drawHorizontalLine ((int) pf.getBottom(), pf.getX() + 8.0f, pf.getRight() - 8.0f);
         const int bank = processor.currentBank.load();
         const int lo = RezalicaProcessor::midiBaseNote + bank * rz::padsPerBank;
         g.setColour (ink);
@@ -1549,83 +1582,61 @@ void RezalicaEditor::resized()
     renderFaceplate();
     auto b = getLocalBounds().reduced (14);
 
-    // top block: buttons on the left, LED tempo display + master volume knob on the right
-    auto topBlock = b.removeFromTop (isStandalone ? 78 : 64);
-    logoArea = topBlock.withWidth (175);
+    // top block: one row of keys, the LED tempo display and the master volume knob on the right
+    auto topBlock = b.removeFromTop (64);
+    logoArea = topBlock.withWidth (170);
     {
-        auto right = topBlock.removeFromRight (isStandalone ? 484 : 214);
+        auto right = topBlock.removeFromRight (isStandalone ? 460 : 214);
         masterKnob.setBounds (right.removeFromRight (104));
         right.removeFromRight (12);
         ledBpm.setBounds (right.removeFromRight (98).withSizeKeepingCentre (98, 54));
         if (isStandalone)
         {
-            // REC  PLAY  PAUSE  STOP  next to the tempo display
+            // REC  PLAY  PAUSE  STOP  METRONOME next to the tempo display
             right.removeFromRight (10);
-            auto keys = right.removeFromRight (5 * 48 + 4 * 4).withSizeKeepingCentre (5 * 48 + 4 * 4, 44).translated (0, 6);
+            auto keys = right.removeFromRight (5 * 44 + 4 * 4).withSizeKeepingCentre (5 * 44 + 4 * 4, 42).translated (0, 4);
             transportCentreY = keys.getCentreY();
             for (auto* k : { &clickKey, &stopKey, &pauseKey, &playKey, &recKey })
             {
-                k->setBounds (keys.removeFromRight (48));
+                k->setBounds (keys.removeFromRight (44));
                 keys.removeFromRight (4);
             }
         }
         topBlock.removeFromRight (10);
     }
-    headerArea = isStandalone ? topBlock.removeFromTop (40) : topBlock;
+    headerArea = topBlock;
     {
-        auto h = headerArea;
-        h.removeFromLeft (175);
+        auto row = topBlock.withTrimmedLeft (170);
+        row = row.withY (isStandalone ? transportCentreY - 15 : row.getCentreY() - 15).withHeight (30); // one line with the transport keys
+        auto put = [&row] (juce::Component& c, int w, int gap = 3) { c.setBounds (row.removeFromLeft (w)); row.removeFromLeft (gap); };
+        auto putRight = [&row] (juce::Component& c, int w, int gap = 3) { c.setBounds (row.removeFromRight (w)); row.removeFromRight (gap); };
         if (isStandalone)
         {
-            auto fr = h.withSizeKeepingCentre (h.getWidth(), 30);
-            fileButton.setBounds (fr.removeFromLeft (60));
-            h.removeFromLeft (60 + 12);
+            put (fileButton, 42);
+            put (browserButton, 72);
+            put (samplingButton, 76, 10);
+            if (masterFxButton.isVisible()) put (masterFxButton, 80, 10);
+            put (chopModeBox, 98);
+            put (lazyButton, 74);
+            put (undoButton, 50);
+            put (redoButton, 50);
+            put (metronome, 100, 8);                    // count-in
+            putRight (pianoRollButton, 84);
+            putRight (seqButton, 70);
+            putRight (sceneButton, 54, 8);
         }
-        auto row = h.withSizeKeepingCentre (h.getWidth(), 30);
-        if (loadChopButton.isVisible())
+        else
         {
-            loadChopButton.setBounds (row.removeFromLeft (112));
-            row.removeFromLeft (6);
+            if (loadChopButton.isVisible()) put (loadChopButton, 108, 6);
+            put (chopModeBox, 108, 6);
+            put (lazyButton, 90, 8);
+            put (undoButton, 58);
+            put (redoButton, 58, 8);
+            if (stopButton.isVisible()) putRight (stopButton, 86, 6);
+            putRight (pianoRollButton, 100, 6);
+            putRight (seqButton, 90, 6);
         }
-        chopModeBox.setBounds (row.removeFromLeft (112)); row.removeFromLeft (6);
-        if (sensitivitySlider.isVisible())
-        {
-            sensitivitySlider.setBounds (row.removeFromLeft (100));
-            row.removeFromLeft (6);
-        }
-        lazyButton.setBounds (row.removeFromLeft (96)); row.removeFromLeft (10);
-        undoButton.setBounds (row.removeFromLeft (62)); row.removeFromLeft (4);
-        redoButton.setBounds (row.removeFromLeft (62)); row.removeFromLeft (8);
-        if (stopButton.isVisible())
-        {
-            stopButton.setBounds (row.removeFromRight (86));
-            row.removeFromRight (6);
-        }
-        if (! isStandalone)
-        {
-            pianoRollButton.setBounds (row.removeFromRight (100)); row.removeFromRight (6);
-            seqButton.setBounds (row.removeFromRight (90)); row.removeFromRight (6);
-        }
-        sliceCountLabel.setBounds (row);
-    }
-    if (isStandalone)
-    {
-        // second row: tools of the standalone app
-        topBlock.removeFromTop (10);
-        toolRowArea = topBlock.removeFromTop (28);
-        auto t = toolRowArea;
-        t.removeFromLeft (175);
-        browserButton.setBounds (t.removeFromLeft (90)); t.removeFromLeft (4);
-        samplingButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (4);
-        if (masterFxButton.isVisible()) { masterFxButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (4); }
-        t.removeFromLeft (12);
-        metronome.setBounds (t.removeFromLeft (136)); // count-in menu
-        // SONG / STEP SEQ / PIANO ROLL at the height of the transport keys
-        auto level = [this] (juce::Rectangle<int> r) { return r.withY (transportCentreY - 15).withHeight (30); }; // centred on the transport keys
-        pianoRollButton.setBounds (level (t.removeFromRight (100))); t.removeFromRight (6);
-        seqButton.setBounds (level (t.removeFromRight (90))); t.removeFromRight (6);
-        sceneButton.setBounds (level (t.removeFromRight (70))); t.removeFromRight (12);
-        autosaveLabel.setBounds (t.removeFromRight (juce::jmin (130, t.getWidth())));
+        autosaveLabel.setBounds (logoArea.withTrimmedTop (50).withHeight (13).translated (3, 0));
     }
     b.removeFromTop (12);
 
@@ -1655,12 +1666,13 @@ void RezalicaEditor::resized()
             auto s = sampleArea.reduced (10);
             auto titleRow = s.removeFromBottom (24);
             s.removeFromBottom (6);
-            waveform.setBounds (s);
+            waveform.setBounds (s.reduced (tvBezel)); // room for the TV frame
             clearPadButton.setBounds (titleRow.removeFromRight (70)); titleRow.removeFromRight (6);
             renderButton.setBounds (titleRow.removeFromRight (80));   titleRow.removeFromRight (6);
             trimButton.setBounds (titleRow.removeFromRight (70));     titleRow.removeFromRight (6);
             stretchButton.setBounds (titleRow.removeFromRight (90));  titleRow.removeFromRight (6);
             warpButton.setBounds (titleRow.removeFromRight (70));
+            layoutChopInfo (titleRow);
             padTitle.setBounds (titleRow);
         }
         layoutPads();
@@ -1678,7 +1690,7 @@ void RezalicaEditor::resized()
     // ---- sample + pad strip ----
     {
         auto s = sampleArea.reduced (10);
-        waveform.setBounds (s.removeFromTop (s.getHeight() - 190));
+        waveform.setBounds (s.removeFromTop (s.getHeight() - 190).reduced (tvBezel)); // room for the TV frame
         s.removeFromTop (8);
         auto titleRow = s.removeFromTop (24);
         clearPadButton.setBounds (titleRow.removeFromRight (70));
@@ -1690,6 +1702,7 @@ void RezalicaEditor::resized()
         stretchButton.setBounds (titleRow.removeFromRight (90));
         titleRow.removeFromRight (6);
         warpButton.setBounds (titleRow.removeFromRight (70));
+        layoutChopInfo (titleRow);
         padTitle.setBounds (titleRow);
 
         s.removeFromTop (6);
@@ -1710,6 +1723,18 @@ void RezalicaEditor::resized()
 
     // ---- effects ----
     layoutEffects();
+}
+
+void RezalicaEditor::layoutChopInfo (juce::Rectangle<int>& titleRow)
+{
+    // transient sensitivity and the number of slices sit in the pad title row, left of WARP
+    titleRow.removeFromRight (8);
+    if (sensitivitySlider.isVisible())
+    {
+        sensitivitySlider.setBounds (titleRow.removeFromRight (110));
+        titleRow.removeFromRight (6);
+    }
+    sliceCountLabel.setBounds (titleRow.removeFromRight (70));
 }
 
 void RezalicaEditor::layoutPads()

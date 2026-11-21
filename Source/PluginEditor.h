@@ -165,6 +165,8 @@ private:
     std::vector<juce::Component*> hiddenByDock;
     void showDock (int view);
     void layoutPads();
+    void layoutChopInfo (juce::Rectangle<int>& titleRow);
+    static constexpr int tvBezel = 13;
     void layoutEffects();
     std::vector<juce::Component*> stripAndFxComponents();
     juce::Component* dockedPanel() const;

@@ -74,13 +74,19 @@ public:
         if (down) face = face.darker (0.18f);
         else if (highlighted) face = face.brighter (0.06f);
 
-        // shadow + body + a soft top highlight like moulded rubber
-        g.setColour (juce::Colours::black.withAlpha (0.45f));
-        g.fillRoundedRectangle (r.translated (0.0f, 1.5f), 4.0f);
-        g.setGradientFill (juce::ColourGradient (face.brighter (0.12f), r.getX(), r.getY(),
-                                                 face.darker (0.12f), r.getX(), r.getBottom(), false));
+        // raised moulded rubber key: shadow under it, bright top, dark bottom, highlight on the top edge
+        const float lift = down ? 0.5f : 2.5f;
+        g.setColour (juce::Colours::black.withAlpha (0.5f));
+        g.fillRoundedRectangle (r.translated (0.0f, lift), 4.0f);
+        if (down) r = r.translated (0.0f, 1.0f);
+        g.setGradientFill (juce::ColourGradient (face.brighter (down ? 0.05f : 0.25f), r.getX(), r.getY(),
+                                                 face.darker (down ? 0.05f : 0.25f), r.getX(), r.getBottom(), false));
         g.fillRoundedRectangle (r, 4.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.setColour (juce::Colours::white.withAlpha (down ? 0.15f : 0.55f));
+        g.drawHorizontalLine ((int) r.getY() + 1, r.getX() + 4.0f, r.getRight() - 4.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.25f));
+        g.drawHorizontalLine ((int) r.getBottom() - 2, r.getX() + 4.0f, r.getRight() - 4.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
         g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
 
         if (on && b.getClickingTogglesState())
@@ -176,6 +182,10 @@ public:
         }
         g.setColour (juce::Colours::black);
         g.drawEllipse (c.x - knobR, c.y - knobR, knobR * 2.0f, knobR * 2.0f, 1.0f);
+        // light from the top left on the knob cap
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.22f), c.x - knobR * 0.5f, c.y - knobR * 0.7f,
+                                                 juce::Colours::transparentWhite, c.x, c.y, true));
+        g.fillEllipse (c.x - knobR * 0.8f, c.y - knobR * 0.85f, knobR * 1.2f, knobR * 1.0f);
 
         juce::Path pointer;
         pointer.addRoundedRectangle (-2.0f, -knobR + 2.0f, 4.0f, knobR * 0.7f, 2.0f);
