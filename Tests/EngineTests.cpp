@@ -3,6 +3,8 @@
 #include "../Source/PluginEditor.h"
 #include "../Source/SceneWindow.h"
 #include "../Source/AppSettings.h"
+#include "../Source/Mp3Writer.h"
+#include "../Source/ExportDialog.h"
 #include "../Source/TimeStretch.h"
 #include <iostream>
 
@@ -1565,6 +1567,48 @@ int main (int argc, char** argv)
         check (m.getSlotProcessor (1, 0) == nullptr, "an effect can be removed from its slot");
     }
 
+    // ---- export options and "unsaved changes" ----
+    {
+        auto ep2 = std::make_unique<RezalicaProcessor> (false);
+        auto& e = *ep2;
+        e.prepareToPlay (48000.0, 512);
+        e.chopFileToPads (file, RezalicaProcessor::chop8);
+        auto& sq = e.getSequencer();
+        sq.syncToHost = false; sq.bpm = 120.0f;
+        sq.setStep (0, 0, 0, 127);
+        sq.setSongStep (0, 0);                                   // 1 bar = 2 s
+        sq.effectiveBpm = 120.0f;
+        RezalicaProcessor::ExportSettings es;
+        es.sampleRate = 44100.0; es.bitDepth = 16; es.mono = true; es.normalize = true; es.tailSeconds = 1.0;
+        es.title = "Test Song"; es.artist = "Rezalica";
+        auto wf = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_export.wav");
+        juce::String err;
+        const bool ok = e.exportSong (wf, es, err);
+        std::unique_ptr<juce::AudioFormatReader> rd (e.getFormatManager().createReaderFor (wf));
+        float peak[1] {}, low[1] {};
+        if (rd != nullptr) { juce::Range<float> rg[1]; rd->readMaxLevels (0, rd->lengthInSamples, rg, 1); low[0] = rg[0].getStart(); peak[0] = rg[0].getEnd(); }
+        std::cout << "       export: " << (rd ? (int) rd->sampleRate : 0) << " Hz, " << (rd ? (int) rd->bitsPerSample : 0) << " bit, "
+                  << (rd ? (int) rd->numChannels : 0) << " ch, " << (rd ? (int) rd->lengthInSamples : 0) << " samples, peak " << juce::jmax (peak[0], -low[0]) << "\n";
+        check (ok && rd != nullptr && (int) rd->sampleRate == 44100 && rd->bitsPerSample == 16 && rd->numChannels == 1
+                   && (int) rd->lengthInSamples == 44100 * 3 && std::abs (juce::jmax (peak[0], -low[0]) - juce::Decibels::decibelsToGain (-0.3f)) < 0.01f,
+               "song export: 44.1 kHz / 16-bit / mono / normalized, length = song + tail");
+        check (rd != nullptr && rd->metadataValues.getValue (juce::WavAudioFormat::riffInfoTitle, {}) == "Test Song", "the title is written into the WAV");
+        rd.reset();
+        wf.deleteFile();
+        es.format = RezalicaProcessor::ExportSettings::mp3;
+        auto mf = wf.withFileExtension ("mp3");
+        check (e.exportSong (mf, es, err) == rz::Mp3Writer::isAvailable(), "MP3 export (Windows encoder) reports whether it is available");
+        mf.deleteFile();
+
+        e.markProjectSaved();
+        e.selectedPad = 5;
+        const bool selectionIsNoChange = ! e.hasUnsavedChanges();
+        sq.bpm = 97.0f;
+        check (selectionIsNoChange && e.hasUnsavedChanges(), "unsaved changes are noticed (selecting a pad is not a change)");
+        e.markProjectSaved();
+        check (! e.hasUnsavedChanges(), "after saving there is nothing to save");
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);
@@ -1711,6 +1755,10 @@ int main (int argc, char** argv)
             qs.songStartStep = 0;
         }
         {
+            rz::ExportDialog xd (q, nullptr);
+            xd.setLookAndFeel (&lnf);
+            save (xd, "export.png");
+            xd.setLookAndFeel (nullptr);
             rz::RecorderPanel rp (q);
             rp.setLookAndFeel (&lnf);
             save (rp, "sampling.png");

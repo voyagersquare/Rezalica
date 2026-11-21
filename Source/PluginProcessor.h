@@ -108,6 +108,9 @@ public:
     bool loadProjectFromFile (const juce::File& file);
     void newProject();
     juce::File currentProjectFile;
+    /** Unsaved changes since the last New / Open / Save (pad selection and similar don't count). */
+    bool hasUnsavedChanges();
+    void markProjectSaved();
 
     // ---- export a pattern for dragging into the DAW ----
     static juce::File getExportFolder();
@@ -117,6 +120,24 @@ public:
 
     // ---- export the whole song (SCENE window) ----
     bool exportSongWav (const juce::File& file);
+
+    /** Song export with the options of the export window. */
+    struct ExportSettings
+    {
+        enum Format { wav = 0, mp3 = 1 };
+        int format = wav;
+        double sampleRate = 0.0;     // 0 = the current one
+        int bitDepth = 24;           // WAV: 16, 24 or 32 (float)
+        bool dither = true;          // WAV 16-bit: TPDF dither
+        int mp3Kbps = 320;
+        bool mono = false;
+        bool normalize = false;      // peak to -0.3 dBFS
+        double tailSeconds = 3.0;    // reverb / delay ringing out after the song
+        juce::String title, artist;
+    };
+    bool exportSong (const juce::File& file, const ExportSettings& settings, juce::String& error);
+    /** Renders the whole song offline (stereo). */
+    juce::AudioBuffer<float> renderSong (double sampleRate, double tailSeconds);
     bool exportSongMidi (const juce::File& file);
 
     // manual chop markers (switch the chop mode to Manual)
@@ -279,6 +300,8 @@ private:
     int clickSamplesLeft = 0, clickLength = 1;
     double clickPhase = 0.0, clickFreq = 1000.0;
     rz::SampleData::Ptr previewData;
+    juce::int64 savedFingerprint = 0;
+    juce::int64 projectFingerprint();
     static constexpr int playSampleTag = (1 << 28) + 7; // PLAY of an empty pattern plays the selected pad
     bool playingSampleOnPlay = false;
     double currentSampleRate = 44100.0;

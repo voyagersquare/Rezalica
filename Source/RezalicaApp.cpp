@@ -9,8 +9,21 @@
 #if JucePlugin_Build_Standalone
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 
+extern std::function<void (std::function<void()>)> rezalicaConfirmQuit; // set by the editor (PluginEditor.cpp)
+
 namespace
 {
+/** The main window: its close button asks the app to quit (so unsaved changes are asked about). */
+struct RezalicaWindow : public juce::StandaloneFilterWindow
+{
+    using juce::StandaloneFilterWindow::StandaloneFilterWindow;
+    void closeButtonPressed() override
+    {
+        if (auto* app = juce::JUCEApplicationBase::getInstance())
+            app->systemRequestedQuit();
+    }
+};
+
 class RezalicaApp final : public juce::JUCEApplication
 {
 public:
@@ -46,7 +59,7 @@ public:
             pluginHolder = createPluginHolder();
             return;
         }
-        mainWindow = std::make_unique<juce::StandaloneFilterWindow> (getApplicationName(),
+        mainWindow = std::make_unique<RezalicaWindow> (getApplicationName(),
                                                                      juce::LookAndFeel::getDefaultLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId),
                                                                      createPluginHolder());
         mainWindow->setVisible (true);
@@ -61,6 +74,12 @@ public:
 
     void systemRequestedQuit() override
     {
+        if (rezalicaConfirmQuit && ! confirmed)
+        {
+            // "Save changes?" first; quits only after Save / Don't Save
+            rezalicaConfirmQuit ([this] { confirmed = true; systemRequestedQuit(); });
+            return;
+        }
         if (pluginHolder != nullptr)
             pluginHolder->savePluginState();
         if (mainWindow != nullptr)
@@ -115,6 +134,7 @@ private:
         std::_Exit (0);
     }
 
+    bool confirmed = false;
     juce::ApplicationProperties appProperties;
     std::unique_ptr<juce::StandaloneFilterWindow> mainWindow;
     std::unique_ptr<juce::StandalonePluginHolder> pluginHolder;

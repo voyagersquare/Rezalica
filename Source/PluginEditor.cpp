@@ -2,6 +2,9 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 
+/** Asked by the standalone app (RezalicaApp.cpp) before it quits: the editor asks to save changes. */
+std::function<void (std::function<void()>)> rezalicaConfirmQuit;
+
 namespace
 {
 const char* const padKeys = "1234qwerasdfzxcv"; // computer keyboard -> pads 1..16
@@ -554,6 +557,13 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     if (isStandalone)
     {
         lastAutosaveTime = juce::Time::getMillisecondCounterHiRes();
+        processor.markProjectSaved(); // a fresh start has nothing to save
+        juce::Component::SafePointer<RezalicaEditor> safeQuit (this);
+        rezalicaConfirmQuit = [safeQuit] (std::function<void()> quit)
+        {
+            if (safeQuit != nullptr) safeQuit->confirmDiscardChanges ("closing Rezalica", quit);
+            else quit();
+        };
         if (rz::AppSettings::get().getBoolValue ("browserOpen", false))
             toggleBrowser(); // the docked browser stays open between sessions
         juce::Component::SafePointer<RezalicaEditor> safe (this);
@@ -577,7 +587,10 @@ RezalicaEditor::~RezalicaEditor()
     browserPanel = nullptr;
     masterFxWindow = nullptr;
     if (isStandalone)
+    {
+        rezalicaConfirmQuit = nullptr;
         rz::AppSettings::getRunningFlag().deleteFile(); // a clean exit: nothing to recover next time
+    }
     stretchWindow = nullptr;
     sceneWindow = nullptr;
     pianoRollWindow = nullptr;
@@ -957,7 +970,7 @@ void RezalicaEditor::showFileMenu()
     m.addItem (3, "Save Project           Ctrl+S");
     m.addItem (4, "Save Project As...     Ctrl+Shift+S");
     m.addSeparator();
-    m.addItem (7, "Export Song as WAV...");
+    m.addItem (7, "Export Song (WAV / MP3)...");
     m.addItem (8, "Export Song as MIDI...");
     m.addSeparator();
     m.addItem (5, "Audio Settings...");
@@ -971,7 +984,12 @@ void RezalicaEditor::showFileMenu()
     {
         if (safe == nullptr) return;
         if (r == 99) { rz::AppSettings::clearRecentProjects(); return; }
-        if (r >= 100 && r < 100 + recent.size()) { safe->openProjectFile (juce::File (recent[r - 100])); return; }
+        if (r >= 100 && r < 100 + recent.size())
+        {
+            const juce::File f (recent[r - 100]);
+            safe->confirmDiscardChanges ("opening another project", [safe, f] { if (safe != nullptr) safe->openProjectFile (f); });
+            return;
+        }
         switch (r)
         {
             case 1: safe->newProject(); break;
@@ -1006,28 +1024,64 @@ void RezalicaEditor::exportSong (bool asMidi)
     if (processor.getSequencer().songLengthSteps() == 0)
     {
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Export song",
-                                                "The song is empty. Open SCENE and put scenes on the song steps first.");
+                                                "The song is empty. Open SONG and put the scene on the song steps first.");
+        return;
+    }
+    if (! asMidi)
+    {
+        // audio: the export window with the options first
+        juce::Component::SafePointer<RezalicaEditor> safe (this);
+        juce::DialogWindow::LaunchOptions o;
+        o.content.setOwned (new rz::ExportDialog (processor, [safe] (const RezalicaProcessor::ExportSettings& s)
+        {
+            if (safe != nullptr) safe->chooseExportFile (s);
+        }));
+        o.dialogTitle = "Export Song";
+        o.dialogBackgroundColour = rz::colours::background;
+        o.useNativeTitleBar = true;
+        o.resizable = false;
+        o.componentToCentreAround = this;
+        if (auto* dw = o.launchAsync())
+            dw->setLookAndFeel (&lnf);
         return;
     }
     auto folder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Export");
     folder.createDirectory();
     const auto name = processor.currentProjectFile != juce::File() ? processor.currentProjectFile.getFileNameWithoutExtension() : juce::String ("Rezalica Song");
-    const juce::String ext = asMidi ? ".mid" : ".wav";
-    fileChooser = std::make_unique<juce::FileChooser> (asMidi ? "Export the song as MIDI" : "Export the song as WAV",
-                                                       folder.getChildFile (name + ext), asMidi ? "*.mid" : "*.wav");
+    fileChooser = std::make_unique<juce::FileChooser> ("Export the song as MIDI", folder.getChildFile (name + ".mid"), "*.mid");
     fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
                                 | juce::FileBrowserComponent::warnAboutOverwriting,
-                              [this, asMidi, ext] (const juce::FileChooser& fc)
+                              [this] (const juce::FileChooser& fc)
     {
         auto f = fc.getResult();
         if (f == juce::File()) return;
-        if (! f.hasFileExtension (ext.substring (1)))
-            f = f.withFileExtension (ext);
-        const bool ok = asMidi ? processor.exportSongMidi (f) : processor.exportSongWav (f);
-        if (ok)
-            f.revealToUser();
-        else
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Export song", "The song could not be exported.");
+        if (! f.hasFileExtension ("mid")) f = f.withFileExtension (".mid");
+        if (processor.exportSongMidi (f)) f.revealToUser();
+        else juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Export song", "The song could not be exported.");
+    });
+}
+
+void RezalicaEditor::chooseExportFile (const RezalicaProcessor::ExportSettings& settings)
+{
+    const bool mp3 = settings.format == RezalicaProcessor::ExportSettings::mp3;
+    const juce::String ext = mp3 ? ".mp3" : ".wav";
+    auto folder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Export");
+    folder.createDirectory();
+    const auto name = settings.title.isNotEmpty() ? juce::File::createLegalFileName (settings.title) : juce::String ("Rezalica Song");
+    fileChooser = std::make_unique<juce::FileChooser> (mp3 ? "Export the song as MP3" : "Export the song as WAV", folder.getChildFile (name + ext), "*" + ext);
+    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [this, settings, ext] (const juce::FileChooser& fc)
+    {
+        auto f = fc.getResult();
+        if (f == juce::File()) return;
+        if (! f.hasFileExtension (ext.substring (1))) f = f.withFileExtension (ext);
+        juce::MouseCursor::showWaitCursor();
+        juce::String err;
+        const bool ok = processor.exportSong (f, settings, err);
+        juce::MouseCursor::hideWaitCursor();
+        if (ok) f.revealToUser();
+        else juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Export song", "The song could not be exported.\n" + err);
     });
 }
 
@@ -1043,18 +1097,22 @@ void RezalicaEditor::showAudioSettings()
 void RezalicaEditor::newProject()
 {
     juce::Component::SafePointer<RezalicaEditor> safe (this);
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "New project",
-                                        "Start a new, empty project? Unsaved changes are lost.", "New project", "Cancel", this,
-                                        juce::ModalCallbackFunction::create ([safe] (int ok)
+    confirmDiscardChanges ("starting a new project", [safe]
     {
-        if (safe == nullptr || ok == 0) return;
+        if (safe == nullptr) return;
         safe->processor.newProject();
         safe->updateWindowTitle();
         safe->selectPad (0);
-    }));
+    });
 }
 
 void RezalicaEditor::openProject()
+{
+    juce::Component::SafePointer<RezalicaEditor> safe (this);
+    confirmDiscardChanges ("opening another project", [safe] { if (safe != nullptr) safe->chooseProjectToOpen(); });
+}
+
+void RezalicaEditor::chooseProjectToOpen()
 {
     auto start = processor.currentProjectFile.existsAsFile() ? processor.currentProjectFile.getParentDirectory()
                                                              : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica");
@@ -1222,15 +1280,17 @@ void RezalicaEditor::checkCrashRecovery()
     }));
 }
 
-void RezalicaEditor::saveProject (bool saveAs)
+void RezalicaEditor::saveProject (bool saveAs, std::function<void (bool)> done)
 {
     if (! saveAs && processor.currentProjectFile != juce::File())
     {
-        if (! processor.saveProjectToFile (processor.currentProjectFile))
+        const bool ok = processor.saveProjectToFile (processor.currentProjectFile);
+        if (! ok)
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save project", "The project could not be saved.");
         else
             rz::AppSettings::addRecentProject (processor.currentProjectFile);
         updateWindowTitle();
+        if (done) done (ok);
         return;
     }
 
@@ -1241,18 +1301,43 @@ void RezalicaEditor::saveProject (bool saveAs)
     fileChooser = std::make_unique<juce::FileChooser> ("Save the Rezalica project", suggestion, "*.rezalica");
     fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
                                 | juce::FileBrowserComponent::warnAboutOverwriting,
-                              [this] (const juce::FileChooser& fc)
+                              [this, done] (const juce::FileChooser& fc)
     {
         auto f = fc.getResult();
-        if (f == juce::File()) return;
+        if (f == juce::File()) { if (done) done (false); return; }
         if (! f.hasFileExtension ("rezalica"))
             f = f.withFileExtension ("rezalica");
-        if (! processor.saveProjectToFile (f))
+        const bool ok = processor.saveProjectToFile (f);
+        if (! ok)
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save project", "The project could not be saved.");
         else
             rz::AppSettings::addRecentProject (f);
         updateWindowTitle();
+        if (done) done (ok);
     });
+}
+
+void RezalicaEditor::confirmDiscardChanges (const juce::String& what, std::function<void()> proceed)
+{
+    if (! processor.hasUnsavedChanges())
+    {
+        proceed();
+        return;
+    }
+    const auto name = processor.currentProjectFile != juce::File() ? "\"" + processor.currentProjectFile.getFileNameWithoutExtension() + "\""
+                                                                   : juce::String ("this project");
+    auto* w = new juce::AlertWindow ("Save changes?", "Do you want to save the changes to " + name + " before " + what + "?\n"
+                                     "If you don't save, your changes will be lost.", juce::MessageBoxIconType::QuestionIcon, this);
+    w->addButton ("YES", 1, juce::KeyPress (juce::KeyPress::returnKey));  // save, then go on
+    w->addButton ("NO", 2);                                                // don't save, go on
+    w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey)); // stay
+    juce::Component::SafePointer<RezalicaEditor> safe (this);
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, proceed] (int r)
+    {
+        if (safe == nullptr || r == 0) return;   // Cancel: stay
+        if (r == 2) { proceed(); return; }        // Don't Save
+        safe->saveProject (false, [proceed] (bool ok) { if (ok) proceed(); }); // Save (asks for a file the first time)
+    }), true);
 }
 
 void RezalicaEditor::updateWindowTitle()

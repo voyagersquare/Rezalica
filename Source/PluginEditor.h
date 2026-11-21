@@ -14,6 +14,7 @@
 #include "LedDisplay.h"
 #include "TransportButton.h"
 #include "MixerPanel.h"
+#include "ExportDialog.h"
 #include "MetronomeControls.h"
 
 class RezalicaEditor : public juce::AudioProcessorEditor,
@@ -85,6 +86,8 @@ private:
     void autosave();
     void checkCrashRecovery();
     void openProjectFile (const juce::File& f);
+    void chooseProjectToOpen();
+    void chooseExportFile (const RezalicaProcessor::ExportSettings&);
     double lastAutosaveTime = 0.0;
     juce::MemoryBlock lastAutosavedState;
     int lastSelectedPad = -1;
@@ -99,7 +102,9 @@ private:
     void showAudioSettings();
     void newProject();
     void openProject();
-    void saveProject (bool saveAs);
+    void saveProject (bool saveAs, std::function<void (bool)> done = nullptr);
+    /** "Save changes?" with Save / Don't Save / Cancel; calls proceed unless cancelled. */
+    void confirmDiscardChanges (const juce::String& what, std::function<void()> proceed);
     void updateWindowTitle();
     void toggleSceneWindow();
     void exportSong (bool asMidi);

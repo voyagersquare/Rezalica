@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "TimeStretch.h"
+#include "Mp3Writer.h"
 #include <algorithm>
 #include <map>
 #include <cmath>
@@ -1042,8 +1043,24 @@ bool RezalicaProcessor::saveProjectToFile (const juce::File& file)
     if (! xml->writeTo (file))
         return false;
     currentProjectFile = file;
+    markProjectSaved();
     return true;
 }
+
+juce::int64 RezalicaProcessor::projectFingerprint()
+{
+    juce::MemoryBlock state;
+    getStateInformation (state);
+    auto xml = getXmlFromBinary (state.getData(), (int) state.getSize());
+    if (xml == nullptr) return 0;
+    // what you look at is not a change of the project
+    for (auto* a : { "selectedPad", "bank", "chromaticPad" }) xml->removeAttribute (a);
+    if (auto* seq = xml->getChildByName ("SEQ")) seq->removeAttribute ("pattern");
+    return xml->toString().hashCode64();
+}
+
+bool RezalicaProcessor::hasUnsavedChanges() { return projectFingerprint() != savedFingerprint; }
+void RezalicaProcessor::markProjectSaved()   { savedFingerprint = projectFingerprint(); }
 
 bool RezalicaProcessor::loadProjectFromFile (const juce::File& file)
 {
@@ -1057,6 +1074,7 @@ bool RezalicaProcessor::loadProjectFromFile (const juce::File& file)
     undoStack.clear();
     redoStack.clear();
     currentProjectFile = file;
+    markProjectSaved();
     return true;
 }
 
@@ -1070,6 +1088,7 @@ void RezalicaProcessor::newProject()
     undoStack.clear();
     redoStack.clear();
     currentProjectFile = juce::File();
+    markProjectSaved();
 }
 
 juce::File RezalicaProcessor::getExportFolder()
@@ -1249,17 +1268,17 @@ bool RezalicaProcessor::exportSongMidi (const juce::File& file)
     return out.openedOk() && mf.writeTo (out);
 }
 
-bool RezalicaProcessor::exportSongWav (const juce::File& file)
+juce::AudioBuffer<float> RezalicaProcessor::renderSong (double sr, double tailSeconds)
 {
     std::vector<rz::Sequencer::SongSegment> segs;
     double total = 0.0;
     if (sequencer.buildSong (segs, total) == 0)
-        return false;
+        return {};
 
     const double bpm = juce::jmax (20.0f, sequencer.effectiveBpm.load());
-    const double sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
+    if (sr <= 0.0) sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
     const int songSamples = (int) std::llround (total * 60.0 / bpm * sr);
-    const int tailSamples = (int) (sr * 3.0); // let reverb / delay ring out at the end
+    const int tailSamples = (int) (sr * juce::jmax (0.0, tailSeconds)); // let reverb / delay ring out at the end
 
     juce::MemoryBlock state;
     getStateInformation (state);
@@ -1294,17 +1313,67 @@ bool RezalicaProcessor::exportSongWav (const juce::File& file)
         for (int ch = 0; ch < 2; ++ch)
             out.copyFrom (ch, pos, sub, ch, 0, n);
     }
+    return out;
+}
 
+bool RezalicaProcessor::exportSongWav (const juce::File& file)
+{
+    ExportSettings s; // 24-bit WAV at the current sample rate, 3 s tail
+    juce::String err;
+    return exportSong (file, s, err);
+}
+
+bool RezalicaProcessor::exportSong (const juce::File& file, const ExportSettings& es, juce::String& error)
+{
+    const double sr = es.sampleRate > 0.0 ? es.sampleRate : (currentSampleRate > 0.0 ? currentSampleRate : 44100.0);
+    auto audio = renderSong (sr, es.tailSeconds);
+    if (audio.getNumSamples() == 0) { error = "The song is empty"; return false; }
+
+    // mono: both channels summed
+    int chans = 2;
+    if (es.mono)
+    {
+        audio.addFrom (0, 0, audio, 1, 0, audio.getNumSamples());
+        audio.applyGain (0, 0, audio.getNumSamples(), 0.5f);
+        chans = 1;
+    }
+    // normalize: the loudest peak at -0.3 dBFS
+    if (es.normalize)
+    {
+        float peak = 0.0f;
+        for (int ch = 0; ch < chans; ++ch) peak = juce::jmax (peak, audio.getMagnitude (ch, 0, audio.getNumSamples()));
+        if (peak > 1.0e-6f) audio.applyGain (juce::Decibels::decibelsToGain (-0.3f) / peak);
+    }
+    juce::AudioBuffer<float> outAudio (audio.getArrayOfWritePointers(), chans, audio.getNumSamples());
+
+    if (es.format == ExportSettings::mp3)
+        return rz::Mp3Writer::write (file, outAudio, sr, es.mp3Kbps, es.title, es.artist, error);
+
+    // WAV: 16-bit gets TPDF dither (when asked), 32 = float
+    if (es.bitDepth == 16 && es.dither)
+    {
+        juce::Random rnd (1234);
+        const float lsb = 1.0f / 32768.0f;
+        for (int ch = 0; ch < chans; ++ch)
+        {
+            float* d = outAudio.getWritePointer (ch);
+            for (int i = 0; i < outAudio.getNumSamples(); ++i)
+                d[i] += (rnd.nextFloat() - rnd.nextFloat()) * lsb;
+        }
+    }
     file.deleteFile();
+    juce::StringPairArray meta;
+    if (es.title.isNotEmpty())  meta.set (juce::WavAudioFormat::riffInfoTitle, es.title);
+    if (es.artist.isNotEmpty()) meta.set (juce::WavAudioFormat::riffInfoArtist, es.artist);
+    meta.set (juce::WavAudioFormat::riffInfoSoftware, "Rezalica");
     juce::WavAudioFormat wav;
     std::unique_ptr<juce::OutputStream> os (file.createOutputStream());
-    if (os == nullptr)
-        return false;
-    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), sr, 2, 24, {}, 0));
-    if (w == nullptr)
-        return false;
+    if (os == nullptr) { error = "The file cannot be written"; return false; }
+    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), sr, (unsigned int) chans, juce::jlimit (16, 32, es.bitDepth), meta, 0));
+    if (w == nullptr) { error = "This WAV format is not supported"; return false; }
     os.release();
-    return w->writeFromAudioSampleBuffer (out, 0, totalSamples);
+    if (! w->writeFromAudioSampleBuffer (outAudio, 0, outAudio.getNumSamples())) { error = "Writing failed"; return false; }
+    return true;
 }
 
 juce::File RezalicaProcessor::getRenderFolder()

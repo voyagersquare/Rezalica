@@ -139,7 +139,8 @@ Tipkovnica računala svira trenutno odabranu banku:
 
 - **FILE**: New Project (Ctrl+N), Open Project… (Ctrl+O), **Open Recent** (zadnjih 10 projekata), Save Project (Ctrl+S), Save Project As… (Ctrl+Shift+S), Export Song as WAV / MIDI…, Audio Settings…
   - Projekti se spremaju kao `.rezalica` datoteke (zadano u `Dokumenti/Rezalica/Projects`). Samplovi se pamte po putanji.
-  - **Autosave**: svake minute (ako se nešto promijenilo) projekt se automatski sprema. Ako se Rezalica sruši ili nestane struje, pri sljedećem pokretanju nudi vraćanje automatski spremljenog projekta.
+  - **Spremanje promjena**: pri zatvaranju programa, New Project i Open, ako ima nespremljenih promjena, pita „Save changes?“ — **YES** (spremi), **NO** (ne spremaj), **CANCEL** (ostani).
+- **Autosave**: svake minute (ako se nešto promijenilo) projekt se automatski sprema. Ako se Rezalica sruši ili nestane struje, pri sljedećem pokretanju nudi vraćanje automatski spremljenog projekta.
 - **SAMPLING**: snimanje na odabrani pad.
   - **COMPUTER** (Windows): snima zvuk koji računalo reproducira (YouTube, Spotify, drugi programi …), bez kabela i virtualnih uređaja (WASAPI loopback zadanog izlaza). Pauze bez zvuka ostaju u snimci.
   - **INPUT**: snima ulaz zvučne kartice (mikrofon, line in, gramofon). „Start on sound“ čeka i kreće točno na prvom zvuku. Ulazni uređaj biraš u Audio Settings.
@@ -171,7 +172,8 @@ Tipkovnica računala svira trenutno odabranu banku:
   - **START marker**: klik na ravnalo iznad SONG redova postavlja odakle PLAY SONG kreće, a desni klik ga vraća na početak.
   - PLAY SONG (ili razmaknica u tom prozoru) svira pjesmu od start markera, STOP je zaustavlja, a LOOP je ponavlja (od početka). Export uvijek uzima cijelu pjesmu. Step sekvencer i piano roll prate pattern koji upravo svira. Glavni PLAY uvijek svira samo pattern.
   - **Timer** pokazuje proteklo vrijeme pjesme (min:s.desetinke), poziciju (takt.doba.šesnaestinka) i ukupnu duljinu.
-  - FILE → **Export Song as WAV…** (cijela pjesma + 3 s repa) i **Export Song as MIDI…**
+  - FILE → **Export Song (WAV / MP3)…** otvara prozor s opcijama: format (WAV ili MP3), sample rate (44,1 / 48 / 88,2 / 96 kHz; MP3 44,1 / 48), bit depth (16 / 24 / 32-bit float, dither za 16-bit), MP3 bitrate (128–320 kbps), stereo / mono, normalizacija na −0,3 dB, rep na kraju (0–5 s), naslov i izvođač (metapodaci). Prikazuje duljinu i procjenu veličine datoteke. MP3 koristi Windowsov ugrađeni enkoder.
+  - FILE → **Export Song as MIDI…**
 - **Audio Settings…** (u FILE izborniku): postavke zvuka:
   - vrsta drivera: **ASIO** (ASIO4ALL, FlexASIO i ASIO driveri zvučnih kartica), Windows Audio (i Exclusive / Low Latency), DirectSound
   - izlazni i ulazni uređaj, aktivni kanali, sample rate, buffer size (latencija), probni ton i MIDI ulazi (kontroleri)
