@@ -1536,6 +1536,8 @@ int main (int argc, char** argv)
         const bool againA1 = c.getEngine().isPadSounding (0) && ! c.getEngine().isPadSounding (3);
         sq.stopPlayback();
         check (a1First && a4CutA1 && againA1, "A4 cuts A1, the next loop starts with A1 again");
+        check (c.getEngine().lastSequencedPad.load() >= 0 && c.getEngine().sequencedCounter.load() >= 3,
+               "the sample view knows which chop the sequencer plays");
     }
 
     // Copy / paste pad

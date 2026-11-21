@@ -329,6 +329,8 @@ public:
 
     std::atomic<int> lastPlayedPad { -1 };   // last pad hit by MIDI / keyboard / mouse (not the sequencer)
     std::atomic<int> playedCounter { 0 };
+    std::atomic<int> lastSequencedPad { -1 };   // last pad hit by the step sequencer / piano roll
+    std::atomic<int> sequencedCounter { 0 };
 
 private:
     bool isPadPlaying (int pad) const;

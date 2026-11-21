@@ -109,7 +109,7 @@ private:
     std::array<rz::BankButton, rz::numBanks> bankButtons;
     void showBankVolume (int bank);
     void showBankMenu (int bank);
-    int lastPlayedCounter = 0;
+    int lastPlayedCounter = 0, lastSequencedCounter = 0;
     rz::Knob masterKnob { "MASTER" };
 
     // sample view + selected pad

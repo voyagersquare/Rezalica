@@ -238,6 +238,11 @@ void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer, float t
         lastPlayedPad = pad;
         ++playedCounter;
     }
+    else if (s != nullptr)
+    {
+        lastSequencedPad = pad; // the sample view follows the sequencer too
+        ++sequencedCounter;
+    }
 
     if (s == nullptr || ps.mute.load() || bankMute[(size_t) (pad / padsPerBank)].load())
         return;

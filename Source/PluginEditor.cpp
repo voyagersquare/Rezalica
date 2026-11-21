@@ -17,6 +17,19 @@ void styleToggle (juce::TextButton& b, juce::Colour on = rz::colours::accent)
 RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     : AudioProcessorEditor (&p), processor (p), metronome (p.getSequencer()), ledBpm (p.getSequencer()), waveform (p)
 {
+    // the standalone sampler always starts empty: no samples, no steps, no notes
+    // (JUCE's standalone wrapper would bring back the last session; saved work is in the project files,
+    //  FILE > Open Recent and the crash recovery)
+    if (processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+    {
+        static bool startedFresh = false;
+        if (! startedFresh)
+        {
+            startedFresh = true;
+            processor.newProject();
+        }
+    }
+
     setLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
 
@@ -716,6 +729,15 @@ void RezalicaEditor::timerCallback()
             refreshChopControls();
         lastLazyState = lazy;
         lastPlayedCounter = processor.getEngine().playedCounter.load(); // pads hits are markers now, don't follow them
+    }
+
+    // follow pads the step sequencer / piano roll play: show that chop in the sample view
+    if (const int sequenced = processor.getEngine().sequencedCounter.load(); sequenced != lastSequencedCounter)
+    {
+        lastSequencedCounter = sequenced;
+        const int pad = processor.getEngine().lastSequencedPad.load();
+        if (pad >= 0 && pad < rz::numPads && pad != processor.selectedPad.load() && ! processor.isLazyChopActive())
+            selectPad (pad, false);
     }
 
     // follow pads played from MIDI / computer keyboard: show them in the waveform
