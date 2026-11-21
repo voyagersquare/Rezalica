@@ -98,7 +98,8 @@ Tempo (crveni LED BPM zaslon) je zajednički za glavni prozor, STEP SEQ, PIANO R
 ## Računalna tipkovnica u prozorima STEP SEQ i PIANO ROLL
 
 - **Padovi**: 1 2 3 4 / Q W E R / A S D F / Z X C V (i u step sekvenceru i u piano rollu u DRUMS prikazu).
-- **Note** (piano roll, MELODIC prikaz): A W S E D F T G Z(Y) H U J K O L P = C … D#, **X / C** = oktava dolje / gore. Note sviraju odabrani pad kromatski (C3 = izvorna visina).
+- **Note** (piano roll, MELODIC prikaz), kao u Abletonu na hrvatskoj tipkovnici: A W S E D F T G Z H U J K O L P = C … D#, **Y** = oktava dolje, **X** = oktava gore. Žuta traka na klavijaturi piano rolla pokazuje koje note tipke trenutno sviraju.
+- Na hrvatskoj (QWERTZ) tipkovnici donji red za padove je Y X C V (Y i Z oba sviraju pad 13). Note sviraju odabrani pad kromatski (C3 = izvorna visina).
 - Snimanje u piano roll: uključi **REC** (crveni krug), pritisni **PLAY** i sviraj tipkama, padovima ili MIDI klavijaturom. Udarac na pad koji piano roll svira (npr. A1) snima se kao nota C3.
 - **PLAY WITH MIDI KEYS**: vanjska MIDI klavijatura svira odabrani pad kromatski. Standalone sam uključi sve MIDI ulaze pri pokretanju (ako ni jedan nije uključen u Audio Settings).
 

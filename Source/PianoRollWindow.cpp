@@ -735,7 +735,19 @@ bool PianoRollEditor::keyPressed (const juce::KeyPress& k)
     // the computer keyboard plays: notes in the melodic view, pads in the drum view
     if (! cmd && getViewMode() == NoteClip::melodic)
     {
-        if (computerKeys.octaveKey (c)) { repaint(); if (onChanged) onChanged(); return true; }
+        if (computerKeys.octaveKey (c))
+        {
+            // keep the keys' range in view
+            const int visibleRows = noteArea().getHeight() / juce::jmax (1, rowHeight);
+            const int topNote = juce::jmin (127, computerKeys.baseNote() + 15);
+            const int d = displayForRow (topNote);
+            if (d < topDisplayRow || displayForRow (computerKeys.baseNote()) >= topDisplayRow + visibleRows)
+                topDisplayRow = juce::jmax (0, d - 3);
+            updateScrollBars();
+            repaint();
+            if (onChanged) onChanged();
+            return true;
+        }
         if (computerKeys.isNoteKey (c)) return true; // played in keyStateChanged
     }
     if (! cmd && getViewMode() == NoteClip::drum && computerKeys.isPadKey (c))
@@ -755,7 +767,11 @@ bool PianoRollEditor::keyPressed (const juce::KeyPress& k)
 bool PianoRollEditor::keyStateChanged (bool)
 {
     if (getViewMode() == NoteClip::melodic)
-        return computerKeys.pollNotes (processor, getTargetPad(), (float) newVelocity / 127.0f);
+    {
+        const bool used = computerKeys.pollNotes (processor, getTargetPad(), (float) newVelocity / 127.0f);
+        if (used) repaint (keyboardArea());
+        return used;
+    }
     return computerKeys.pollPads (processor);
 }
 
@@ -845,6 +861,18 @@ void PianoRollEditor::paintKeyboard (juce::Graphics& g)
             {
                 g.setColour (juce::Colour (0xffd8d8d8));
                 g.fillRect (cell.withTrimmedLeft (cell.getWidth() * 0.62f));
+            }
+            // the notes the computer keys play now (A ... P): amber strip, held keys light up
+            const int base = computerKeys.baseNote();
+            if (row >= base && row < base + 16)
+            {
+                g.setColour (computerKeys.isNoteHeld (row) ? colours::accent : colours::accent2.withAlpha (0.85f));
+                g.fillRect (cell.withLeft (cell.getRight() - 6.0f));
+                if (computerKeys.isNoteHeld (row))
+                {
+                    g.setColour (colours::accent.withAlpha (0.45f));
+                    g.fillRect (cell);
+                }
             }
             g.setColour (juce::Colour (0xff888888));
             g.drawHorizontalLine ((int) cell.getBottom(), cell.getX(), cell.getRight());
@@ -1124,7 +1152,7 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
     velocitySlider.onValueChange = [this] { editor.newVelocity = (int) velocitySlider.getValue(); };
     addAndMakeVisible (velocitySlider);
 
-    infoLabel.setText ("KEYS: melodic A W S E D F T G Z H U J K = notes, X / C = octave; drums 1-4 Q-R A-F Z-V = pads   |   "
+    infoLabel.setText ("KEYS: melodic A W S E D F T G Z H U J K = notes, Y / X = octave down / up; drums 1-4 Q-R A-F Z-V = pads   |   "
                        "Click = note  edge = resize  right-click = delete  Ctrl+drag = copy  wheel / Ctrl = zoom  Ctrl+Z/Y C/V/D  Del",
                        juce::dontSendNotification);
     infoLabel.setColour (juce::Label::textColourId, colours::dim);

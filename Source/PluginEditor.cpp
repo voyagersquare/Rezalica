@@ -1280,7 +1280,7 @@ bool RezalicaEditor::keyPressed (const juce::KeyPress& key)
 
     const auto c = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
     for (int i = 0; padKeys[i] != 0; ++i)
-        if (c == (juce::juce_wchar) padKeys[i])
+        if (c == (juce::juce_wchar) padKeys[i] || c == 'y')
             return true; // handled in keyStateChanged
 
     if (key == juce::KeyPress::spaceKey)
@@ -1307,7 +1307,8 @@ bool RezalicaEditor::keyStateChanged (bool)
         return false;
     for (int i = 0; i < rz::padsPerBank; ++i)
     {
-        const bool down = juce::KeyPress::isKeyCurrentlyDown ((int) padKeys[i]);
+        bool down = juce::KeyPress::isKeyCurrentlyDown ((int) padKeys[i]);
+        if (padKeys[i] == 'z') down = down || juce::KeyPress::isKeyCurrentlyDown ((int) 'y'); // QWERTZ: bottom row is Y X C V
         if (down != keyDown[(size_t) i])
         {
             keyDown[(size_t) i] = down;
