@@ -8,14 +8,8 @@ PluginHost::PluginHost()
     formats.addDefaultFormats(); // VST3 (and AU on macOS)
     if (auto xml = juce::XmlDocument::parse (getListFile()))
         known.recreateFromXml (*xml);
-    // the first scanner threw away plug-ins that only crash when they are unloaded: give those one more try
-    if (AppSettings::get().getIntValue ("pluginScanVersion", 1) < 2)
-    {
-        known.clearBlacklistedFiles();
-        AppSettings::get().setValue ("pluginScanVersion", 2);
-        AppSettings::get().saveIfNeeded();
-        save();
-    }
+    // (nothing else here: this runs whenever a Rezalica processor is created - also when a host or the
+    //  VST3 build tool just loads the plug-in - so it must not touch settings files or start timers)
     status = juce::String (getEffects().size()) + " effects";
 }
 
@@ -87,6 +81,14 @@ void PluginHost::startScan()
     {
         if (formats.getNumFormats() == 0) { status = "Plug-in hosting is not available"; sendChangeMessage(); }
         return;
+    }
+
+    // the first scanner threw away plug-ins that only crash when they are unloaded: give those one more try
+    if (AppSettings::get().getIntValue ("pluginScanVersion", 1) < 2)
+    {
+        known.clearBlacklistedFiles();
+        AppSettings::get().setValue ("pluginScanVersion", 2);
+        AppSettings::get().saveIfNeeded();
     }
 
     if (juce::JUCEApplicationBase::isStandaloneApp())
