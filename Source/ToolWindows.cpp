@@ -353,6 +353,16 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
     addChildComponent (scanStatus);
     processor.pluginHost->addChangeListener (this);
     pluginRows.effects = processor.pluginHost->getEffects();
+    pluginRows.openMaker = AppSettings::get().getValue ("pluginMaker");
+    pluginRows.rebuild();
+    pluginRows.onChanged = [this]
+    {
+        AppSettings::get().setValue ("pluginMaker", pluginRows.openMaker);
+        pluginList.deselectAllRows();
+        pluginList.updateContent();
+        pluginList.scrollToEnsureRowIsOnscreen (0);
+        pluginList.repaint();
+    };
 
     fillPlaces();
     juce::File start (AppSettings::get().getValue ("browserFolder"));
@@ -378,6 +388,7 @@ BrowserPanel::~BrowserPanel()
 void BrowserPanel::changeListenerCallback (juce::ChangeBroadcaster*)
 {
     pluginRows.effects = processor.pluginHost->getEffects();
+    pluginRows.rebuild();
     pluginList.updateContent();
     pluginList.repaint();
     scanStatus.setText (processor.pluginHost->getScanStatus(), juce::dontSendNotification);

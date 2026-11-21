@@ -8,6 +8,14 @@ PluginHost::PluginHost()
     formats.addDefaultFormats(); // VST3 (and AU on macOS)
     if (auto xml = juce::XmlDocument::parse (getListFile()))
         known.recreateFromXml (*xml);
+    // the first scanner threw away plug-ins that only crash when they are unloaded: give those one more try
+    if (AppSettings::get().getIntValue ("pluginScanVersion", 1) < 2)
+    {
+        known.clearBlacklistedFiles();
+        AppSettings::get().setValue ("pluginScanVersion", 2);
+        AppSettings::get().saveIfNeeded();
+        save();
+    }
     status = juce::String (getEffects().size()) + " effects";
 }
 
@@ -140,7 +148,10 @@ void PluginHost::startNextJobs()
 void PluginHost::finishJob (Job& j, bool crashed)
 {
     bool ok = false;
-    if (! crashed)
+    // the result counts even when the scan process crashed afterwards (many plug-ins crash on unload,
+    // after the result was written); only a hang (timeout) or no result at all means the plug-in failed
+    juce::ignoreUnused (crashed);
+    if (j.result.existsAsFile())
         if (auto xml = juce::XmlDocument::parse (j.result))
         {
             for (auto* e : xml->getChildIterator())
@@ -168,7 +179,7 @@ void PluginHost::timerCallback()
         {
             const bool timedOut = juce::Time::getMillisecondCounterHiRes() - it->started > 60000.0;
             if (it->process->isRunning() && ! timedOut) { ++it; continue; }
-            if (timedOut) it->process->kill();
+            if (timedOut) { it->process->kill(); it->result.deleteFile(); }
             const bool crashed = timedOut || it->process->getExitCode() != 0;
             finishJob (*it, crashed);
             it = running.erase (it);

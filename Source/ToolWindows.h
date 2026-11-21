@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "LookAndFeel.h"
 #include "LoopbackCapture.h"
+#include <map>
 
 namespace rz
 {
@@ -72,26 +73,92 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void showPlugins (bool);
 
-    /** PLUGINS: the scanned effects; drag one onto a mixer slot. */
+    /** PLUGINS: the scanned effects in one folder per maker (FabFilter, Valhalla ...);
+        click a maker to open it, drag an effect onto a mixer slot. */
     struct PluginRows : public juce::ListBoxModel
     {
+        struct Row { bool folder = false, back = false; juce::String maker; int count = 0; int effect = -1; };
         juce::Array<juce::PluginDescription> effects;
-        int getNumRows() override { return effects.size(); }
+        juce::String openMaker;                     // empty: the list of makers
+        std::vector<Row> rows;
+        std::function<void()> onChanged;
+
+        static juce::String makerOf (const juce::PluginDescription& d)
+        {
+            return d.manufacturerName.trim().isNotEmpty() ? d.manufacturerName.trim() : juce::String ("(unknown maker)");
+        }
+
+        void rebuild()
+        {
+            rows.clear();
+            if (openMaker.isEmpty())
+            {
+                std::map<juce::String, int> makers;
+                for (auto& d : effects) ++makers[makerOf (d)];
+                std::vector<std::pair<juce::String, int>> sorted (makers.begin(), makers.end());
+                std::sort (sorted.begin(), sorted.end(), [] (auto& x, auto& y) { return x.first.compareIgnoreCase (y.first) < 0; });
+                for (auto& m : sorted) { Row r; r.folder = true; r.maker = m.first; r.count = m.second; rows.push_back (r); }
+            }
+            else
+            {
+                Row back; back.back = true; rows.push_back (back);
+                for (int i = 0; i < effects.size(); ++i)
+                    if (makerOf (effects[i]) == openMaker) { Row r; r.effect = i; rows.push_back (r); }
+            }
+        }
+
+        int getNumRows() override { return (int) rows.size(); }
+
         void paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) override
         {
-            if (row < 0 || row >= effects.size()) return;
+            if (row < 0 || row >= (int) rows.size()) return;
+            const auto& r = rows[(size_t) row];
             if (selected) g.fillAll (colours::accent.withAlpha (0.55f));
+            if (r.back)
+            {
+                g.setColour (colours::accent2);
+                g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+                g.drawText (juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xb9  ALL MAKERS   /   ")) + openMaker, 10, 0, w - 20, h, juce::Justification::centredLeft, true);
+                return;
+            }
+            if (r.folder)
+            {
+                // a little folder icon
+                auto icon = juce::Rectangle<float> (10.0f, (float) h * 0.25f, 18.0f, (float) h * 0.5f);
+                g.setColour (juce::Colour (0xffe9c46a));
+                g.fillRoundedRectangle (icon.withWidth (8.0f).withHeight (4.0f).translated (0.0f, -2.0f), 1.0f);
+                g.fillRoundedRectangle (icon, 2.0f);
+                g.setColour (colours::text);
+                g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+                g.drawText (r.maker, 36, 0, w - 80, h, juce::Justification::centredLeft, true);
+                g.setColour (colours::dim);
+                g.setFont (juce::FontOptions (11.0f));
+                g.drawText (juce::String (r.count), w - 44, 0, 34, h, juce::Justification::centredRight);
+                return;
+            }
+            const auto& d = effects[r.effect];
             g.setColour (colours::text);
             g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-            g.drawText (effects[row].name, 10, 0, w - 20, h, juce::Justification::centredLeft, true);
+            g.drawText (d.name, 18, 0, w - 70, h, juce::Justification::centredLeft, true);
             g.setColour (colours::dim);
             g.setFont (juce::FontOptions (10.0f));
-            g.drawText (effects[row].manufacturerName + "  " + effects[row].pluginFormatName, 10, 0, w - 20, h, juce::Justification::centredRight, true);
+            g.drawText (d.pluginFormatName, w - 52, 0, 42, h, juce::Justification::centredRight);
         }
-        juce::var getDragSourceDescription (const juce::SparseSet<int>& rows) override
+
+        void listBoxItemClicked (int row, const juce::MouseEvent&) override
         {
-            if (rows.isEmpty() || rows[0] >= effects.size()) return {};
-            return "rzplugin:" + effects[rows[0]].createIdentifierString();
+            if (row < 0 || row >= (int) rows.size()) return;
+            const auto& r = rows[(size_t) row];
+            if (r.folder) { openMaker = r.maker; rebuild(); if (onChanged) onChanged(); }
+            else if (r.back) { openMaker = {}; rebuild(); if (onChanged) onChanged(); }
+        }
+
+        juce::var getDragSourceDescription (const juce::SparseSet<int>& sel) override
+        {
+            if (sel.isEmpty() || sel[0] >= (int) rows.size()) return {};
+            const auto& r = rows[(size_t) sel[0]];
+            if (r.effect < 0 || r.effect >= effects.size()) return {}; // folders are not dragged
+            return "rzplugin:" + effects[r.effect].createIdentifierString();
         }
     } pluginRows;
     juce::ListBox pluginList { "plugins", &pluginRows };

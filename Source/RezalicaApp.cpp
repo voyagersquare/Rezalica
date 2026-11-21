@@ -3,6 +3,8 @@
 // plug-in in its own process, so a plug-in that crashes while it is scanned never takes Rezalica with it.
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <cstdio>
+#include <cstdlib>
 
 #if JucePlugin_Build_Standalone
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
@@ -106,8 +108,11 @@ private:
             if (auto e = d->createXml())
                 xml.addChildElement (e.release());
         xml.writeTo (out);
+        found.clear();
         setApplicationReturnValue (0);
-        quit();
+        // done: leave right away, so a plug-in that crashes while being unloaded can't spoil the result
+        std::fflush (nullptr);
+        std::_Exit (0);
     }
 
     juce::ApplicationProperties appProperties;
