@@ -18,6 +18,7 @@ public:
     explicit WaveformView (RezalicaProcessor& p);
 
     void setPad (int pad);
+    int getShownPad() const noexcept { return pad; }
     void refresh();              // call when samples / regions changed
     void updatePlayhead();       // call from a timer
     void setVisibleRange (double start, double length) { setView (start, length); }

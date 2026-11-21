@@ -95,7 +95,9 @@
 
 Standalone sampler se uvijek pokreće prazan (bez samplova, koraka i nota). Rad se čuva u projektima (FILE → Save / Open Recent), a nakon rušenja nudi se vraćanje automatski spremljenog projekta.
 
-Veliki prozor sampla prati i padove koje okidaju step sekvencer i piano roll: prikazuje chop koji upravo svira.
+Veliki prozor sampla prati i padove koje okidaju step sekvencer i piano roll: prikazuje chop koji upravo svira, ali odabrani pad i banka se ne mijenjaju (možeš raditi u banci B dok svira banka A). Kad zaustaviš, vraća se na odabrani pad.
+
+**STEP SEQ** i **PIANO ROLL** otvaraju se unutar glavnog prozora (ispod prozora sampla i padova, preko cijele širine); isti gumb ih zatvara. Dok su otvoreni, knobovi pada i efekti su skriveni.
 
 ## Jedan tempo za cijeli sampler
 

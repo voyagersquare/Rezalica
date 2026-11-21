@@ -562,6 +562,8 @@ RezalicaEditor::~RezalicaEditor()
     stopTimer();
     processor.padsChanged.removeChangeListener (this);
     sequencerWindow = nullptr;
+    dockedSequencer = nullptr;
+    dockedPianoRoll = nullptr;
     samplingWindow = nullptr;
     browserPanel = nullptr;
     masterFxWindow = nullptr;
@@ -736,9 +738,12 @@ void RezalicaEditor::timerCallback()
     {
         lastSequencedCounter = sequenced;
         const int pad = processor.getEngine().lastSequencedPad.load();
-        if (pad >= 0 && pad < rz::numPads && pad != processor.selectedPad.load() && ! processor.isLazyChopActive())
-            selectPad (pad, false);
+        // only the sample view shows that chop: the selected pad and the bank stay where you work
+        if (pad >= 0 && pad < rz::numPads && pad != waveform.getShownPad() && ! processor.isLazyChopActive())
+            waveform.setPad (pad);
     }
+    if (! processor.getSequencer().isRunning() && waveform.getShownPad() != processor.selectedPad.load() && ! processor.isLazyChopActive())
+        waveform.setPad (processor.selectedPad.load()); // stopped: back to the selected pad
 
     // follow pads played from MIDI / computer keyboard: show them in the waveform
     const int played = processor.getEngine().playedCounter.load();
@@ -762,7 +767,12 @@ void RezalicaEditor::timerCallback()
     for (auto& p : pads)
         p->setSelected (p->getIndex() == sel);
 
-    if (sequencerWindow != nullptr)
+    if (isStandalone)
+    {
+        seqButton.setToggleState (dockView == dockSequencer, juce::dontSendNotification);
+        pianoRollButton.setToggleState (dockView == dockPianoRoll, juce::dontSendNotification);
+    }
+    else if (sequencerWindow != nullptr)
         seqButton.setToggleState (sequencerWindow->isVisible(), juce::dontSendNotification);
 
     warpButton.setButtonText (processor.isWarpBusy() ? "WARP..." : "WARP");
@@ -1232,8 +1242,66 @@ void RezalicaEditor::updateWindowTitle()
                                         ? " - " + processor.currentProjectFile.getFileNameWithoutExtension() : juce::String()));
 }
 
+juce::Component* RezalicaEditor::dockedPanel() const
+{
+    if (dockView == dockSequencer) return dockedSequencer.get();
+    if (dockView == dockPianoRoll) return dockedPianoRoll.get();
+    return nullptr;
+}
+
+std::vector<juce::Component*> RezalicaEditor::stripAndFxComponents()
+{
+    return { &padTitle, &warpButton, &stretchButton, &trimButton, &renderButton, &clearPadButton,
+             &gainKnob, &panKnob, &pitchKnob, &attackKnob, &releaseKnob, &startKnob, &endKnob,
+             &loopButton, &reverseButton, &gateButton, &muteButton, &chokeBox,
+             &fxTitle, &copyFxButton, &pasteFxButton, &fxToAllButton,
+             &filterOnButton, &filterTypeBox, &filterTypeLabel, &cutoffKnob, &resoKnob,
+             &satOnButton, &tubeKnob, &tapeKnob, &solidKnob,
+             &delayOnButton, &delayDivLabel, &delayDivBox, &timeKnob, &feedbackKnob, &mixKnob,
+             &reverbOnButton, &reverbSizeKnob, &reverbDampKnob, &reverbWidthKnob, &reverbMixKnob };
+}
+
+void RezalicaEditor::showDock (int view)
+{
+    if (view == dockView) view = dockNone;   // the same button again closes it
+    if (auto* old = dockedPanel()) old->setVisible (false);
+
+    if (view != dockNone && dockView == dockNone)
+    {
+        // the pad controls and effects make room for the sequencer; remember what was showing
+        hiddenByDock.clear();
+        for (auto* c : stripAndFxComponents())
+            if (c->isVisible()) { hiddenByDock.push_back (c); c->setVisible (false); }
+    }
+    else if (view == dockNone)
+    {
+        for (auto* c : hiddenByDock) c->setVisible (true);
+        hiddenByDock.clear();
+    }
+
+    dockView = view;
+    if (view == dockSequencer)
+    {
+        if (dockedSequencer == nullptr) { dockedSequencer = std::make_unique<rz::SequencerPanel> (processor); addChildComponent (*dockedSequencer); }
+        dockedSequencer->setVisible (true);
+    }
+    else if (view == dockPianoRoll)
+    {
+        if (dockedPianoRoll == nullptr) { dockedPianoRoll = std::make_unique<rz::PianoRollPanel> (processor); addChildComponent (*dockedPianoRoll); }
+        dockedPianoRoll->showMelodic();
+        dockedPianoRoll->setVisible (true);
+    }
+    seqButton.setToggleState (view == dockSequencer, juce::dontSendNotification);
+    pianoRollButton.setToggleState (view == dockPianoRoll, juce::dontSendNotification);
+    resized();
+    repaint();
+    if (view == dockPianoRoll) dockedPianoRoll->focusEditor();
+    else if (view == dockSequencer) dockedSequencer->grabKeyboardFocus();
+}
+
 void RezalicaEditor::togglePianoRoll()
 {
+    if (isStandalone) { showDock (dockPianoRoll); return; }
     if (pianoRollWindow == nullptr)
     {
         pianoRollWindow = std::make_unique<rz::PianoRollWindow> (processor, lnf);
@@ -1259,6 +1327,7 @@ void RezalicaEditor::showStretchWindow()
 
 void RezalicaEditor::toggleSequencerWindow()
 {
+    if (isStandalone) { showDock (dockSequencer); return; }
     if (sequencerWindow == nullptr)
     {
         sequencerWindow = std::make_unique<rz::SequencerWindow> (processor, lnf);
@@ -1324,6 +1393,9 @@ bool RezalicaEditor::keyPressed (const juce::KeyPress& key)
 bool RezalicaEditor::keyStateChanged (bool)
 {
     bool used = false;
+    // the docked step sequencer / piano roll play the computer keyboard themselves
+    if (auto* panel = dockedPanel(); panel != nullptr && panel->hasKeyboardFocus (true))
+        return false;
     // Ctrl / Cmd shortcuts (Ctrl+Z ...) must not play the pads on those keys
     if (juce::ModifierKeys::getCurrentModifiers().isCommandDown())
         return false;
@@ -1538,6 +1610,23 @@ void RezalicaEditor::resized()
         }
     }
 
+    if (auto* panel = dockedPanel())
+    {
+        // sample view + pads on top, the step sequencer / piano roll below them across the whole width
+        auto top = b.removeFromTop (juce::jlimit (220, 340, b.getHeight() * 38 / 100));
+        b.removeFromTop (10);
+        dockArea = b;
+        panel->setBounds (dockArea);
+        padArea = top.removeFromRight (juce::jmax (420, getWidth() * 27 / 100));
+        top.removeFromRight (10);
+        sampleArea = top;
+        fxArea = filterArea = satArea = delayArea = reverbArea = {};
+        waveform.setBounds (sampleArea.reduced (10));
+        layoutPads();
+        return;
+    }
+    dockArea = {};
+
     fxArea = b.removeFromBottom (176);
     b.removeFromBottom (10);
 
@@ -1576,7 +1665,14 @@ void RezalicaEditor::resized()
         chokeBox.setBounds (toggles.reduced (3, 0));
     }
 
-    // ---- pads ----
+    layoutPads();
+
+    // ---- effects ----
+    layoutEffects();
+}
+
+void RezalicaEditor::layoutPads()
+{
     {
         auto p = padArea.reduced (10);
         auto bankRow = p.removeFromTop (24);
@@ -1590,8 +1686,10 @@ void RezalicaEditor::resized()
         for (int i = 0; i < rz::padsPerBank; ++i)
             pads[(size_t) i]->setBounds (p.getX() + (i % 4) * cw, p.getY() + (i / 4) * ch, cw, ch);
     }
+}
 
-    // ---- effects ----
+void RezalicaEditor::layoutEffects()
+{
     {
         auto f = fxArea;
         auto titleRow = f.removeFromTop (22);

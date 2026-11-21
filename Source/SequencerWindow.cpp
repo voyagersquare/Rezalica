@@ -452,9 +452,10 @@ void SequencerPanel::syncControls()
 void SequencerPanel::timerCallback()
 {
     // while this window is the active one, the computer keyboard plays its pads
-    if (auto* peer = getPeer(); peer != nullptr && peer->isFocused()
+    auto* focused = juce::Component::getCurrentlyFocusedComponent();
+    if (auto* peer = getPeer(); peer != nullptr && peer->isFocused() && isShowing()
         && ! hasKeyboardFocus (true)
-        && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr
+        && (focused == nullptr || focused->getPeer() != peer || focused->isParentOf (this))
         && juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
         grabKeyboardFocus();
     // pages of 32 steps (only shown when the pattern is longer than 32)

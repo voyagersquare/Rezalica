@@ -152,6 +152,18 @@ private:
     juce::ValueTree fxClipboard;
 
     std::unique_ptr<rz::SequencerWindow> sequencerWindow;
+    // standalone: the step sequencer / piano roll open inside the main window, below the sample view and pads
+    enum DockView { dockNone = 0, dockSequencer = 1, dockPianoRoll = 2 };
+    int dockView = dockNone;
+    std::unique_ptr<rz::SequencerPanel> dockedSequencer;
+    std::unique_ptr<rz::PianoRollPanel> dockedPianoRoll;
+    juce::Rectangle<int> dockArea;
+    std::vector<juce::Component*> hiddenByDock;
+    void showDock (int view);
+    void layoutPads();
+    void layoutEffects();
+    std::vector<juce::Component*> stripAndFxComponents();
+    juce::Component* dockedPanel() const;
     std::unique_ptr<rz::StretchWindow> stretchWindow;
     std::unique_ptr<rz::PianoRollWindow> pianoRollWindow;
     void togglePianoRoll();

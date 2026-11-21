@@ -1222,9 +1222,11 @@ void PianoRollPanel::timerCallback()
     // while this window is the active one, the computer keyboard belongs to the piano roll
     // (also when the focus was left in another Rezalica window: then Windows would hand the keys to this
     //  window's frame instead of the piano roll)
-    if (auto* peer = getPeer(); peer != nullptr && peer->isFocused()
+    auto* focused = juce::Component::getCurrentlyFocusedComponent();
+    if (auto* peer = getPeer(); peer != nullptr && peer->isFocused() && isShowing()
         && ! editor.hasKeyboardFocus (false)
-        && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr
+        // nobody has it, or it sits on a window / the main sampler around us (not on e.g. the browser list)
+        && (focused == nullptr || focused->getPeer() != peer || focused->isParentOf (this))
         && juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
         editor.grabKeyboardFocus();
     processor.collectRecordedPianoNotes();
