@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "LookAndFeel.h"
+#include "LoopbackCapture.h"
 
 namespace rz
 {
@@ -29,7 +30,11 @@ class RecorderPanel : public juce::Component,
 {
 public:
     explicit RecorderPanel (RezalicaProcessor& p);
-    ~RecorderPanel() override { stopTimer(); }
+    ~RecorderPanel() override
+    {
+        stopTimer();
+        if (! processor.getRecorder().isBusy()) processor.stopComputerAudio();
+    }
     void paint (juce::Graphics&) override;
     void resized() override;
     std::function<void()> onAudioSettings, onRecorded;
@@ -38,6 +43,8 @@ private:
     void timerCallback() override;
     void updateSourceUi();
     RezalicaProcessor& processor;
+    AudioRecorder::Source currentSource() const;
+    juce::TextButton computerButton { "COMPUTER" };
     juce::TextButton inputButton { "INPUT" }, resampleButton { "RESAMPLE" }, recButton { "REC" }, cancelButton { "CANCEL" },
                      settingsButton { "Audio Settings..." };
     juce::ToggleButton waitButton { "Start on sound" }, patternButton { "One loop of the pattern (starts it)" };

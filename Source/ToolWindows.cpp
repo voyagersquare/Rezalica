@@ -32,8 +32,14 @@ RecorderPanel::RecorderPanel (RezalicaProcessor& p) : processor (p)
 
     styleToggleButton (inputButton, colours::accent2);
     styleToggleButton (resampleButton, colours::accent2);
+    styleToggleButton (computerButton, colours::accent2);
     inputButton.setRadioGroupId (8101);
     resampleButton.setRadioGroupId (8101);
+    computerButton.setRadioGroupId (8101);
+    computerButton.setTooltip ("Record what the computer plays (YouTube, Spotify, other programs ...) - Windows 'what you hear'");
+    computerButton.onClick = [this] { updateSourceUi(); };
+    computerButton.setVisible (LoopbackCapture::isAvailable());
+    addChildComponent (computerButton);
     inputButton.setToggleState (true, juce::dontSendNotification);
     inputButton.setTooltip ("Record the sound card input (microphone, line in, turntable ...)");
     resampleButton.setTooltip ("Record what Rezalica plays (pads, effects, sequencer) onto a pad");
@@ -67,15 +73,16 @@ RecorderPanel::RecorderPanel (RezalicaProcessor& p) : processor (p)
                 processor.getSequencer().stopPlayback();
             return;
         }
-        const auto src = resampleButton.getToggleState() ? AudioRecorder::output : AudioRecorder::input;
+        const auto src = currentSource();
         if (src == AudioRecorder::input && ! processor.hasAudioInput())
         {
             statusLabel.setText ("No audio input. Choose an input device in Audio Settings.", juce::dontSendNotification);
             return;
         }
         if (! processor.startRecording (src, src == AudioRecorder::output && patternButton.getToggleState(),
-                                        src == AudioRecorder::input && waitButton.getToggleState()))
-            statusLabel.setText ("Could not start recording.", juce::dontSendNotification);
+                                        src != AudioRecorder::output && waitButton.getToggleState()))
+            statusLabel.setText (src == AudioRecorder::computer ? "Computer sound: " + processor.getComputerAudioError()
+                                                                : juce::String ("Could not start recording."), juce::dontSendNotification);
     };
     addAndMakeVisible (recButton);
 
@@ -111,12 +118,30 @@ RecorderPanel::RecorderPanel (RezalicaProcessor& p) : processor (p)
     startTimerHz (20);
 }
 
+AudioRecorder::Source RecorderPanel::currentSource() const
+{
+    if (resampleButton.getToggleState()) return AudioRecorder::output;
+    if (computerButton.getToggleState()) return AudioRecorder::computer;
+    return AudioRecorder::input;
+}
+
 void RecorderPanel::updateSourceUi()
 {
-    const bool input = inputButton.getToggleState();
-    waitButton.setVisible (input);
-    patternButton.setVisible (! input);
-    settingsButton.setVisible (input);
+    const auto src = currentSource();
+    waitButton.setVisible (src != AudioRecorder::output);
+    patternButton.setVisible (src == AudioRecorder::output);
+    settingsButton.setVisible (src == AudioRecorder::input);
+    // the computer's sound is listened to while COMPUTER is chosen (for the meter)
+    if (src == AudioRecorder::computer)
+    {
+        if (! processor.startComputerAudio())
+            statusLabel.setText ("Computer sound: " + processor.getComputerAudioError(), juce::dontSendNotification);
+        else
+            statusLabel.setText ("Listening to the computer's sound (" + juce::String ((int) processor.getComputerAudio().getSampleRate()) + " Hz)",
+                                 juce::dontSendNotification);
+    }
+    else if (! processor.getRecorder().isBusy())
+        processor.stopComputerAudio();
 }
 
 void RecorderPanel::timerCallback()
@@ -125,7 +150,7 @@ void RecorderPanel::timerCallback()
     const int pad = processor.selectedPad.load();
     targetLabel.setText ("Records onto pad " + padLabel (pad) + "  (" + processor.getPadName (pad) + ")", juce::dontSendNotification);
 
-    const bool input = inputButton.getToggleState();
+    const bool input = currentSource() != AudioRecorder::output;
     meter.level = (r.isBusy() && r.getState() == AudioRecorder::recording) ? r.level.load()
                 : input ? r.inputLevel.load() : processor.getMasterFx().outputPeak.load();
     r.inputLevel = r.inputLevel.load() * 0.85f;
@@ -136,6 +161,7 @@ void RecorderPanel::timerCallback()
     recButton.setButtonText (busy ? "STOP" : "REC");
     inputButton.setEnabled (! busy);
     resampleButton.setEnabled (! busy);
+    computerButton.setEnabled (! busy);
     cancelButton.setEnabled (busy);
 
     const double secs = r.getSecondsRecorded();
@@ -143,7 +169,7 @@ void RecorderPanel::timerCallback()
     timeLabel.setColour (juce::Label::textColourId, r.getState() == AudioRecorder::recording ? juce::Colour (0xffe0413a) : colours::text);
 
     if (r.getState() == AudioRecorder::waiting)
-        statusLabel.setText (r.getSource() == AudioRecorder::input ? "Waiting for sound..." : "Starting with the pattern...", juce::dontSendNotification);
+        statusLabel.setText (r.getSource() != AudioRecorder::output ? "Waiting for sound..." : "Starting with the pattern...", juce::dontSendNotification);
     else if (r.getState() == AudioRecorder::recording)
         statusLabel.setText ("Recording...", juce::dontSendNotification);
     else if (r.getState() == AudioRecorder::finished)
@@ -156,7 +182,7 @@ void RecorderPanel::timerCallback()
         if (file.existsAsFile() && onRecorded) onRecorded();
     }
 
-    if (input && ! processor.hasAudioInput())
+    if (currentSource() == AudioRecorder::input && ! processor.hasAudioInput())
         statusLabel.setText ("No audio input. Choose an input device in Audio Settings.", juce::dontSendNotification);
 }
 
@@ -171,7 +197,8 @@ void RecorderPanel::resized()
     title.setBounds (b.removeFromTop (28));
     b.removeFromTop (6);
     auto row = b.removeFromTop (30);
-    inputButton.setBounds (row.removeFromLeft (110)); row.removeFromLeft (6);
+    inputButton.setBounds (row.removeFromLeft (90)); row.removeFromLeft (6);
+    if (computerButton.isVisible()) { computerButton.setBounds (row.removeFromLeft (110)); row.removeFromLeft (6); }
     resampleButton.setBounds (row.removeFromLeft (110)); row.removeFromLeft (12);
     settingsButton.setBounds (row.removeFromRight (130));
     b.removeFromTop (8);

@@ -22,7 +22,9 @@ struct AppSettings
             o.filenameSuffix = ".settings";
             o.folderName = "Rezalica";
             o.osxLibrarySubFolder = "Application Support";
-            return std::make_unique<juce::PropertiesFile> (getFolder().getChildFile ("Rezalica.settings"), o);
+            // NOT "Rezalica.settings": on Windows JUCE's standalone wrapper keeps its own settings in that file
+            // and rewrites it when the app closes, which threw away the favourites and recent projects
+            return std::make_unique<juce::PropertiesFile> (getFolder().getChildFile ("RezalicaSampler.settings"), o);
         }();
         return *file;
     }

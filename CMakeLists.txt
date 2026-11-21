@@ -42,7 +42,8 @@ target_sources(Rezalica PRIVATE
     Source/StretchWindow.cpp
     Source/PianoRollWindow.cpp
     Source/SceneWindow.cpp
-    Source/ToolWindows.cpp)
+    Source/ToolWindows.cpp
+    Source/LoopbackCapture.cpp)
 
 target_compile_definitions(Rezalica PUBLIC
     JUCE_WEB_BROWSER=0

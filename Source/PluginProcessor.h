@@ -8,6 +8,7 @@
 #include "FxChain.h"
 #include "MasterFx.h"
 #include "Recorder.h"
+#include "LoopbackCapture.h"
 
 class RezalicaProcessor : public juce::AudioProcessor,
                           private juce::Timer
@@ -169,6 +170,12 @@ public:
         and loads it to the pad (the selected pad becomes the chop source). Returns the file, or {}. */
     juce::File collectRecording (int pad);
     static juce::File getRecordingFolder();
+    /** "What you hear": the sound the computer plays, as a sampling source (Windows). */
+    bool startComputerAudio();
+    void stopComputerAudio();
+    bool isComputerAudioRunning() const { return loopback.isRunning(); }
+    rz::LoopbackCapture& getComputerAudio() noexcept { return loopback; }
+    juce::String getComputerAudioError() const { return loopback.getLastError(); }
 
     /** Sample browser: plays a file once (empty file = stop). */
     void previewFile (const juce::File& file);
@@ -249,6 +256,7 @@ private:
     juce::AudioBuffer<float> dryBuffer;
     rz::MasterFx masterFx;
     rz::AudioRecorder recorder;
+    rz::LoopbackCapture loopback;
     int clickSamplesLeft = 0, clickLength = 1;
     double clickPhase = 0.0, clickFreq = 1000.0;
     rz::SampleData::Ptr previewData;

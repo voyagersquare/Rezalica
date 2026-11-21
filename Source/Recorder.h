@@ -10,7 +10,7 @@ namespace rz
 class AudioRecorder
 {
 public:
-    enum Source { input = 0, output = 1 };
+    enum Source { input = 0, output = 1, computer = 2 }; // computer: what the PC plays (loopback)
     enum State { idle = 0, waiting = 1, recording = 2, finished = 3 };
 
     // ---- message thread ----
@@ -82,7 +82,7 @@ public:
         for (int ch = 0; ch < numChannels; ++ch)
             for (int i = 0; i < numSamples; ++i)
                 pk = juce::jmax (pk, std::abs (data[ch][i]));
-        if (from == input)
+        if (from != output)
             inputLevel = juce::jmax (pk, inputLevel.load() * 0.8f);
 
         const int st = state.load();

@@ -35,6 +35,7 @@ RezalicaProcessor::RezalicaProcessor (bool withInput)
 RezalicaProcessor::~RezalicaProcessor()
 {
     stopTimer();
+    loopback.stop();
     aliveToken.reset();                        // late background results are dropped
     stretchWorker.removeAllJobs (true, 5000);
     fileWriter.removeAllJobs (false, 10000); // let pending WAV writes finish
@@ -447,9 +448,32 @@ juce::File RezalicaProcessor::getRecordingFolder()
     return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Recordings");
 }
 
+bool RezalicaProcessor::startComputerAudio()
+{
+    if (loopback.isRunning()) return true;
+    loopback.onAudio = [this] (const float* l, const float* r, int n)
+    {
+        const float* chans[] { l, r };
+        recorder.capture (rz::AudioRecorder::computer, chans, 2, n); // runs on the capture thread
+    };
+    return loopback.start();
+}
+
+void RezalicaProcessor::stopComputerAudio()
+{
+    loopback.stop();
+}
+
 bool RezalicaProcessor::startRecording (rz::AudioRecorder::Source source, bool patternLength, bool waitForSignal)
 {
     if (recorder.isBusy()) return false;
+    if (source == rz::AudioRecorder::computer)
+    {
+        if (! startComputerAudio()) return false;
+        const double lr = loopback.getSampleRate();
+        recorder.start (source, (int) (lr * 600.0), waitForSignal, false, lr); // the take keeps the PC's sample rate
+        return true;
+    }
     if (source == rz::AudioRecorder::input && ! hasAudioInput()) return false;
     const double sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
     if (source == rz::AudioRecorder::output && patternLength)
@@ -476,7 +500,8 @@ juce::File RezalicaProcessor::collectRecording (int pad)
 
     auto folder = getRecordingFolder();
     folder.createDirectory();
-    auto file = folder.getNonexistentChildFile ((recorder.getSource() == rz::AudioRecorder::input ? "Sample " : "Resample ")
+    auto file = folder.getNonexistentChildFile ((recorder.getSource() == rz::AudioRecorder::input ? "Sample "
+                                                 : recorder.getSource() == rz::AudioRecorder::computer ? "Computer " : "Resample ")
                                                 + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S"), ".wav", false);
     {
         juce::WavAudioFormat wav;

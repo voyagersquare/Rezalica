@@ -1251,8 +1251,8 @@ juce::Component* RezalicaEditor::dockedPanel() const
 
 std::vector<juce::Component*> RezalicaEditor::stripAndFxComponents()
 {
-    return { &padTitle, &warpButton, &stretchButton, &trimButton, &renderButton, &clearPadButton,
-             &gainKnob, &panKnob, &pitchKnob, &attackKnob, &releaseKnob, &startKnob, &endKnob,
+    // (the pad title row with WARP / STRETCH / TRIM / RENDER / CLEAR stays)
+    return { &gainKnob, &panKnob, &pitchKnob, &attackKnob, &releaseKnob, &startKnob, &endKnob,
              &loopButton, &reverseButton, &gateButton, &muteButton, &chokeBox,
              &fxTitle, &copyFxButton, &pasteFxButton, &fxToAllButton,
              &filterOnButton, &filterTypeBox, &filterTypeLabel, &cutoffKnob, &resoKnob,
@@ -1575,12 +1575,10 @@ void RezalicaEditor::resized()
             stopButton.setBounds (row.removeFromRight (86));
             row.removeFromRight (6);
         }
-        pianoRollButton.setBounds (row.removeFromRight (100)); row.removeFromRight (6);
-        seqButton.setBounds (row.removeFromRight (90)); row.removeFromRight (6);
-        if (isStandalone)
+        if (! isStandalone)
         {
-            sceneButton.setBounds (row.removeFromRight (70));
-            row.removeFromRight (6);
+            pianoRollButton.setBounds (row.removeFromRight (100)); row.removeFromRight (6);
+            seqButton.setBounds (row.removeFromRight (90)); row.removeFromRight (6);
         }
         sliceCountLabel.setBounds (row);
     }
@@ -1591,11 +1589,15 @@ void RezalicaEditor::resized()
         toolRowArea = topBlock.removeFromTop (28);
         auto t = toolRowArea;
         t.removeFromLeft (175);
-        samplingButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (4);
         browserButton.setBounds (t.removeFromLeft (90)); t.removeFromLeft (4);
+        samplingButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (4);
         masterFxButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (16);
         metronome.setBounds (t.removeFromLeft (136)); // count-in menu
-        autosaveLabel.setBounds (t.removeFromRight (160));
+        // SONG / STEP SEQ / PIANO ROLL at the height of the transport keys
+        pianoRollButton.setBounds (t.removeFromRight (100)); t.removeFromRight (6);
+        seqButton.setBounds (t.removeFromRight (90)); t.removeFromRight (6);
+        sceneButton.setBounds (t.removeFromRight (70)); t.removeFromRight (12);
+        autosaveLabel.setBounds (t.removeFromRight (juce::jmin (130, t.getWidth())));
     }
     b.removeFromTop (12);
 
@@ -1613,7 +1615,7 @@ void RezalicaEditor::resized()
     if (auto* panel = dockedPanel())
     {
         // sample view + pads on top, the step sequencer / piano roll below them across the whole width
-        auto top = b.removeFromTop (juce::jlimit (220, 340, b.getHeight() * 38 / 100));
+        auto top = b.removeFromTop (juce::jlimit (250, 370, b.getHeight() * 42 / 100));
         b.removeFromTop (10);
         dockArea = b;
         panel->setBounds (dockArea);
@@ -1621,7 +1623,18 @@ void RezalicaEditor::resized()
         top.removeFromRight (10);
         sampleArea = top;
         fxArea = filterArea = satArea = delayArea = reverbArea = {};
-        waveform.setBounds (sampleArea.reduced (10));
+        {
+            auto s = sampleArea.reduced (10);
+            auto titleRow = s.removeFromBottom (24);
+            s.removeFromBottom (6);
+            waveform.setBounds (s);
+            clearPadButton.setBounds (titleRow.removeFromRight (70)); titleRow.removeFromRight (6);
+            renderButton.setBounds (titleRow.removeFromRight (80));   titleRow.removeFromRight (6);
+            trimButton.setBounds (titleRow.removeFromRight (70));     titleRow.removeFromRight (6);
+            stretchButton.setBounds (titleRow.removeFromRight (90));  titleRow.removeFromRight (6);
+            warpButton.setBounds (titleRow.removeFromRight (70));
+            padTitle.setBounds (titleRow);
+        }
         layoutPads();
         return;
     }
