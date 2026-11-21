@@ -14,6 +14,8 @@ PluginHost::PluginHost()
 PluginHost::~PluginHost()
 {
     stopTimer();
+    for (auto& j : running) if (j.process != nullptr) j.process->kill();
+    running.clear();
     scanner = nullptr;
 }
 
@@ -73,11 +75,37 @@ void PluginHost::setSearchPath (const juce::FileSearchPath& p)
 
 void PluginHost::startScan()
 {
-    if (isScanning() || formats.getNumFormats() == 0)
+    if (isScanning() || outOfProcess || formats.getNumFormats() == 0)
     {
         if (formats.getNumFormats() == 0) { status = "Plug-in hosting is not available"; sendChangeMessage(); }
         return;
     }
+
+    if (juce::JUCEApplicationBase::isStandaloneApp())
+    {
+        // list the plug-in files first (fast, nothing is loaded), then scan each one in its own process
+        pendingFiles.clear();
+        pendingFormats.clear();
+        for (int fi = 0; fi < formats.getNumFormats(); ++fi)
+        {
+            auto* f = formats.getFormat (fi);
+            for (auto& file : f->searchPathsForPlugins (getSearchPath(), true, false))
+                if (! known.isListingUpToDate (file, *f) && ! known.getBlacklistedFiles().contains (file))
+                {
+                    pendingFiles.add (file);
+                    pendingFormats.add (fi);
+                }
+        }
+        total = pendingFiles.size();
+        done = failed = 0;
+        outOfProcess = true;
+        status = total == 0 ? "Nothing new to scan" : "Scanning 0 / " + juce::String (total);
+        progress = 0.0f;
+        sendChangeMessage();
+        startTimer (50);
+        return;
+    }
+
     formatIndex = 0;
     scanner = std::make_unique<juce::PluginDirectoryScanner> (known, *formats.getFormat (0), getSearchPath(), true, getDeadMansPedalFile(), false);
     status = "Scanning...";
@@ -86,8 +114,79 @@ void PluginHost::startScan()
     startTimer (20);
 }
 
+void PluginHost::startNextJobs()
+{
+    const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+    while ((int) running.size() < 3 && ! pendingFiles.isEmpty())
+    {
+        Job j;
+        j.file = pendingFiles[0];
+        j.format = pendingFormats[0];
+        pendingFiles.remove (0);
+        pendingFormats.remove (0);
+        j.result = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("rezalica_scan", ".xml", false);
+        j.process = std::make_unique<juce::ChildProcess>();
+        j.started = juce::Time::getMillisecondCounterHiRes();
+        status = "Scanning " + juce::String (done + 1) + " / " + juce::String (total) + ":  " + juce::File (j.file).getFileNameWithoutExtension();
+        if (! j.process->start (juce::StringArray { exe.getFullPathName(), "--rz-scan-plugin", j.file, j.result.getFullPathName() }, 0))
+        {
+            finishJob (j, true);
+            continue;
+        }
+        running.push_back (std::move (j));
+    }
+}
+
+void PluginHost::finishJob (Job& j, bool crashed)
+{
+    bool ok = false;
+    if (! crashed)
+        if (auto xml = juce::XmlDocument::parse (j.result))
+        {
+            for (auto* e : xml->getChildIterator())
+            {
+                juce::PluginDescription d;
+                if (d.loadFromXml (*e)) { known.addType (d); ok = true; }
+            }
+            ok = ok || xml->getNumChildElements() == 0; // a file without effects is fine too
+        }
+    if (! ok)
+    {
+        known.addToBlacklist (j.file); // crashed or hung while being scanned: skipped from now on
+        ++failed;
+    }
+    j.result.deleteFile();
+    ++done;
+    save(); // keep what is found even if Rezalica itself is closed during the scan
+}
+
 void PluginHost::timerCallback()
 {
+    if (outOfProcess)
+    {
+        for (auto it = running.begin(); it != running.end();)
+        {
+            const bool timedOut = juce::Time::getMillisecondCounterHiRes() - it->started > 60000.0;
+            if (it->process->isRunning() && ! timedOut) { ++it; continue; }
+            if (timedOut) it->process->kill();
+            const bool crashed = timedOut || it->process->getExitCode() != 0;
+            finishJob (*it, crashed);
+            it = running.erase (it);
+        }
+        startNextJobs();
+        progress = total > 0 ? (float) done / (float) total : 1.0f;
+        if (running.empty() && pendingFiles.isEmpty())
+        {
+            outOfProcess = false;
+            stopTimer();
+            save();
+            status = juce::String (getEffects().size()) + " effects" + (failed > 0 ? "  (" + juce::String (failed) + " plug-ins could not be loaded and are skipped)" : juce::String());
+            progress = 1.0f;
+        }
+        sendChangeMessage();
+        return;
+    }
+
     if (scanner == nullptr) { stopTimer(); return; }
     juce::String name;
     const bool more = scanner->scanNextFile (true, name);

@@ -95,7 +95,7 @@ private:
         }
     } pluginRows;
     juce::ListBox pluginList { "plugins", &pluginRows };
-    juce::TextButton filesTab { "FILES" }, pluginsTab { "PLUGINS" }, scanButton { "SCAN" }, vstFoldersButton { "VST3 FOLDERS..." };
+    juce::TextButton filesTab { "FILES" }, pluginsTab { "PLUGINS" }, scanButton { "SCAN" }, vstFoldersButton { "VST3 FOLDERS..." }, skippedButton { "SKIPPED" };
     juce::Label scanStatus;
     void selectionChanged() override;
     void fileClicked (const juce::File&, const juce::MouseEvent&) override;

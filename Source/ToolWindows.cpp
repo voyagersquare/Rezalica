@@ -326,6 +326,28 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
         });
     };
     addChildComponent (vstFoldersButton);
+    skippedButton.setWantsKeyboardFocus (false);
+    skippedButton.setTooltip ("Plug-ins that crashed or froze while being scanned: Rezalica skips them");
+    skippedButton.onClick = [this]
+    {
+        const auto failedFiles = processor.pluginHost->getFailedFiles();
+        juce::PopupMenu m;
+        m.addSectionHeader (failedFiles.isEmpty() ? juce::String ("No plug-in crashed the scan")
+                                                  : juce::String (failedFiles.size()) + " plug-ins crashed or froze while being scanned:");
+        for (int i = 0; i < failedFiles.size(); ++i)
+            m.addItem (100 + i, juce::File (failedFiles[i]).getFileNameWithoutExtension() + "      " + failedFiles[i], true, false);
+        if (! failedFiles.isEmpty())
+        {
+            m.addSeparator();
+            m.addItem (1, "Try them again (next SCAN)");
+        }
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&skippedButton), [this, failedFiles] (int r)
+        {
+            if (r == 1) processor.pluginHost->clearFailed();
+            else if (r >= 100 && r < 100 + failedFiles.size()) juce::File (failedFiles[r - 100]).revealToUser();
+        });
+    };
+    addChildComponent (skippedButton);
     scanStatus.setColour (juce::Label::textColourId, colours::dim);
     scanStatus.setFont (juce::FontOptions (11.0f));
     addChildComponent (scanStatus);
@@ -360,6 +382,9 @@ void BrowserPanel::changeListenerCallback (juce::ChangeBroadcaster*)
     pluginList.repaint();
     scanStatus.setText (processor.pluginHost->getScanStatus(), juce::dontSendNotification);
     scanButton.setEnabled (! processor.pluginHost->isScanning());
+    const int nFailed = processor.pluginHost->getFailedFiles().size();
+    skippedButton.setButtonText ("SKIPPED (" + juce::String (nFailed) + ")");
+    skippedButton.setColour (juce::TextButton::buttonColourId, nFailed > 0 ? juce::Colour (0xffe0a020) : colours::buttonFace);
 }
 
 void BrowserPanel::showPlugins (bool plugins)
@@ -367,7 +392,7 @@ void BrowserPanel::showPlugins (bool plugins)
     for (auto* c : std::initializer_list<juce::Component*> { &list, &places, &upButton, &folderButton, &favoritesButton, &pathLabel,
                                                               &loadButton, &loadNextButton, &stopButton, &autoPreview, &targetLabel })
         c->setVisible (! plugins);
-    for (auto* c : std::initializer_list<juce::Component*> { &pluginList, &scanButton, &vstFoldersButton, &scanStatus })
+    for (auto* c : std::initializer_list<juce::Component*> { &pluginList, &scanButton, &vstFoldersButton, &skippedButton, &scanStatus })
         c->setVisible (plugins);
     helpLabel.setText (plugins ? "Drag an effect onto a slot of BUS A-D or MASTER in the mixer"
                                : "Click: preview   Double-click: load   Drag: onto a pad or the sample view", juce::dontSendNotification);
@@ -570,7 +595,8 @@ void BrowserPanel::resized()
     if (pluginsTab.getToggleState())
     {
         auto row = b.removeFromTop (28);
-        scanButton.setBounds (row.removeFromLeft (80)); row.removeFromLeft (6);
+        scanButton.setBounds (row.removeFromLeft (64)); row.removeFromLeft (4);
+        skippedButton.setBounds (row.removeFromRight (106)); row.removeFromRight (4);
         vstFoldersButton.setBounds (row);
         b.removeFromTop (4);
         scanStatus.setBounds (b.removeFromTop (18));

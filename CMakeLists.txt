@@ -45,14 +45,16 @@ target_sources(Rezalica PRIVATE
     Source/ToolWindows.cpp
     Source/LoopbackCapture.cpp
     Source/PluginHost.cpp
-    Source/MixerPanel.cpp)
+    Source/MixerPanel.cpp
+    Source/RezalicaApp.cpp)
 
 target_compile_definitions(Rezalica PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_MODAL_LOOPS_PERMITTED=1
-    JUCE_PLUGINHOST_VST3=1)   # third-party VST3 effects in the mixer
+    JUCE_PLUGINHOST_VST3=1    # third-party VST3 effects in the mixer
+    JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)  # Source/RezalicaApp.cpp (adds the out-of-process plug-in scan)
 
 # ASIO for the standalone app (Windows): point REZALICA_ASIO_SDK at the Steinberg ASIO SDK folder
 # (the one that contains common/iasiodrv.h). Without it the app still has Windows Audio / DirectSound.

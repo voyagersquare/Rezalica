@@ -150,6 +150,7 @@ Tipkovnica računala svira trenutno odabranu banku:
 - **MIXER** (dolje, umjesto ugrađenih efekata): **BUS A, B, C, D** i **MASTER**, svaki s **4 utora za VST3 efekte** (FabFilter, Valhalla, iZotope …), faderom, mjeračem razine i M (mute) / S (solo).
   - Svi padovi i banke su po defaultu spojeni na **MASTER**.
   - Desni klik na pad → **Send to** → BUS A–D (ili „Same as bank“). Desni klik na gumb banke → **Send bank … to** → cijela banka na BUS. Pad na busu ima plavu oznaku „BUS A“ …
+  - **Skeniranje je sigurno**: svaki plugin skenira zasebna kopija Rezalice, pa plugin koji se sruši ne ruši program. Takvi pluginovi se preskaču i vide se pod **SKIPPED (broj)** (ime i mapa, „Try them again“ za ponovni pokušaj). Napredak se sprema nakon svakog plugina.
   - Efekti: **BROWSER → PLUGINS → SCAN** (pretraži VST3 mape, „VST3 FOLDERS…“ za dodatne mape), zatim **povuci** efekt u utor. Klik na utor otvara efekt, desni klik: Bypass / Remove / Load effect.
   - Efekti i njihove postavke spremaju se s projektom i ulaze u export / resample.
 - **Višestruki odabir padova**: klik na prvi pad, pa **Shift+klik** na zadnji označi sve između (npr. A1–A16), a **Ctrl+klik** dodaje ili miče pojedini pad. Označeni padovi imaju žuti okvir. Desni klik na bilo koji pad → **Clear all selected pads** isprazni sve odjednom (jedan UNDO ih vraća). ESC ili običan klik poništava odabir.
