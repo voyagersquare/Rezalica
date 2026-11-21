@@ -73,7 +73,8 @@ private:
                         pauseKey { rz::TransportButton::pause, "PAUSE: stop here, PLAY carries on from the same place" },
                         stopKey { rz::TransportButton::stop, "STOP (back to the start)" },
                         clickKey { rz::TransportButton::metronome, "Metronome: a click on every beat at the project tempo (right-click: click volume)" };
-    bool titleButtonsDone = false;                          // project tempo: red LED display, drag / wheel / double-click
+    bool titleButtonsDone = false;
+    int transportCentreY = 0;                          // project tempo: red LED display, drag / wheel / double-click
     juce::Rectangle<int> logoArea;
     juce::Image faceplate;                             // brushed silver texture, rendered on resize
     void renderFaceplate();

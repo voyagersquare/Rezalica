@@ -1537,6 +1537,7 @@ void RezalicaEditor::resized()
             // REC  PLAY  PAUSE  STOP  next to the tempo display
             right.removeFromRight (10);
             auto keys = right.removeFromRight (5 * 48 + 4 * 4).withSizeKeepingCentre (5 * 48 + 4 * 4, 44).translated (0, 6);
+            transportCentreY = keys.getCentreY();
             for (auto* k : { &clickKey, &stopKey, &pauseKey, &playKey, &recKey })
             {
                 k->setBounds (keys.removeFromRight (48));
@@ -1594,9 +1595,10 @@ void RezalicaEditor::resized()
         masterFxButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (16);
         metronome.setBounds (t.removeFromLeft (136)); // count-in menu
         // SONG / STEP SEQ / PIANO ROLL at the height of the transport keys
-        pianoRollButton.setBounds (t.removeFromRight (100)); t.removeFromRight (6);
-        seqButton.setBounds (t.removeFromRight (90)); t.removeFromRight (6);
-        sceneButton.setBounds (t.removeFromRight (70)); t.removeFromRight (12);
+        auto level = [this] (juce::Rectangle<int> r) { return r.withY (transportCentreY - 15).withHeight (30); }; // centred on the transport keys
+        pianoRollButton.setBounds (level (t.removeFromRight (100))); t.removeFromRight (6);
+        seqButton.setBounds (level (t.removeFromRight (90))); t.removeFromRight (6);
+        sceneButton.setBounds (level (t.removeFromRight (70))); t.removeFromRight (12);
         autosaveLabel.setBounds (t.removeFromRight (juce::jmin (130, t.getWidth())));
     }
     b.removeFromTop (12);
