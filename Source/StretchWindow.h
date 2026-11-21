@@ -31,7 +31,7 @@ private:
     juce::TextButton beatsButton { "BEATS" }, complexButton { "COMPLEX" };
     juce::Label beatsHint, complexHint;
     std::array<juce::TextButton, 7> lengthButtons;
-    juce::TextButton syncButton { "SYNC TO DAW TEMPO" };
+    juce::TextButton syncButton { "FOLLOW SAMPLER TEMPO" };
     juce::Slider bpmSlider;
     juce::TextButton wholeButton { "WHOLE SAMPLE" }, padOnlyButton { "SELECTED PAD ONLY" };
     juce::ComboBox preserveBox, loopBox;

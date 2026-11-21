@@ -6,6 +6,7 @@
 #include "MetronomeControls.h"
 #include "TransportButton.h"
 #include "ComputerKeyboard.h"
+#include "LedDisplay.h"
 
 namespace rz
 {
@@ -69,6 +70,7 @@ private:
     SequencerGrid grid;
     MetronomeControls metronome;
     TransportBar transport;
+    LedBpmDisplay ledBpm;
 };
 
 class SequencerWindow : public juce::DocumentWindow
@@ -87,6 +89,9 @@ public:
     }
 
     ~SequencerWindow() override { setLookAndFeel (nullptr); }
+
+    bool keyPressed (const juce::KeyPress& k) override { if (auto* c = getContentComponent()) return c->keyPressed (k); return false; }
+    bool keyStateChanged (bool down) override { if (auto* c = getContentComponent()) return c->keyStateChanged (down); return false; }
 
     void activeWindowStatusChanged() override
     {

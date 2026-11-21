@@ -781,9 +781,13 @@ void RezalicaEditor::timerCallback()
         if (juce::Time::getMillisecondCounterHiRes() - lastAutosaveTime > 60000.0)
             autosave();
         // keep the space bar working: if nothing in the app has the keyboard focus, take it back
-        if (juce::Component::getCurrentlyFocusedComponent() == nullptr && isShowing() && juce::Process::isForegroundProcess()
+        // (only when the main window itself is the active one: never steal the keyboard from the piano roll,
+        //  step sequencer or song window, which play / record from the computer keyboard themselves)
+        auto* focused = juce::Component::getCurrentlyFocusedComponent();
+        if ((focused == nullptr || focused->getPeer() != getPeer()) && isShowing() && juce::Process::isForegroundProcess()
             && juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
-            grabKeyboardFocus();
+            if (auto* peer = getPeer(); peer != nullptr && peer->isFocused())
+                grabKeyboardFocus();
     }
     undoButton.setEnabled (processor.canUndo());
     redoButton.setEnabled (processor.canRedo());

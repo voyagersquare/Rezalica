@@ -424,8 +424,10 @@ void SongGrid::mouseDrag (const juce::MouseEvent& e)
 }
 
 //==============================================================================
-ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), transport (p.getSequencer(), TransportBar::song), scene (p), song (p)
+ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), transport (p.getSequencer(), TransportBar::song), ledBpm (p.getSequencer()), scene (p), song (p)
 {
+    ledBpm.captionColour = colours::dim;
+    addAndMakeVisible (ledBpm);
     auto toggle = [this] (juce::TextButton& b, juce::Colour on)
     {
         b.setClickingTogglesState (true);
@@ -623,7 +625,8 @@ void ScenePanel::resized()
     auto top = b.removeFromTop (40);
     transport.setBounds (top.removeFromLeft (transport.getIdealWidth (44)).withSizeKeepingCentre (transport.getIdealWidth (44), 38)); top.removeFromLeft (8);
     loopButton.setBounds (top.removeFromLeft (70).withSizeKeepingCentre (70, 32)); top.removeFromLeft (12);
-    bpmSlider.setBounds (top.removeFromLeft (120).withSizeKeepingCentre (120, 30)); top.removeFromLeft (8);
+    bpmSlider.setVisible (false);
+    ledBpm.setBounds (top.removeFromLeft (90).withSizeKeepingCentre (90, 42)); top.removeFromLeft (8);
     tracksBox.setBounds (top.removeFromLeft (100).withSizeKeepingCentre (100, 30)); top.removeFromLeft (12);
     songTimer.setBounds (top.removeFromRight (270).withSizeKeepingCentre (270, 40));
     top.removeFromRight (10);

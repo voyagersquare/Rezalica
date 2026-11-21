@@ -995,8 +995,11 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
       dragMidiButton ("DRAG MIDI", [this] { return processor.exportPatternMidi (processor.getSequencer().currentPattern.load(), false, true); }),
       dragWavButton ("DRAG WAV", [this] { return processor.exportPatternWav (processor.getSequencer().currentPattern.load(), false, true); }),
       metronome (p.getSequencer()),
-      transport (p.getSequencer(), TransportBar::pianoPattern)
+      transport (p.getSequencer(), TransportBar::pianoPattern),
+      ledBpm (p.getSequencer())
 {
+    ledBpm.captionColour = colours::dim;
+    addAndMakeVisible (ledBpm);
     addAndMakeVisible (metronome);
     addAndMakeVisible (transport);
     metronome.setShowClickButton (false); // the metronome key is in the transport block
@@ -1188,6 +1191,14 @@ void PianoRollPanel::syncControls()
 
 void PianoRollPanel::timerCallback()
 {
+    // while this window is the active one, the computer keyboard belongs to the piano roll
+    // (also when the focus was left in another Rezalica window: then Windows would hand the keys to this
+    //  window's frame instead of the piano roll)
+    if (auto* peer = getPeer(); peer != nullptr && peer->isFocused()
+        && ! editor.hasKeyboardFocus (false)
+        && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr
+        && juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
+        editor.grabKeyboardFocus();
     processor.collectRecordedPianoNotes();
     editor.refreshFromSequencer();
     syncControls();
@@ -1210,8 +1221,10 @@ void PianoRollPanel::resized()
     playButton.setVisible (false);
     recButton.setVisible (false);
     transport.setBounds (row1.removeFromLeft (transport.getIdealWidth (38))); row1.removeFromLeft (8);
-    syncButton.setBounds (row1.removeFromLeft (100)); row1.removeFromLeft (10);
-    bpmSlider.setBounds (row1.removeFromLeft (120)); row1.removeFromLeft (10);
+    // the sampler's tempo (one tempo for everything): LED display instead of SYNC HOST + BPM bar
+    syncButton.setVisible (false);
+    bpmSlider.setVisible (false);
+    ledBpm.setBounds (row1.removeFromLeft (84).withSizeKeepingCentre (84, 34).translated (0, -2)); row1.removeFromLeft (10);
     patternBox.setBounds (row1.removeFromLeft (110)); row1.removeFromLeft (6);
     lengthBox.setBounds (row1.removeFromLeft (110)); row1.removeFromLeft (16);
     drumButton.setBounds (row1.removeFromLeft (80)); row1.removeFromLeft (4);

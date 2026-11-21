@@ -5,6 +5,7 @@
 #include "MetronomeControls.h"
 #include "TransportButton.h"
 #include "ComputerKeyboard.h"
+#include "LedDisplay.h"
 #include "DragExport.h"
 #include <set>
 
@@ -133,6 +134,8 @@ public:
     ~PianoRollPanel() override;
     /** The piano roll opens in melodic mode. */
     void focusEditor() { editor.grabKeyboardFocus(); }
+    bool forwardKeyPressed (const juce::KeyPress& k) { return editor.keyPressed (k); }
+    bool forwardKeyState (bool down) { return editor.keyStateChanged (down); }
     void showMelodic() { editor.refreshFromSequencer(); editor.setViewMode (NoteClip::melodic); syncControls(); }
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -160,6 +163,7 @@ private:
     DragExportButton dragMidiButton, dragWavButton;
     MetronomeControls metronome;
     TransportBar transport;
+    LedBpmDisplay ledBpm;
 };
 
 class PianoRollWindow : public juce::DocumentWindow
@@ -178,6 +182,18 @@ public:
     }
     ~PianoRollWindow() override { setLookAndFeel (nullptr); }
     void closeButtonPressed() override { setVisible (false); if (onClose) onClose(); }
+    // keys that land on the window frame itself go to the piano roll
+    bool keyPressed (const juce::KeyPress& k) override
+    {
+        if (auto* panel = dynamic_cast<PianoRollPanel*> (getContentComponent())) return panel->forwardKeyPressed (k);
+        return false;
+    }
+    bool keyStateChanged (bool down) override
+    {
+        if (auto* panel = dynamic_cast<PianoRollPanel*> (getContentComponent())) return panel->forwardKeyState (down);
+        return false;
+    }
+
     // the computer keyboard plays the piano roll as soon as its window is active
     void activeWindowStatusChanged() override
     {

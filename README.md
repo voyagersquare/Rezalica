@@ -91,6 +91,10 @@
   - pamti zadnjih 40 koraka, a uputa na gumbu pokazuje što će se poništiti
 - **Kopije su samostalne**: pad kopiran s Copy/Paste ili isti sample učitan na drugi pad dobiva vlastitu kopiju. Warp, Time Stretch i Render na jednom padu ne diraju njegove kopije. Isječci iz istog reza (Chop) i dalje se obrađuju zajedno.
 
+## Jedan tempo za cijeli sampler
+
+Tempo (crveni LED BPM zaslon) je zajednički za glavni prozor, STEP SEQ, PIANO ROLL i SONG; svaki prozor ima svoj mali LED zaslon koji pokazuje i mijenja isti tempo. Warpani (time-stretch) samplovi s uključenim „FOLLOW SAMPLER TEMPO“ automatski se prilagode kad promijeniš tempo. U standalone verziji nema „SYNC HOST“ (nema DAW-a).
+
 ## Računalna tipkovnica u prozorima STEP SEQ i PIANO ROLL
 
 - **Padovi**: 1 2 3 4 / Q W E R / A S D F / Z X C V (i u step sekvenceru i u piano rollu u DRUMS prikazu).

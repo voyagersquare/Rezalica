@@ -270,8 +270,10 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p)
     : processor (p),
       dragMidiButton ("DRAG MIDI", [this] { return processor.exportPatternMidi (processor.getSequencer().currentPattern.load(), true, false); }),
       dragWavButton ("DRAG WAV", [this] { return processor.exportPatternWav (processor.getSequencer().currentPattern.load(), true, false); }),
-      grid (p), metronome (p.getSequencer()), transport (p.getSequencer(), TransportBar::stepPattern)
+      grid (p), metronome (p.getSequencer()), transport (p.getSequencer(), TransportBar::stepPattern), ledBpm (p.getSequencer())
 {
+    ledBpm.captionColour = colours::dim;
+    addAndMakeVisible (ledBpm);
     addAndMakeVisible (transport);
     metronome.setShowClickButton (false); // the metronome key is in the transport block
     dragMidiButton.setTooltip ("Drag the pattern's steps into your DAW as a MIDI clip (click: show the file)");
@@ -449,6 +451,12 @@ void SequencerPanel::syncControls()
 
 void SequencerPanel::timerCallback()
 {
+    // while this window is the active one, the computer keyboard plays its pads
+    if (auto* peer = getPeer(); peer != nullptr && peer->isFocused()
+        && ! hasKeyboardFocus (true)
+        && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr
+        && juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
+        grabKeyboardFocus();
     // pages of 32 steps (only shown when the pattern is longer than 32)
     const int steps = grid.numSteps();
     const int pages = (steps + SequencerGrid::stepsPerPage - 1) / SequencerGrid::stepsPerPage;
@@ -491,8 +499,9 @@ void SequencerPanel::resized()
     playButton.setVisible (false);
     recButton.setVisible (false);
     transport.setBounds (top.removeFromLeft (transport.getIdealWidth (40))); top.removeFromLeft (8);
-    syncButton.setBounds (top.removeFromLeft (100)); top.removeFromLeft (12);
-    bpmSlider.setBounds (top.removeFromLeft (120)); top.removeFromLeft (12);
+    syncButton.setVisible (false);   // one tempo for the whole sampler: the LED display
+    bpmSlider.setVisible (false);
+    ledBpm.setBounds (top.removeFromLeft (84).withSizeKeepingCentre (84, 36).translated (0, -2)); top.removeFromLeft (12);
     patternBox.setBounds (top.removeFromLeft (110)); top.removeFromLeft (6);
     lengthBox.setBounds (top.removeFromLeft (100)); top.removeFromLeft (12);
     swingSlider.setBounds (top.removeFromLeft (110)); top.removeFromLeft (4);
