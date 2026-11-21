@@ -471,6 +471,8 @@ void SequencerPanel::timerCallback()
 bool SequencerPanel::keyPressed (const juce::KeyPress& k)
 {
     if (k == juce::KeyPress::spaceKey) { processor.getSequencer().togglePatternPlay(); return true; }
+    if (! k.getModifiers().isCommandDown() && computerKeys.isPadKey (juce::CharacterFunctions::toLowerCase (k.getTextCharacter())))
+        return true; // played in keyStateChanged (1-4, Q-R, A-F, Z-V)
     return false;
 }
 

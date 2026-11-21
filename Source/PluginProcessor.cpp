@@ -215,7 +215,9 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         recorder.sequencerStarted(); // resampling a pattern starts exactly with it
         // PLAY with an empty pattern (no steps, no piano roll notes): the selected pad's sample plays
         // (with LOOP it loops until STOP, else it plays once)
-        if (! sequencer.isPlayingSong() && sequencer.isPatternEmpty (sequencer.currentPattern.load()))
+        // (not while REC is armed: then PLAY starts the recording, not the sample)
+        if (! sequencer.isPlayingSong() && ! sequencer.recording.load() && ! sequencer.pianoRecording.load()
+            && sequencer.isPatternEmpty (sequencer.currentPattern.load()))
         {
             addTaggedEvent (0, evOffTag, -1, 0.0f, 0.0f, playSampleTag, true);
             addTaggedEvent (0, evOnTag, selectedPad.load(), 1.0f, 0.0f, playSampleTag, false);
@@ -255,6 +257,12 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                 const int tag = (1 << 29) + juce::roundToInt (e.transpose) + 128;
                 if (e.on) addTaggedEvent (0, evOnTag, e.pad, e.velocity, e.transpose, tag, true);
                 else      addTaggedEvent (0, evOffTag, -1, 0.0f, 0.0f, tag, true);
+                if (e.record) // played on the computer keyboard in the piano roll: recorded as a melodic note
+                {
+                    const int note = juce::jlimit (0, 127, 60 + juce::roundToInt (e.transpose));
+                    if (e.on) sequencer.recordPianoNoteOn (note, e.velocity, 0, true);
+                    else      sequencer.recordPianoNoteOff (note, 0, true);
+                }
                 return;
             }
             addEvent (0, e.on ? evOn : evOff, e.pad, e.velocity);
@@ -506,10 +514,10 @@ void RezalicaProcessor::triggerPadFromUi (int pad, float velocity, bool isNoteOn
     writer.forEach ([&] (int i) { uiEvents[(size_t) i] = { pad, velocity, isNoteOn }; });
 }
 
-void RezalicaProcessor::previewNoteFromUi (int pad, float velocity, float transpose, bool isNoteOn)
+void RezalicaProcessor::previewNoteFromUi (int pad, float velocity, float transpose, bool isNoteOn, bool recordIt)
 {
     auto writer = uiFifo.write (1);
-    writer.forEach ([&] (int i) { uiEvents[(size_t) i] = { pad, velocity, isNoteOn, true, transpose }; });
+    writer.forEach ([&] (int i) { uiEvents[(size_t) i] = { pad, velocity, isNoteOn, true, transpose, recordIt }; });
 }
 
 rz::SampleData::Ptr RezalicaProcessor::loadSample (const juce::File& file, bool shareIfLoaded)

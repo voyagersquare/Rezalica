@@ -1464,6 +1464,53 @@ int main (int argc, char** argv)
         sq.stopPlayback();
     }
 
+    // ---- piano roll recording: REC + PLAY records, it does not start the sample ----
+    {
+        auto rp2 = std::make_unique<RezalicaProcessor> (false);
+        auto& r = *rp2;
+        r.prepareToPlay (48000.0, 480);
+        auto& sq = r.getSequencer();
+        sq.syncToHost = false;
+        sq.bpm = 120.0f;
+        r.selectedPad = 0;
+        r.loadFileForChopping (file);
+        sq.currentPattern = 6;               // empty pattern
+        auto clip = sq.getClip (6)->copy();
+        clip->mode = rz::NoteClip::melodic;
+        clip->targetPad = 0;
+        sq.setClip (6, clip);
+        juce::AudioBuffer<float> blk (2, 480);
+        juce::MidiBuffer none;
+        auto runFor = [&] (double secs) { for (int i = 0; i < (int) (48000 * secs / 480); ++i) r.processBlock (blk, none); };
+
+        sq.pianoRecording = true;
+        const int hitsBefore = r.getEngine().hitCounter[0].load();
+        sq.playPattern();
+        runFor (0.3);
+        check (r.getEngine().hitCounter[0].load() == hitsBefore, "with REC armed, PLAY does not start the selected pad's sample");
+
+        // computer keyboard note (as the piano roll sends it) and a hit on the target pad (key 1)
+        r.previewNoteFromUi (0, 0.8f, 7.0f, true, true);   // G3
+        runFor (0.25);
+        r.previewNoteFromUi (0, 0.0f, 7.0f, false, true);
+        r.triggerPadFromUi (0, 1.0f, true);                // the target pad: C3 in the melodic view
+        runFor (0.25);
+        r.triggerPadFromUi (0, 0.0f, false);
+        runFor (0.1);
+        sq.stopPlayback();
+        sq.pianoRecording = false;
+        runFor (0.05);
+        r.collectRecordedPianoNotes();
+        int g3 = 0, c3 = 0;
+        for (auto& n : sq.getClip (6)->notes)
+        {
+            if (n.kind == rz::NoteClip::melodic && n.row == 67) ++g3;
+            if (n.kind == rz::NoteClip::melodic && n.row == 60) ++c3;
+        }
+        std::cout << "       recorded notes: " << sq.getClip (6)->notes.size() << " (G3 " << g3 << ", C3 " << c3 << ")\n";
+        check (g3 == 1 && c3 == 1, "computer keys and the target pad are recorded as melodic notes");
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);

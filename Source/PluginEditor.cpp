@@ -160,7 +160,16 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     masterFxButton.onClick = [this] { toggleToolWindow (masterFxWindow, masterFxButton, 2); };
     if (isStandalone)
         if (auto* holder = juce::StandalonePluginHolder::getInstance())
+        {
             holder->getMuteInputValue().setValue (false); // the input is only recorded, never sent to the output
+            // MIDI keyboards / controllers work right away: if no MIDI input is switched on yet, switch them all on
+            auto& dm = holder->deviceManager;
+            const auto inputs = juce::MidiInput::getAvailableDevices();
+            bool anyOn = false;
+            for (auto& d : inputs) anyOn = anyOn || dm.isMidiInputDeviceEnabled (d.identifier);
+            if (! anyOn)
+                for (auto& d : inputs) dm.setMidiInputDeviceEnabled (d.identifier, true);
+        }
     fileButton.setTooltip ("New / Open / Save / Save As project, Export Song, Audio Settings");
     sceneButton.setTooltip ("Scenes and song: chain patterns into scenes, scenes into a song");
     styleToggle (sceneButton, juce::Colour (0xffffc94a));

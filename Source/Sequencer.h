@@ -502,11 +502,15 @@ public:
     {
         if (! pianoRecording.load() || ! running || row < 0 || row > 127)
             return;
+        if (blockPpq + sampleOffset * ppqPerSample < countInUntil - stepLengthPpq * 0.5)
+            return; // still counting in
+        toMelodicIfTarget (row, melodic);
         held[melodic ? 1 : 0][(size_t) row] = { true, blockPpq + sampleOffset * ppqPerSample, (juce::uint8) juce::jlimit (1, 127, (int) (velocity * 127.0f)) };
     }
 
     void recordPianoNoteOff (int row, int sampleOffset, bool melodic)
     {
+        toMelodicIfTarget (row, melodic);
         if (row < 0 || row > 127 || ! held[melodic ? 1 : 0][(size_t) row].down)
             return;
         auto& h = held[melodic ? 1 : 0][(size_t) row];
@@ -801,6 +805,19 @@ public:
 private:
     struct ActiveNote { juce::uint32 id; double offPpq; int mode; int row; int targetPad; };
     struct Held { bool down = false; double startPpq = 0.0; juce::uint8 velocity = 100; };
+
+    /** The piano roll shows the melodic part: a hit on its target pad (pad / computer key) is recorded
+        as a melodic note at C3 (original pitch), so it appears in the melodic view. */
+    void toMelodicIfTarget (int& row, bool& melodic) const
+    {
+        if (melodic) return;
+        if (auto* clip = audioClips[(size_t) juce::jlimit (0, numPatterns - 1, currentPattern.load())].get())
+            if (clip->mode == NoteClip::melodic && row == clip->targetPad)
+            {
+                row = 60;
+                melodic = true;
+            }
+    }
 
     void syncClips()
     {

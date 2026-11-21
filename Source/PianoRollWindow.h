@@ -4,6 +4,7 @@
 #include "LookAndFeel.h"
 #include "MetronomeControls.h"
 #include "TransportButton.h"
+#include "ComputerKeyboard.h"
 #include "DragExport.h"
 #include <set>
 
@@ -56,8 +57,12 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override;
+    void focusLost (FocusChangeType) override;
+    int getKeyboardOctave() const { return computerKeys.octave; }
 
 private:
+    ComputerKeyboard computerKeys; // play (and record) from the computer keyboard
     enum class Drag { none, create, move, resizeLeft, resizeRight, rubberBand, erase, velocity, keyboard };
     static constexpr int keyboardWidth = 96, rulerHeight = 22, velocityHeight = 72, scrollSize = 12;
 
@@ -127,6 +132,7 @@ public:
     explicit PianoRollPanel (RezalicaProcessor& p);
     ~PianoRollPanel() override;
     /** The piano roll opens in melodic mode. */
+    void focusEditor() { editor.grabKeyboardFocus(); }
     void showMelodic() { editor.refreshFromSequencer(); editor.setViewMode (NoteClip::melodic); syncControls(); }
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -172,6 +178,12 @@ public:
     }
     ~PianoRollWindow() override { setLookAndFeel (nullptr); }
     void closeButtonPressed() override { setVisible (false); if (onClose) onClose(); }
+    // the computer keyboard plays the piano roll as soon as its window is active
+    void activeWindowStatusChanged() override
+    {
+        if (isActiveWindow())
+            if (auto* panel = dynamic_cast<PianoRollPanel*> (getContentComponent())) panel->focusEditor();
+    }
     std::function<void()> onClose;
 };
 } // namespace rz

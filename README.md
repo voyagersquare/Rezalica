@@ -91,6 +91,13 @@
   - pamti zadnjih 40 koraka, a uputa na gumbu pokazuje što će se poništiti
 - **Kopije su samostalne**: pad kopiran s Copy/Paste ili isti sample učitan na drugi pad dobiva vlastitu kopiju. Warp, Time Stretch i Render na jednom padu ne diraju njegove kopije. Isječci iz istog reza (Chop) i dalje se obrađuju zajedno.
 
+## Računalna tipkovnica u prozorima STEP SEQ i PIANO ROLL
+
+- **Padovi**: 1 2 3 4 / Q W E R / A S D F / Z X C V (i u step sekvenceru i u piano rollu u DRUMS prikazu).
+- **Note** (piano roll, MELODIC prikaz): A W S E D F T G Z(Y) H U J K O L P = C … D#, **X / C** = oktava dolje / gore. Note sviraju odabrani pad kromatski (C3 = izvorna visina).
+- Snimanje u piano roll: uključi **REC** (crveni krug), pritisni **PLAY** i sviraj tipkama, padovima ili MIDI klavijaturom. Udarac na pad koji piano roll svira (npr. A1) snima se kao nota C3.
+- **PLAY WITH MIDI KEYS**: vanjska MIDI klavijatura svira odabrani pad kromatski. Standalone sam uključi sve MIDI ulaze pri pokretanju (ako ni jedan nije uključen u Audio Settings).
+
 ## Izgled
 
 Sučelje izgleda kao hardverski sampler: brušena srebrna ploča, crni paneli s crvenim tiskom, sive gumene tipke s LED lampicom kad su uključene, crni knobovi s kremastim pokazivačem i crvenom skalom, kremasti gumeni padovi i crveni LED zaslon za tempo (BPM: povuci gore/dolje, Shift = fino, kotačić, dupli klik = upis). Isto je u standalone verziji i u VST pluginu.

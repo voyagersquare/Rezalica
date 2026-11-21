@@ -138,7 +138,7 @@ public:
     void triggerPadFromUi (int pad, float velocity, bool isNoteOn);
     void stopAll() { triggerPadFromUi (-1, 0.0f, false); }
     /** Plays the pad transposed (piano roll keyboard / note preview). */
-    void previewNoteFromUi (int pad, float velocity, float transpose, bool isNoteOn);
+    void previewNoteFromUi (int pad, float velocity, float transpose, bool isNoteOn, bool recordIt = false);
 
     rz::SamplerEngine& getEngine() noexcept { return engine; }
     rz::Sequencer& getSequencer() noexcept { return sequencer; }
@@ -174,7 +174,7 @@ public:
     void previewFile (const juce::File& file);
 
 private:
-    struct UiEvent { int pad; float velocity; bool on; bool preview = false; float transpose = 0.0f; };
+    struct UiEvent { int pad; float velocity; bool on; bool preview = false; float transpose = 0.0f; bool record = false; };
     enum EventType { evStopAll = -1, evOff = 0, evOffSeq = 1, evOffTag = 2, evOn = 10, evOnSeq = 11, evOnTag = 12 };
     struct Event
     {

@@ -732,6 +732,14 @@ bool PianoRollEditor::keyPressed (const juce::KeyPress& k)
     if (code == juce::KeyPress::downKey)  { transposeSelection (shift ? -12 : -1); return true; }
     if (code == juce::KeyPress::leftKey)  { nudgeSelection (-(shift ? 4.0 : (snap > 0.0 ? snap : 1.0))); return true; }
     if (code == juce::KeyPress::rightKey) { nudgeSelection (shift ? 4.0 : (snap > 0.0 ? snap : 1.0)); return true; }
+    // the computer keyboard plays: notes in the melodic view, pads in the drum view
+    if (! cmd && getViewMode() == NoteClip::melodic)
+    {
+        if (computerKeys.octaveKey (c)) { repaint(); if (onChanged) onChanged(); return true; }
+        if (computerKeys.isNoteKey (c)) return true; // played in keyStateChanged
+    }
+    if (! cmd && getViewMode() == NoteClip::drum && computerKeys.isPadKey (c))
+        return true;
     if (! cmd && c == 'q') { quantize(); return true; }
     if (! cmd && c == 'b') { tool = tool == Tool::draw ? Tool::select : Tool::draw; if (onChanged) onChanged(); return true; }
     if (k == juce::KeyPress::escapeKey) { selection.clear(); repaint(); return true; }
@@ -742,6 +750,18 @@ bool PianoRollEditor::keyPressed (const juce::KeyPress& k)
         return true;
     }
     return false;
+}
+
+bool PianoRollEditor::keyStateChanged (bool)
+{
+    if (getViewMode() == NoteClip::melodic)
+        return computerKeys.pollNotes (processor, getTargetPad(), (float) newVelocity / 127.0f);
+    return computerKeys.pollPads (processor);
+}
+
+void PianoRollEditor::focusLost (FocusChangeType)
+{
+    computerKeys.releaseAll (processor);
 }
 
 //==============================================================================
@@ -1101,8 +1121,8 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
     velocitySlider.onValueChange = [this] { editor.newVelocity = (int) velocitySlider.getValue(); };
     addAndMakeVisible (velocitySlider);
 
-    infoLabel.setText ("Click = note (drag = length)   edge = resize   right-click / hold & drag = delete   Ctrl+drag = copy   "
-                       "wheel = scroll, Shift = sideways, Ctrl = zoom, Alt = row height   Ctrl+Z/Y  Ctrl+C/V/D  Del  arrows  Q",
+    infoLabel.setText ("KEYS: melodic A W S E D F T G Z H U J K = notes, X / C = octave; drums 1-4 Q-R A-F Z-V = pads   |   "
+                       "Click = note  edge = resize  right-click = delete  Ctrl+drag = copy  wheel / Ctrl = zoom  Ctrl+Z/Y C/V/D  Del",
                        juce::dontSendNotification);
     infoLabel.setColour (juce::Label::textColourId, colours::dim);
     infoLabel.setFont (juce::FontOptions (11.0f));

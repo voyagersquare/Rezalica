@@ -5,6 +5,7 @@
 #include "DragExport.h"
 #include "MetronomeControls.h"
 #include "TransportButton.h"
+#include "ComputerKeyboard.h"
 
 namespace rz
 {
@@ -47,9 +48,12 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool) override { return computerKeys.pollPads (processor); }
+    void focusLost (FocusChangeType) override { computerKeys.releaseAll (processor); }
     void mouseDown (const juce::MouseEvent&) override;
 
 private:
+    ComputerKeyboard computerKeys;
     void timerCallback() override;
     void syncControls();
 
@@ -83,6 +87,12 @@ public:
     }
 
     ~SequencerWindow() override { setLookAndFeel (nullptr); }
+
+    void activeWindowStatusChanged() override
+    {
+        if (isActiveWindow())
+            if (auto* c = getContentComponent()) c->grabKeyboardFocus(); // the computer keyboard plays the pads
+    }
 
     void closeButtonPressed() override
     {
