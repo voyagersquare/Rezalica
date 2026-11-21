@@ -1511,6 +1511,33 @@ int main (int argc, char** argv)
         check (g3 == 1 && c3 == 1, "computer keys and the target pad are recorded as melodic notes");
     }
 
+    // ---- slices of one chop cut each other (A4 stops A1), and the loop starts again with A1 ----
+    {
+        auto cp = std::make_unique<RezalicaProcessor> (false);
+        auto& c = *cp;
+        c.prepareToPlay (48000.0, 480);
+        c.chopFileToPads (file, RezalicaProcessor::chop4);   // 2 s sample -> 4 slices of 0.5 s
+        const int g = c.getEngine().getPad (0).chokeGroup.load();
+        check (g > 0 && c.getEngine().getPad (3).chokeGroup.load() == g, "chopped pads share a choke group");
+        auto& sq = c.getSequencer();
+        sq.syncToHost = false; sq.bpm = 120.0f;
+        sq.length[0] = 16;
+        sq.setStep (0, 0, 0, 127);
+        sq.setStep (0, 3, 2, 127);                         // A4 on step 3 (0.25 s), while A1 still plays
+        for (int i = 0; i < 4; ++i) c.getEngine().getPad (i).end = c.getEngine().getPad (i).start.load() + 0.25f; // 0.5 s slices
+        juce::AudioBuffer<float> blk (2, 480);
+        juce::MidiBuffer none;
+        sq.playPattern();
+        for (int i = 0; i < 20; ++i) c.processBlock (blk, none);      // 0.2 s: A1
+        const bool a1First = c.getEngine().isPadSounding (0);
+        for (int i = 0; i < 15; ++i) c.processBlock (blk, none);      // 0.35 s: A4 started at 0.25 s
+        const bool a4CutA1 = ! c.getEngine().isPadSounding (0) && c.getEngine().isPadSounding (3);
+        for (int i = 0; i < 175; ++i) c.processBlock (blk, none);     // 2.1 s: the loop started again with A1
+        const bool againA1 = c.getEngine().isPadSounding (0) && ! c.getEngine().isPadSounding (3);
+        sq.stopPlayback();
+        check (a1First && a4CutA1 && againA1, "A4 cuts A1, the next loop starts with A1 again");
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);

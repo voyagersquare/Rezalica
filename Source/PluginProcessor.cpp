@@ -655,6 +655,22 @@ void RezalicaProcessor::applySlices()
     // slice k goes to pad k: slices 1-16 -> bank A, 17-32 -> bank B, ...
     const int n = (int) slicePoints.size();
 
+    // the slices of one chop cut each other (like an MPC / Koala chop): they share a choke group.
+    // Keep the group the first slice already has, else take the lowest group no other pad uses.
+    int chopGroup = 0;
+    if (n > 1)
+    {
+        chopGroup = engine.getPad (0).chokeGroup.load();
+        if (chopGroup <= 0)
+        {
+            std::array<bool, 9> used {};
+            for (int pad = n; pad < rz::numPads; ++pad)
+                used[(size_t) juce::jlimit (0, 8, engine.getPad (pad).chokeGroup.load())] = true;
+            chopGroup = 1;
+            while (chopGroup < 8 && used[(size_t) chopGroup]) ++chopGroup;
+        }
+    }
+
     for (int pad = 0; pad < rz::numPads; ++pad)
     {
         const int k = pad;
@@ -663,6 +679,7 @@ void RezalicaProcessor::applySlices()
             auto& ps = engine.getPad (pad);
             ps.start = slicePoints[(size_t) k];
             ps.end = (k + 1 < n) ? slicePoints[(size_t) k + 1] : 1.0f;
+            ps.chokeGroup = chopGroup;
             engine.setPadSample (pad, chopSource);
             const juce::ScopedLock sl (missingPathLock);
             missingPaths[(size_t) pad] = {};
@@ -670,6 +687,8 @@ void RezalicaProcessor::applySlices()
         else if (const auto old = engine.getPadSample (pad); old != nullptr && (old == chopSource || old == previousChopSource))
         {
             engine.setPadSample (pad, nullptr); // leftover slice from a previous chop
+            if (chopGroup > 0 && engine.getPad (pad).chokeGroup.load() == chopGroup)
+                engine.getPad (pad).chokeGroup = 0;
         }
     }
     previousChopSource = nullptr;
@@ -2011,6 +2030,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     auto pads = root.getChildWithName ("PADS");
     std::map<int, rz::SampleData::Ptr> restoredById;
+    bool olderProject = false; // saved before choke groups existed
     for (auto p : pads)
     {
         const int i = p.getProperty ("index", -1);
@@ -2029,6 +2049,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         ps.reverse = (bool) p.getProperty ("reverse", false);
         ps.gate = (bool) p.getProperty ("gate", false);
         ps.chokeGroup = (int) p.getProperty ("choke", 0);
+        olderProject = olderProject || ! p.hasProperty ("choke");
         ps.effects.fromValueTree (p.getChildWithName ("FX"));
         ps.mute = (bool) p.getProperty ("mute", false);
 
@@ -2098,6 +2119,27 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
 
         const juce::ScopedLock sl (missingPathLock);
         missingPaths[(size_t) i] = (s == nullptr) ? path : juce::String();
+    }
+
+    // older projects: the slices of one chop cut each other, as chops do now
+    if (olderProject)
+    {
+        std::array<bool, rz::numPads> done {};
+        for (int a = 0; a < rz::numPads; ++a)
+        {
+            auto s = engine.getPadSample (a);
+            if (s == nullptr || done[(size_t) a]) continue;
+            std::vector<int> group { a };
+            for (int b = a + 1; b < rz::numPads; ++b)
+                if (engine.getPadSample (b) == s) group.push_back (b);
+            for (int b : group) done[(size_t) b] = true;
+            if (group.size() < 2) continue;
+            std::array<bool, 9> used {};
+            for (int i = 0; i < rz::numPads; ++i) used[(size_t) juce::jlimit (0, 8, engine.getPad (i).chokeGroup.load())] = true;
+            int g = 1;
+            while (g < 8 && used[(size_t) g]) ++g;
+            for (int b : group) engine.getPad (b).chokeGroup = g;
+        }
     }
 
     auto seq = root.getChildWithName ("SEQ");
