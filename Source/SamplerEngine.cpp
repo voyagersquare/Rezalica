@@ -67,13 +67,11 @@ float Voice::getNormalisedPosition() const noexcept
     return (float) (pos / (double) juce::jmax (1, sample->buffer.getNumSamples()));
 }
 
-void Voice::render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& padBus, int startSample, int numSamples,
-                    float bankGain)
+void Voice::render (juce::AudioBuffer<float>& out, int startSample, int numSamples, float bankGain)
 {
     if (! active)
         return;
 
-    auto& out = (pad >= 0 && settings->effects.anyOn()) ? padBus : dry;
     const float* srcL = sample->buffer.getReadPointer (0);
     const float* srcR = sample->buffer.getReadPointer (1);
     const int len = sample->buffer.getNumSamples();
@@ -151,6 +149,7 @@ SamplerEngine::SamplerEngine()
 {
     for (auto& g : bankGain) g = 1.0f;
     for (auto& m : bankMute) m = false;
+    for (auto& b : bankBus) b = 0;
     previewSettings.attackMs = 0.5f;
     previewSettings.releaseMs = 15.0f;
     for (auto& h : hitCounter) h = 0;
@@ -309,7 +308,7 @@ void SamplerEngine::allNotesOff()
     previewVoice.fastStop();
 }
 
-void SamplerEngine::render (juce::AudioBuffer<float>& dry, std::array<juce::AudioBuffer<float>, numPads>& padBuses, int startSample, int numSamples)
+void SamplerEngine::render (std::array<juce::AudioBuffer<float>, numBuses>& buses, int startSample, int numSamples)
 {
     if (numSamples <= 0)
         return;
@@ -320,9 +319,9 @@ void SamplerEngine::render (juce::AudioBuffer<float>& dry, std::array<juce::Audi
             const int bank = v.getPad() / padsPerBank;
             if (bankMute[(size_t) bank].load() && ! v.isReleasing())
                 v.fastStop(); // muting a bank also silences what is playing in it
-            v.render (dry, padBuses[(size_t) v.getPad()], startSample, numSamples, bankGain[(size_t) bank].load());
+            v.render (buses[(size_t) busForPad (v.getPad())], startSample, numSamples, bankGain[(size_t) bank].load());
         }
-    previewVoice.render (dry, dry, startSample, numSamples);
+    previewVoice.render (buses[0], startSample, numSamples); // browser preview / lazy chop: straight to MASTER
 }
 
 bool SamplerEngine::isPadSounding (int pad) const

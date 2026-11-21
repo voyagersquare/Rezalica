@@ -9,6 +9,8 @@
 #include "MasterFx.h"
 #include "Recorder.h"
 #include "LoopbackCapture.h"
+#include "Mixer.h"
+#include "PluginHost.h"
 
 class RezalicaProcessor : public juce::AudioProcessor,
                           private juce::Timer
@@ -155,6 +157,20 @@ public:
     bool collectRecordedPianoNotes();
     juce::ChangeBroadcaster padsChanged; // pad samples / settings replaced
 
+    // ---- mixer: BUS A-D + MASTER, 4 third-party effect slots each (message thread API) ----
+    rz::MixerBus& getBus (int bus) noexcept { return buses[(size_t) juce::jlimit (0, rz::numBuses - 1, bus)]; }
+    /** Loads a plug-in (from the scanned list) into a slot; returns false with an error message. */
+    bool loadPluginIntoSlot (int bus, int slot, const juce::PluginDescription&, juce::String& error);
+    /** Puts any processor into a slot (prepared here); desc may be null. */
+    void setSlotProcessor (int bus, int slot, std::unique_ptr<juce::AudioProcessor>, const juce::PluginDescription* desc);
+    void clearSlot (int bus, int slot);
+    juce::AudioProcessor* getSlotProcessor (int bus, int slot) const;
+    juce::String getSlotName (int bus, int slot) const;
+    /** Called before plug-ins are replaced or removed (close their editor windows). */
+    std::function<void()> onPluginsAboutToChange;
+    juce::ChangeBroadcaster mixerChanged;
+    juce::SharedResourcePointer<rz::PluginHost> pluginHost;
+
     // ---- master chain (EQ / compressor / limiter on the output) ----
     rz::MasterFxSettings masterFxSettings;
     rz::MasterFx& getMasterFx() noexcept { return masterFx; }
@@ -224,10 +240,7 @@ private:
 
     rz::SamplerEngine engine;
     rz::Sequencer sequencer;
-    std::array<rz::FxChain, rz::numPads> padFx;             // every pad has its own effect chain
-    std::array<juce::AudioBuffer<float>, rz::numPads> padBuses;
-    std::array<double, rz::numPads> padFxIdleSamples {};   // how long a pad's chain has been silent
-    std::array<bool, rz::numPads> padFxWasRunning {};
+
 
     // chop state (message thread)
     rz::SampleData::Ptr chopSource, previousChopSource;
@@ -253,7 +266,13 @@ private:
     int numEvents = 0;
     std::array<double, rz::numPads> pendingSeqOff {};
 
-    juce::AudioBuffer<float> dryBuffer;
+    std::array<juce::AudioBuffer<float>, rz::numBuses> busBuffers;   // what each mixer bus collects this block
+    std::array<rz::MixerBus, rz::numBuses> buses;
+    int preparedBlockSize = 512;
+    void prepareSlot (rz::MixerSlot&);
+    void processBusChain (int bus, int numSamples);
+    juce::ValueTree mixerToValueTree() const;
+    void mixerFromValueTree (const juce::ValueTree&);
     rz::MasterFx masterFx;
     rz::AudioRecorder recorder;
     rz::LoopbackCapture loopback;

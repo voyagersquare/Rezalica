@@ -13,6 +13,7 @@
 #include "AppSettings.h"
 #include "LedDisplay.h"
 #include "TransportButton.h"
+#include "MixerPanel.h"
 #include "MetronomeControls.h"
 
 class RezalicaEditor : public juce::AudioProcessorEditor,
@@ -122,6 +123,8 @@ private:
                      muteButton { "MUTE" }, renderButton { "RENDER" }, clearPadButton { "CLEAR" }, trimButton { "TRIM" },
                      warpButton { "WARP" }, stretchButton { "STRETCH..." };
     juce::ComboBox chokeBox;
+    std::unique_ptr<rz::MixerPanel> mixer;            // BUS A-D + MASTER with third-party effects (replaces the built-in effects)
+    std::vector<juce::Component*> builtInFxComponents();
 
     // pads
     std::vector<std::unique_ptr<rz::PadButton>> pads;

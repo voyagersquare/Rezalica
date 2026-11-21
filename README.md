@@ -147,7 +147,11 @@ Tipkovnica računala svira trenutno odabranu banku:
   - Snimka se sprema kao WAV u `Dokumenti/Rezalica/Recordings` i odmah je spremna za rezanje (chop mod ili LAZY CHOP). UNDO vraća stari sample.
 - **BROWSER**: stoji lijevo u glavnom prozoru i ostaje otvoren između pokretanja. Omiljene mape (FAVORITES) i nedavni projekti pamte se u zasebnoj datoteci `RezalicaSampler.settings`. Klik preslušava, dupli klik (ili LOAD TO PAD) učitava na odabrani pad, a LOAD + NEXT PAD učita pa prijeđe na sljedeći pad. Datoteku možeš i **povući** na bilo koji pad ili u prozor za samplove (te van, u DAW ili mapu).
   - **FAVORITES**: desni klik na bilo koju mapu u browseru → „Add to FAVORITES“ (ponovni desni klik je uklanja). Gumb FAVORITES prikazuje omiljene mape i skače u njih, a nalaze se i na vrhu padajućeg izbornika mjesta (označene zvjezdicom). Pamte se između pokretanja.
-- **MASTER FX**: na cijelom izlazu EQ (low 100 Hz, mid s frekvencijom, high 8 kHz), kompresor (threshold, ratio, attack, release, makeup, prikaz GR) i limiter (ceiling). Sprema se s projektom i ulazi u export.
+- **MIXER** (dolje, umjesto ugrađenih efekata): **BUS A, B, C, D** i **MASTER**, svaki s **4 utora za VST3 efekte** (FabFilter, Valhalla, iZotope …), faderom, mjeračem razine i M (mute) / S (solo).
+  - Svi padovi i banke su po defaultu spojeni na **MASTER**.
+  - Desni klik na pad → **Send to** → BUS A–D (ili „Same as bank“). Desni klik na gumb banke → **Send bank … to** → cijela banka na BUS. Pad na busu ima plavu oznaku „BUS A“ …
+  - Efekti: **BROWSER → PLUGINS → SCAN** (pretraži VST3 mape, „VST3 FOLDERS…“ za dodatne mape), zatim **povuci** efekt u utor. Klik na utor otvara efekt, desni klik: Bypass / Remove / Load effect.
+  - Efekti i njihove postavke spremaju se s projektom i ulaze u export / resample.
 - **Višestruki odabir padova**: klik na prvi pad, pa **Shift+klik** na zadnji označi sve između (npr. A1–A16), a **Ctrl+klik** dodaje ili miče pojedini pad. Označeni padovi imaju žuti okvir. Desni klik na bilo koji pad → **Clear all selected pads** isprazni sve odjednom (jedan UNDO ih vraća). ESC ili običan klik poništava odabir.
 - **Chopovi se međusobno prekidaju**: padovi dobiveni rezanjem istog sampla automatski dobiju istu choke grupu, pa svaki novi chop prekine onaj koji svira (kao na MPC-u / Koali). Vrijedi i za starije projekte. Ako želiš da se chopovi preklapaju, na padu odaberi „No choke“.
 - **CHOKE** (pored MUTE na padu): padovi iste choke grupe (1–8) prekidaju jedan drugog, npr. otvoreni i zatvoreni hi-hat.

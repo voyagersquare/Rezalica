@@ -541,6 +541,14 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         setResizable (true, false);
         setResizeLimits (1400, 740, 8000, 5000);
     }
+    // the built-in effects are gone: the mixer below hosts third-party effects on BUS A-D and MASTER
+    for (auto* c : builtInFxComponents())
+        c->setVisible (false);
+    masterFxButton.setVisible (false);
+    mixer = std::make_unique<rz::MixerPanel> (processor);
+    addAndMakeVisible (*mixer);
+    fxTitle.setText ("MIXER   drag effects from BROWSER > PLUGINS into the slots", juce::dontSendNotification);
+
     setSize (isStandalone ? 1530 : 1240, isStandalone ? 784 : 772);
     if (isStandalone)
     {
@@ -670,7 +678,7 @@ void RezalicaEditor::refreshFxControls()
     delayDivBox.setSelectedId (fx.delayDiv.load() + 1, juce::dontSendNotification);
     filterTypeBox.setSelectedId (fx.filterType.load() + 1, juce::dontSendNotification);
     timeKnob.setEnabled (fx.delayDiv.load() == 0);
-    fxTitle.setText ("EFFECTS FOR PAD " + rz::padLabel (pad) + "  (only this pad)", juce::dontSendNotification);
+    fxTitle.setText ("MIXER   drag effects from BROWSER > PLUGINS into the slots", juce::dontSendNotification);
 }
 
 void RezalicaEditor::refreshPadNames()
@@ -678,7 +686,9 @@ void RezalicaEditor::refreshPadNames()
     for (auto& p : pads)
     {
         p->setSampleName (processor.getPadName (p->getIndex()));
-        p->setHasFx (processor.getEngine().getPad (p->getIndex()).effects.anyOn());
+        // badge: the mixer bus of the pad when it is not MASTER
+        const int bus = processor.getEngine().busForPad (p->getIndex());
+        p->setBusBadge (bus > 0 ? juce::String::charToString ((juce::juce_wchar) ('A' + bus - 1)) : juce::String());
     }
 
     for (int b = 0; b < rz::numBanks; ++b)
@@ -890,6 +900,14 @@ void RezalicaEditor::showBankMenu (int bank)
     m.addSeparator();
     m.addItem (5, "Bank volume...");
     m.addItem (6, "Reset bank volume (0 dB)", std::abs (processor.getBankGainDb (bank)) > 0.01f);
+    m.addSeparator();
+    {
+        juce::PopupMenu send;
+        const int cur = processor.getEngine().bankBus[(size_t) bank].load();
+        for (int bi = 0; bi < rz::numBuses; ++bi)
+            send.addItem (20 + bi, rz::busName (bi) + (bi == 0 ? "   (default)" : ""), true, cur == bi);
+        m.addSubMenu ("Send bank " + letter + " to", send);
+    }
 
     juce::Component::SafePointer<RezalicaEditor> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&bankButtons[(size_t) bank]), [safe, bank] (int r)
@@ -904,7 +922,9 @@ void RezalicaEditor::showBankMenu (int bank)
             case 4: proc.pushUndo ("Paste bank");  proc.pasteBank (bank); break;
             case 5: safe->showBankVolume (bank); return;
             case 6: proc.pushUndo ("Bank volume"); proc.setBankGainDb (bank, 0.0f); break;
-            default: break;
+            default:
+                if (r >= 20 && r < 20 + rz::numBuses) proc.getEngine().bankBus[(size_t) bank] = r - 20; // pads that follow the bank go there
+                break;
         }
         safe->refreshPadNames();
         safe->selectPad (proc.selectedPad.load());
@@ -1249,16 +1269,21 @@ juce::Component* RezalicaEditor::dockedPanel() const
     return nullptr;
 }
 
+std::vector<juce::Component*> RezalicaEditor::builtInFxComponents()
+{
+    return { &copyFxButton, &pasteFxButton, &fxToAllButton,
+             &filterOnButton, &filterTypeBox, &filterTypeLabel, &cutoffKnob, &resoKnob,
+             &satOnButton, &tubeKnob, &tapeKnob, &solidKnob,
+             &delayOnButton, &delayDivLabel, &delayDivBox, &timeKnob, &feedbackKnob, &mixKnob,
+             &reverbOnButton, &reverbSizeKnob, &reverbDampKnob, &reverbWidthKnob, &reverbMixKnob };
+}
+
 std::vector<juce::Component*> RezalicaEditor::stripAndFxComponents()
 {
     // (the pad title row with WARP / STRETCH / TRIM / RENDER / CLEAR stays)
     return { &gainKnob, &panKnob, &pitchKnob, &attackKnob, &releaseKnob, &startKnob, &endKnob,
              &loopButton, &reverseButton, &gateButton, &muteButton, &chokeBox,
-             &fxTitle, &copyFxButton, &pasteFxButton, &fxToAllButton,
-             &filterOnButton, &filterTypeBox, &filterTypeLabel, &cutoffKnob, &resoKnob,
-             &satOnButton, &tubeKnob, &tapeKnob, &solidKnob,
-             &delayOnButton, &delayDivLabel, &delayDivBox, &timeKnob, &feedbackKnob, &mixKnob,
-             &reverbOnButton, &reverbSizeKnob, &reverbDampKnob, &reverbWidthKnob, &reverbMixKnob };
+             &fxTitle, mixer.get() };
 }
 
 void RezalicaEditor::showDock (int view)
@@ -1592,7 +1617,8 @@ void RezalicaEditor::resized()
         t.removeFromLeft (175);
         browserButton.setBounds (t.removeFromLeft (90)); t.removeFromLeft (4);
         samplingButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (4);
-        masterFxButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (16);
+        if (masterFxButton.isVisible()) { masterFxButton.setBounds (t.removeFromLeft (96)); t.removeFromLeft (4); }
+        t.removeFromLeft (12);
         metronome.setBounds (t.removeFromLeft (136)); // count-in menu
         // SONG / STEP SEQ / PIANO ROLL at the height of the transport keys
         auto level = [this] (juce::Rectangle<int> r) { return r.withY (transportCentreY - 15).withHeight (30); }; // centred on the transport keys
@@ -1642,7 +1668,7 @@ void RezalicaEditor::resized()
     }
     dockArea = {};
 
-    fxArea = b.removeFromBottom (176);
+    fxArea = b.removeFromBottom (juce::jmax (176, getHeight() * 24 / 100)); // the mixer grows in full screen
     b.removeFromBottom (10);
 
     padArea = b.removeFromRight (juce::jmax (420, getWidth() * 27 / 100)); // bigger pads when the window is bigger
@@ -1705,6 +1731,14 @@ void RezalicaEditor::layoutPads()
 
 void RezalicaEditor::layoutEffects()
 {
+    {
+        auto f = fxArea;
+        fxTitle.setBounds (f.removeFromTop (22));
+        f.removeFromTop (4);
+        if (mixer != nullptr) mixer->setBounds (f);
+        filterArea = satArea = delayArea = reverbArea = {};
+        return;
+    }
     {
         auto f = fxArea;
         auto titleRow = f.removeFromTop (22);

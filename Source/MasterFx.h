@@ -138,6 +138,11 @@ public:
         outputPeak = juce::jmax (outputPeak.load() * 0.85f, peak (buffer, chans, numSamples));
     }
 
+    void reportPeak (const juce::AudioBuffer<float>& b, int chans, int n)
+    {
+        outputPeak = juce::jmax (outputPeak.load() * 0.85f, peak (b, chans, n));
+    }
+
     std::atomic<float> gainReductionDb { 0.0f }; // for the UI meter (<= 0)
     std::atomic<float> outputPeak { 0.0f };
 

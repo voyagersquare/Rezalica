@@ -213,37 +213,8 @@ int main (int argc, char** argv)
             maxDiff = juce::jmax (maxDiff, std::abs (a2Dry.getSample (ch, i) - a2WithA1Fx.getSample (ch, i)));
     std::cout << "       A2 difference with effects on A1: " << maxDiff << "\n";
     check (maxDiff < 1.0e-6f, "effects on A1 do not affect A2 (per-pad effects)");
-    auto& a2fx = p.getEngine().getPad (1).effects;
-    a2fx.filterOn = true; a2fx.cutoff = 200.0f;
-    const auto a2Filtered = renderPad (1);
-    check (a2Filtered.getMagnitude (0, 0, a2Filtered.getNumSamples()) < a2Dry.getMagnitude (0, 0, a2Dry.getNumSamples()) * 0.9f,
-           "A2's own filter changes A2");
-
-    // Saturation: gentle, keeps roughly the same level, adds harmonics
-    a2fx.reset();
-    for (int type = 0; type < 3; ++type)
-    {
-        a2fx.reset();
-        a2fx.satOn = true;
-        (type == 0 ? a2fx.tube : type == 1 ? a2fx.tape : a2fx.solid) = 1.0f;
-        const auto sat = renderPad (1);
-        const float ratio = sat.getRMSLevel (0, 0, sat.getNumSamples()) / juce::jmax (1.0e-9f, a2Dry.getRMSLevel (0, 0, a2Dry.getNumSamples()));
-        float diff = 0.0f;
-        for (int i = 0; i < sat.getNumSamples(); ++i)
-            diff = juce::jmax (diff, std::abs (sat.getSample (0, i) - a2Dry.getSample (0, i)));
-        const char* names[] { "tube", "tape", "solid state" };
-        std::cout << "       " << names[type] << " at max: level ratio " << ratio << ", max change " << diff << "\n";
-        check (ratio > 0.6f && ratio < 1.4f && diff > 0.005f && std::isfinite (ratio), "saturation changes the sound but keeps the level");
-    }
-    for (int type = 0; type < 6; ++type)
-    {
-        a2fx.reset();
-        a2fx.filterOn = true; a2fx.filterType = type; a2fx.cutoff = 1000.0f; a2fx.resonance = 1.0f;
-        const auto f = renderPad (1);
-        check (std::isfinite (f.getMagnitude (0, 0, f.getNumSamples())) && f.getMagnitude (0, 0, f.getNumSamples()) < 4.0f,
-               "ladder filter types stay stable at full resonance");
-    }
-    a2fx.reset();
+    p.getEngine().getPad (1).effects.reset();
+    a1fx.reset();
 
     // LOOP plays between the markers while held, stops when released
     {
@@ -1232,21 +1203,6 @@ int main (int argc, char** argv)
             for (int i = 0; i < 20; ++i) sp.processBlock (blk, none);
         }
 
-        // master limiter keeps the output under its ceiling
-        {
-            auto& m = sp.masterFxSettings;
-            m.limiterOn = true; m.ceilingDb = -6.0f;
-            m.eqOn = true; m.lowDb = 6.0f;
-            m.compOn = true;
-            sp.getEngine().getPad (0).gainDb = 12.0f;
-            float peak = 0.0f;
-            sp.triggerPadFromUi (0, 1.0f, true);
-            for (int i = 0; i < 200; ++i) { sp.processBlock (blk, none); peak = juce::jmax (peak, blk.getMagnitude (0, 0, 128)); }
-            std::cout << "       limiter peak " << juce::Decibels::gainToDecibels (peak) << " dB\n";
-            check (peak > 0.1f && peak <= juce::Decibels::decibelsToGain (-6.0f) * 1.02f, "master limiter: output stays under the ceiling");
-            sp.getEngine().getPad (0).gainDb = 0.0f;
-        }
-
         // project state: tracks, start marker, colours, swing, choke, master FX
         sq.songStartStep = 1;
         sq.patternColours[1] = 0xff4fa3ff;
@@ -1263,8 +1219,7 @@ int main (int argc, char** argv)
                    && std::abs (q6.patternSwing[1].load() - 0.3f) < 1.0e-6f && q6.swingGrid[1].load() == 1
                    && q6.metronome.load() && q6.countInBars.load() == 2,
                "tracks, start marker, colours, swing and metronome are saved with the project");
-        check (r6.getEngine().getPad (0).chokeGroup.load() == 1 && r6.masterFxSettings.limiterOn.load()
-                   && std::abs (r6.masterFxSettings.ceilingDb.load() + 6.0f) < 1.0e-6f, "choke groups and master FX are saved");
+        check (r6.getEngine().getPad (0).chokeGroup.load() == 1, "choke groups are saved");
 
         // song export with 2 tracks: 8 s + 3 s tail, MIDI has both tracks' hits (A1 once, A3 twice)
         sq.metronome = true; // must not end up in the export
@@ -1538,6 +1493,76 @@ int main (int argc, char** argv)
         check (a1First && a4CutA1 && againA1, "A4 cuts A1, the next loop starts with A1 again");
         check (c.getEngine().lastSequencedPad.load() >= 0 && c.getEngine().sequencedCounter.load() >= 3,
                "the sample view knows which chop the sequencer plays");
+    }
+
+    // ---- mixer: pads -> BUS A-D -> MASTER, effects in the slots, mute / solo, saved with the project ----
+    {
+        struct HalfGain : public juce::AudioProcessor
+        {
+            HalfGain() : juce::AudioProcessor (BusesProperties().withInput ("In", juce::AudioChannelSet::stereo()).withOutput ("Out", juce::AudioChannelSet::stereo())) {}
+            const juce::String getName() const override { return "Half"; }
+            void prepareToPlay (double, int) override {}
+            void releaseResources() override {}
+            void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer&) override { b.applyGain (0.5f); }
+            double getTailLengthSeconds() const override { return 0.0; }
+            bool acceptsMidi() const override { return false; }
+            bool producesMidi() const override { return false; }
+            juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+            bool hasEditor() const override { return false; }
+            int getNumPrograms() override { return 1; }
+            int getCurrentProgram() override { return 0; }
+            void setCurrentProgram (int) override {}
+            const juce::String getProgramName (int) override { return {}; }
+            void changeProgramName (int, const juce::String&) override {}
+            void getStateInformation (juce::MemoryBlock&) override {}
+            void setStateInformation (const void*, int) override {}
+        };
+
+        auto mp = std::make_unique<RezalicaProcessor> (false);
+        auto& m = *mp;
+        m.prepareToPlay (48000.0, 512);
+        m.loadFileToPad (0, file);
+        m.getEngine().getPad (0).loop = true;
+        juce::AudioBuffer<float> blk (2, 512);
+        juce::MidiBuffer none;
+        auto level = [&]
+        {
+            m.triggerPadFromUi (0, 1.0f, true);
+            float pk = 0.0f;
+            for (int i = 0; i < 12; ++i) { m.processBlock (blk, none); if (i > 2) pk = juce::jmax (pk, blk.getMagnitude (0, 0, 512)); }
+            m.triggerPadFromUi (0, 0.0f, false);
+            for (int i = 0; i < 10; ++i) m.processBlock (blk, none);
+            return pk;
+        };
+        const float dry = level();
+        check (m.getEngine().busForPad (0) == 0 && dry > 0.05f, "pads play into MASTER by default");
+        m.getEngine().bankBus[0] = 1;                       // bank A -> BUS A
+        m.getBus (1).mute = true;
+        check (m.getEngine().busForPad (0) == 1 && level() < 1.0e-6f, "a bank sent to BUS A follows its mute");
+        m.getBus (1).mute = false;
+        m.setSlotProcessor (1, 0, std::make_unique<HalfGain>(), nullptr);
+        const float half = level();
+        std::cout << "       mixer: dry " << dry << ", through an effect on BUS A " << half << "\n";
+        check (std::abs (half - dry * 0.5f) < dry * 0.05f, "the effect in a BUS A slot processes the pads of that bus");
+        m.getBus (1).slots[0].bypass = true;
+        check (std::abs (level() - dry) < dry * 0.05f, "bypass skips the effect");
+        m.getBus (1).slots[0].bypass = false;
+        m.getEngine().getPad (0).outputBus = 2;             // the pad itself -> BUS B (overrides the bank)
+        m.getBus (2).solo = true;
+        check (m.getEngine().busForPad (0) == 2 && std::abs (level() - dry) < dry * 0.05f, "a pad can go to its own bus; solo plays it");
+        m.getEngine().getPad (0).outputBus = -1;            // back to the bank (BUS A), which is not soloed
+        check (level() < 1.0e-6f, "solo silences the other buses");
+        m.getBus (2).solo = false;
+        m.getBus (1).gainDb = -6.0f;
+        juce::MemoryBlock st;
+        m.getEngine().getPad (5).outputBus = 3;
+        m.getStateInformation (st);
+        auto r7 = std::make_unique<RezalicaProcessor> (false);
+        r7->setStateInformation (st.getData(), (int) st.getSize());
+        check (r7->getEngine().bankBus[0].load() == 1 && r7->getEngine().getPad (5).outputBus.load() == 3
+                   && std::abs (r7->getBus (1).gainDb.load() + 6.0f) < 1.0e-4f, "bus routing and faders are saved with the project");
+        m.clearSlot (1, 0);
+        check (m.getSlotProcessor (1, 0) == nullptr, "an effect can be removed from its slot");
     }
 
     // Copy / paste pad

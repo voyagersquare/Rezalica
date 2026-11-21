@@ -11,6 +11,7 @@ constexpr int padsPerBank = 16;
 constexpr int numBanks = 4;                       // banks A-D
 constexpr int numPads = padsPerBank * numBanks;   // 64 pads in total
 constexpr int maxVoices = 32;
+constexpr int numBuses = 5;                       // mixer: 0 = MASTER, 1..4 = BUS A..D
 
 /** "A1" ... "D16" */
 inline juce::String padLabel (int pad)
@@ -239,12 +240,13 @@ struct PadSettings
     std::atomic<bool> gate { false };      // plays only while the pad is held
     std::atomic<bool> mute { false };
     std::atomic<int> chokeGroup { 0 };     // 1..8: a hit stops the other pads of the same group (0 = none)
+    std::atomic<int> outputBus { -1 };     // mixer bus: -1 = like its bank, 0 = MASTER, 1..4 = BUS A..D
     PadFx effects;                         // this pad's own effect chain settings
 
     void resetPlayback()
     {
         gainDb = 0.0f; pan = 0.0f; pitch = 0.0f; attackMs = 1.0f; releaseMs = 30.0f;
-        loop = false; reverse = false; gate = false; mute = false; chokeGroup = 0;
+        loop = false; reverse = false; gate = false; mute = false; chokeGroup = 0; outputBus = -1;
         effects.reset();
     }
 };
@@ -257,9 +259,8 @@ public:
     int getTag() const noexcept { return tag; }
     void release();
     void fastStop();
-    /** Writes into padBus when the pad has effects switched on, else into dry. */
-    void render (juce::AudioBuffer<float>& dry, juce::AudioBuffer<float>& padBus, int startSample, int numSamples,
-                 float bankGain = 1.0f);
+    /** Adds the voice into 'out' (its mixer bus). */
+    void render (juce::AudioBuffer<float>& out, int startSample, int numSamples, float bankGain = 1.0f);
 
     bool isActive() const noexcept     { return active; }
     bool isReleasing() const noexcept  { return stage == Stage::release; }
@@ -308,7 +309,15 @@ public:
     /** Ends the note with this tag. force: always release, else only if the pad is in gate / loop mode. */
     void noteOffTag (int tag, bool force);
     void allNotesOff();
-    void render (juce::AudioBuffer<float>& dry, std::array<juce::AudioBuffer<float>, numPads>& padBuses, int startSample, int numSamples);
+    /** Renders every voice into the mixer bus of its pad (buses[0] = MASTER). */
+    void render (std::array<juce::AudioBuffer<float>, numBuses>& buses, int startSample, int numSamples);
+    /** The mixer bus a pad plays into: its own choice, else its bank's. */
+    int busForPad (int pad) const noexcept
+    {
+        int b = settings[(size_t) pad].outputBus.load();
+        if (b < 0) b = bankBus[(size_t) (pad / padsPerBank)].load();
+        return juce::jlimit (0, numBuses - 1, b);
+    }
     void updatePlayPositions();
     bool isPadSounding (int pad) const; // any voice (incl. releasing) on this pad
 
@@ -326,6 +335,7 @@ public:
     // whole-bank volume (linear) and mute
     std::array<std::atomic<float>, numBanks> bankGain;
     std::array<std::atomic<bool>, numBanks> bankMute;
+    std::array<std::atomic<int>, numBanks> bankBus;    // mixer bus of a whole bank (0 = MASTER)
 
     std::atomic<int> lastPlayedPad { -1 };   // last pad hit by MIDI / keyboard / mouse (not the sequencer)
     std::atomic<int> playedCounter { 0 };

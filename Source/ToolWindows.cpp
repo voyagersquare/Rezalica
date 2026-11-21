@@ -280,6 +280,58 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
     for (auto* l : { &pathLabel, &targetLabel, &helpLabel })
         addAndMakeVisible (*l);
 
+    // FILES / PLUGINS
+    for (auto* t : { &filesTab, &pluginsTab })
+    {
+        t->setClickingTogglesState (true);
+        t->setRadioGroupId (8301);
+        t->setWantsKeyboardFocus (false);
+        t->setColour (juce::TextButton::buttonOnColourId, colours::accent2);
+        addAndMakeVisible (*t);
+    }
+    filesTab.setToggleState (true, juce::dontSendNotification);
+    filesTab.onClick = [this] { showPlugins (false); };
+    pluginsTab.onClick = [this] { showPlugins (true); };
+    pluginsTab.setTooltip ("Third-party VST3 effects: drag one into a slot of the mixer (BUS A-D, MASTER)");
+    pluginList.setRowHeight (24);
+    pluginList.setColour (juce::ListBox::backgroundColourId, colours::panel);
+    addChildComponent (pluginList);
+    scanButton.setWantsKeyboardFocus (false);
+    scanButton.setTooltip ("Look for VST3 effects in the VST3 folders (plug-ins that crash the scan are skipped next time)");
+    scanButton.onClick = [this] { processor.pluginHost->startScan(); };
+    addChildComponent (scanButton);
+    vstFoldersButton.setWantsKeyboardFocus (false);
+    vstFoldersButton.onClick = [this]
+    {
+        auto path = processor.pluginHost->getSearchPath();
+        juce::PopupMenu m;
+        for (int i = 0; i < path.getNumPaths(); ++i)
+            m.addItem (100 + i, "Remove  " + path.getRawString (i));
+        m.addSeparator();
+        m.addItem (1, "Add a folder...");
+        m.addItem (2, "Back to the default VST3 folders");
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&vstFoldersButton), [this, path] (int r)
+        {
+            auto p = path;
+            if (r == 1)
+            {
+                chooser = std::make_unique<juce::FileChooser> ("Add a VST3 folder", juce::File ("C:\\Program Files\\Common Files\\VST3"));
+                chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this, p] (const juce::FileChooser& fc) mutable
+                {
+                    if (fc.getResult().isDirectory()) { p.add (fc.getResult()); processor.pluginHost->setSearchPath (p); }
+                });
+            }
+            else if (r == 2) { AppSettings::get().setValue ("pluginFolders", juce::String()); AppSettings::get().saveIfNeeded(); }
+            else if (r >= 100) { p.remove (r - 100); processor.pluginHost->setSearchPath (p); }
+        });
+    };
+    addChildComponent (vstFoldersButton);
+    scanStatus.setColour (juce::Label::textColourId, colours::dim);
+    scanStatus.setFont (juce::FontOptions (11.0f));
+    addChildComponent (scanStatus);
+    processor.pluginHost->addChangeListener (this);
+    pluginRows.effects = processor.pluginHost->getEffects();
+
     fillPlaces();
     juce::File start (AppSettings::get().getValue ("browserFolder"));
     if (! start.isDirectory())
@@ -294,10 +346,33 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
 
 BrowserPanel::~BrowserPanel()
 {
+    processor.pluginHost->removeChangeListener (this);
     stopTimer();
     processor.previewFile ({});
     list.removeListener (this);
     thread.stopThread (2000);
+}
+
+void BrowserPanel::changeListenerCallback (juce::ChangeBroadcaster*)
+{
+    pluginRows.effects = processor.pluginHost->getEffects();
+    pluginList.updateContent();
+    pluginList.repaint();
+    scanStatus.setText (processor.pluginHost->getScanStatus(), juce::dontSendNotification);
+    scanButton.setEnabled (! processor.pluginHost->isScanning());
+}
+
+void BrowserPanel::showPlugins (bool plugins)
+{
+    for (auto* c : std::initializer_list<juce::Component*> { &list, &places, &upButton, &folderButton, &favoritesButton, &pathLabel,
+                                                              &loadButton, &loadNextButton, &stopButton, &autoPreview, &targetLabel })
+        c->setVisible (! plugins);
+    for (auto* c : std::initializer_list<juce::Component*> { &pluginList, &scanButton, &vstFoldersButton, &scanStatus })
+        c->setVisible (plugins);
+    helpLabel.setText (plugins ? "Drag an effect onto a slot of BUS A-D or MASTER in the mixer"
+                               : "Click: preview   Double-click: load   Drag: onto a pad or the sample view", juce::dontSendNotification);
+    changeListenerCallback (nullptr);
+    resized();
 }
 
 void BrowserPanel::fillPlaces()
@@ -486,6 +561,25 @@ void BrowserPanel::paint (juce::Graphics& g)
 void BrowserPanel::resized()
 {
     auto b = getLocalBounds().reduced (10);
+    {
+        auto tabs = b.removeFromTop (26);
+        filesTab.setBounds (tabs.removeFromLeft (tabs.getWidth() / 2).reduced (0, 0).withTrimmedRight (3));
+        pluginsTab.setBounds (tabs.withTrimmedLeft (3));
+        b.removeFromTop (6);
+    }
+    if (pluginsTab.getToggleState())
+    {
+        auto row = b.removeFromTop (28);
+        scanButton.setBounds (row.removeFromLeft (80)); row.removeFromLeft (6);
+        vstFoldersButton.setBounds (row);
+        b.removeFromTop (4);
+        scanStatus.setBounds (b.removeFromTop (18));
+        b.removeFromTop (4);
+        helpLabel.setBounds (b.removeFromBottom (18));
+        b.removeFromBottom (4);
+        pluginList.setBounds (b);
+        return;
+    }
     auto top = b.removeFromTop (28);
     upButton.setBounds (top.removeFromLeft (50)); top.removeFromLeft (6);
     folderButton.setBounds (top.removeFromRight (90)); top.removeFromRight (6);

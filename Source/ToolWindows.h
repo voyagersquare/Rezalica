@@ -56,7 +56,8 @@ private:
 /** BROWSER: browse folders, preview samples and load them onto pads. */
 class BrowserPanel : public juce::Component,
                      private juce::FileBrowserListener,
-                     private juce::Timer
+                     private juce::Timer,
+                     private juce::ChangeListener
 {
 public:
     explicit BrowserPanel (RezalicaProcessor& p);
@@ -68,6 +69,34 @@ public:
 
 private:
     bool dragStarted = false;
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void showPlugins (bool);
+
+    /** PLUGINS: the scanned effects; drag one onto a mixer slot. */
+    struct PluginRows : public juce::ListBoxModel
+    {
+        juce::Array<juce::PluginDescription> effects;
+        int getNumRows() override { return effects.size(); }
+        void paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) override
+        {
+            if (row < 0 || row >= effects.size()) return;
+            if (selected) g.fillAll (colours::accent.withAlpha (0.55f));
+            g.setColour (colours::text);
+            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+            g.drawText (effects[row].name, 10, 0, w - 20, h, juce::Justification::centredLeft, true);
+            g.setColour (colours::dim);
+            g.setFont (juce::FontOptions (10.0f));
+            g.drawText (effects[row].manufacturerName + "  " + effects[row].pluginFormatName, 10, 0, w - 20, h, juce::Justification::centredRight, true);
+        }
+        juce::var getDragSourceDescription (const juce::SparseSet<int>& rows) override
+        {
+            if (rows.isEmpty() || rows[0] >= effects.size()) return {};
+            return "rzplugin:" + effects[rows[0]].createIdentifierString();
+        }
+    } pluginRows;
+    juce::ListBox pluginList { "plugins", &pluginRows };
+    juce::TextButton filesTab { "FILES" }, pluginsTab { "PLUGINS" }, scanButton { "SCAN" }, vstFoldersButton { "VST3 FOLDERS..." };
+    juce::Label scanStatus;
     void selectionChanged() override;
     void fileClicked (const juce::File&, const juce::MouseEvent&) override;
     void showFavoritesMenu();

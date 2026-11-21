@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "LookAndFeel.h"
+#include "Mixer.h"
 
 namespace rz
 {
@@ -33,6 +34,7 @@ public:
     void setSelected (bool s)                { if (s != selected) { selected = s; repaint(); } }
     void setSampleName (const juce::String& n) { if (n != name) { name = n; repaint(); } }
     void setHasFx (bool f)                   { if (f != hasFx) { hasFx = f; repaint(); } }
+    void setBusBadge (const juce::String& b) { if (b != busBadge) { busBadge = b; repaint(); } }
     void flash()                             { flashLevel = 1.0f; repaint(); }
 
     void decay()
@@ -79,6 +81,17 @@ public:
         g.setColour (ink.withAlpha (0.45f));
         g.drawText (key.toUpperCase(), b.reduced (8.0f, 6.0f), juce::Justification::topRight);
 
+        if (busBadge.isNotEmpty())
+        {
+            // the mixer bus this pad plays into (nothing shown for MASTER)
+            auto badge = b.reduced (8.0f, 6.0f).removeFromBottom (14.0f).removeFromRight (34.0f);
+            g.setColour (juce::Colour (0xff4fa3ff));
+            g.fillRoundedRectangle (badge, 3.0f);
+            g.setColour (juce::Colours::white);
+            g.setFont (juce::FontOptions (9.0f, juce::Font::bold));
+            g.drawText ("BUS " + busBadge, badge, juce::Justification::centred);
+            inner.removeFromRight (36.0f);
+        }
         if (hasFx)
         {
             auto badge = b.reduced (8.0f, 6.0f).removeFromBottom (14.0f).removeFromRight (22.0f);
@@ -177,9 +190,27 @@ private:
         chop.addItem (12, "16 equal slices");
         chop.addItem (13, "By transients");
         m.addSubMenu ("Chop this sample to pads", chop, name.isNotEmpty());
+        m.addSeparator();
+        {
+            // mixer routing: by default a pad follows its bank (which goes to MASTER)
+            juce::PopupMenu send;
+            const int own = processor.getEngine().getPad (index).outputBus.load();
+            const int bankBus = processor.getEngine().bankBus[(size_t) (index / padsPerBank)].load();
+            send.addItem (60, "Same as bank (" + busName (bankBus) + ")", true, own < 0);
+            for (int bi = 0; bi < numBuses; ++bi)
+                send.addItem (61 + bi, busName (bi), true, own == bi);
+            m.addSubMenu ("Send to", send);
+        }
 
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this] (int r)
         {
+            if (r >= 60 && r <= 60 + numBuses)
+            {
+                processor.pushUndo ("Send to bus");
+                processor.getEngine().getPad (index).outputBus = r == 60 ? -1 : r - 61;
+                const int bus = processor.getEngine().busForPad (index);
+                setBusBadge (bus > 0 ? juce::String::charToString ((juce::juce_wchar) ('A' + bus - 1)) : juce::String());
+            }
             if (r == 30 && onClearSelected) onClearSelected();
             if (r == 31 && onDeselect) onDeselect();
             if (r == 1 && onLoadRequest) onLoadRequest (index);
@@ -197,6 +228,7 @@ private:
     juce::String name;
     int heldIndex = 0;
     bool selected = false, held = false, dragOver = false, hasFx = false, multiSelected = false;
+    juce::String busBadge;
     float flashLevel = 0.0f;
 };
 } // namespace rz

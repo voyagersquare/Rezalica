@@ -43,13 +43,16 @@ target_sources(Rezalica PRIVATE
     Source/PianoRollWindow.cpp
     Source/SceneWindow.cpp
     Source/ToolWindows.cpp
-    Source/LoopbackCapture.cpp)
+    Source/LoopbackCapture.cpp
+    Source/PluginHost.cpp
+    Source/MixerPanel.cpp)
 
 target_compile_definitions(Rezalica PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_MODAL_LOOPS_PERMITTED=1)
+    JUCE_MODAL_LOOPS_PERMITTED=1
+    JUCE_PLUGINHOST_VST3=1)   # third-party VST3 effects in the mixer
 
 # ASIO for the standalone app (Windows): point REZALICA_ASIO_SDK at the Steinberg ASIO SDK folder
 # (the one that contains common/iasiodrv.h). Without it the app still has Windows Audio / DirectSound.

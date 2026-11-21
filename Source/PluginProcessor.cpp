@@ -35,6 +35,12 @@ RezalicaProcessor::RezalicaProcessor (bool withInput)
 RezalicaProcessor::~RezalicaProcessor()
 {
     stopTimer();
+    onPluginsAboutToChange = nullptr;
+    for (auto& bus : buses)
+    {
+        { const juce::SpinLock::ScopedLockType sl (bus.lock); for (auto& s : bus.slots) s.live = nullptr; }
+        for (auto& s : bus.slots) s.owned = nullptr;
+    }
     loopback.stop();
     aliveToken.reset();                        // late background results are dropped
     stretchWorker.removeAllJobs (true, 5000);
@@ -66,17 +72,19 @@ void RezalicaProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
     engine.prepare (sampleRate);
     sequencer.prepare (sampleRate);
-    dryBuffer.setSize (2, juce::jmax (1, samplesPerBlock));
+    preparedBlockSize = juce::jmax (1, samplesPerBlock);
+    for (auto& b : busBuffers)
+        b.setSize (2, juce::jmax (1, samplesPerBlock));
+    for (auto& bus : buses)
+    {
+        const juce::SpinLock::ScopedLockType sl (bus.lock);
+        for (auto& slot : bus.slots)
+            if (slot.owned != nullptr)
+                prepareSlot (slot);
+    }
     masterFx.prepare (sampleRate, juce::jmax (1, samplesPerBlock));
     clickLength = juce::jmax (1, (int) (sampleRate * 0.035));
     clickSamplesLeft = 0;
-    for (int i = 0; i < rz::numPads; ++i)
-    {
-        padFx[(size_t) i].prepare (sampleRate, samplesPerBlock);
-        padBuses[(size_t) i].setSize (2, juce::jmax (1, samplesPerBlock));
-        padFxIdleSamples[(size_t) i] = 1.0e12;
-        padFxWasRunning[(size_t) i] = false;
-    }
     pendingSeqOff.fill (-1.0);
 }
 
@@ -166,14 +174,10 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         recorder.capture (rz::AudioRecorder::input, buffer.getArrayOfReadPointers(), inCh, numSamples);
     buffer.clear();
 
-    if (dryBuffer.getNumSamples() < numSamples)
-    {
-        dryBuffer.setSize (2, numSamples, false, false, true);
-        for (auto& b : padBuses)
+    if (busBuffers[0].getNumSamples() < numSamples)
+        for (auto& b : busBuffers)
             b.setSize (2, numSamples, false, false, true);
-    }
-    dryBuffer.clear();
-    for (auto& b : padBuses)
+    for (auto& b : busBuffers)
         b.clear (0, numSamples);
 
     engine.syncSamples();
@@ -335,7 +339,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     for (int i = 0; i < numEvents; ++i)
     {
         const auto& e = events[(size_t) i];
-        engine.render (dryBuffer, padBuses, cursor, e.offset - cursor);
+        engine.render (busBuffers, cursor, e.offset - cursor);
         cursor = e.offset;
 
         switch (e.type)
@@ -368,54 +372,41 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             default: break;
         }
     }
-    engine.render (dryBuffer, padBuses, cursor, numSamples - cursor);
+    engine.render (busBuffers, cursor, numSamples - cursor);
     engine.updatePlayPositions();
 
     if (lazyActive.load() && ! engine.isPreviewBusy())
         lazyActive = false; // preview reached the end of the sample
 
-    const float master = juce::Decibels::decibelsToGain (pMaster->load(), -59.9f);
+    // ---- mixer: BUS A-D (their effects, fader, mute / solo) into MASTER, then the MASTER effects and fader ----
     const int outChannels = juce::jmin (2, buffer.getNumChannels());
-    for (int ch = 0; ch < outChannels; ++ch)
-        buffer.addFrom (ch, 0, dryBuffer, ch, 0, numSamples, master);
-
-    // per-pad effect chains: only pads that have effects switched on, and only while
-    // they play or their delay / reverb tail is still ringing
-    for (int i = 0; i < rz::numPads; ++i)
+    bool anySolo = false;
+    for (int bi = 1; bi < rz::numBuses; ++bi) anySolo = anySolo || buses[(size_t) bi].solo.load();
+    auto& masterBus = busBuffers[0];
+    for (int bi = 1; bi < rz::numBuses; ++bi)
     {
-        const auto& f = engine.getPad (i).effects;
-        auto& chain = padFx[(size_t) i];
-
-        if (! f.anyOn())
-        {
-            if (padFxWasRunning[(size_t) i]) { chain.reset(); padFxWasRunning[(size_t) i] = false; }
-            padFxIdleSamples[(size_t) i] = 1.0e12;
-            continue;
-        }
-
-        const bool sounding = engine.isPadSounding (i);
-        auto& idle = padFxIdleSamples[(size_t) i];
-        idle = sounding ? 0.0 : idle + numSamples;
-        const double tail = f.hasTail() ? currentSampleRate * 2.5 : currentSampleRate * 0.05;
-        if (idle > tail)
-        {
-            if (padFxWasRunning[(size_t) i]) { chain.reset(); padFxWasRunning[(size_t) i] = false; }
-            continue;
-        }
-
-        auto& bus = padBuses[(size_t) i];
-        chain.process (bus, numSamples, readFxParams (i, sounding));
-        padFxWasRunning[(size_t) i] = true;
-
-        if (bus.getMagnitude (0, numSamples) > 1.0e-4f)
-            idle = juce::jmin (idle, 0.0); // long feedback delays keep the chain alive
-
+        auto& bus = buses[(size_t) bi];
+        auto& data = busBuffers[(size_t) bi];
+        processBusChain (bi, numSamples);
+        const bool silent = bus.mute.load() || (anySolo && ! bus.solo.load());
+        const float g = silent ? 0.0f : juce::Decibels::decibelsToGain (bus.gainDb.load(), -59.9f);
+        for (int ch = 0; ch < 2; ++ch)
+            masterBus.addFromWithRamp (ch, 0, data.getReadPointer (ch), numSamples, bus.lastGain, g);
+        bus.lastGain = g;
+        bus.peak = juce::jmax (bus.peak.load() * 0.85f, juce::jmax (data.getMagnitude (0, 0, numSamples), data.getMagnitude (1, 0, numSamples)) * g);
+    }
+    processBusChain (0, numSamples);
+    {
+        auto& mb = buses[0];
+        const float master = mb.mute.load() ? 0.0f : juce::Decibels::decibelsToGain (pMaster->load(), -59.9f);
         for (int ch = 0; ch < outChannels; ++ch)
-            buffer.addFrom (ch, 0, bus, ch, 0, numSamples, master);
+            buffer.addFromWithRamp (ch, 0, masterBus.getReadPointer (ch), numSamples, mb.lastGain, master);
+        mb.lastGain = master;
+        mb.peak = juce::jmax (mb.peak.load() * 0.85f, buffer.getMagnitude (0, numSamples));
     }
 
-    // ---- master chain, resampling, metronome ----
-    masterFx.process (buffer, numSamples, masterFxSettings);
+    // ---- resampling, metronome ----
+    masterFx.reportPeak (buffer, outChannels, numSamples); // (the built-in master effects are gone: the mixer has plug-ins now)
     recorder.capture (rz::AudioRecorder::output, buffer.getArrayOfReadPointers(), outChannels, numSamples);
 
     if (sequencer.numClicks > 0 || clickSamplesLeft > 0)
@@ -1696,6 +1687,7 @@ juce::ValueTree RezalicaProcessor::padToValueTree (int pad) const
     t.setProperty ("gate", ps.gate.load(), nullptr);
     t.setProperty ("mute", ps.mute.load(), nullptr);
     t.setProperty ("choke", ps.chokeGroup.load(), nullptr);
+    t.setProperty ("bus", ps.outputBus.load(), nullptr);
     t.appendChild (ps.effects.toValueTree(), nullptr);
     return t;
 }
@@ -1715,6 +1707,7 @@ void RezalicaProcessor::padFromValueTree (int pad, const juce::ValueTree& t)
     ps.gate = (bool) t.getProperty ("gate", false);
     ps.mute = (bool) t.getProperty ("mute", false);
     ps.chokeGroup = (int) t.getProperty ("choke", 0);
+    ps.outputBus = juce::jlimit (-1, rz::numBuses - 1, (int) t.getProperty ("bus", -1));
     ps.effects.fromValueTree (t.getChildWithName ("FX"));
 }
 
@@ -1916,6 +1909,179 @@ void RezalicaProcessor::timerCallback()
 }
 
 //==============================================================================
+//==============================================================================
+void RezalicaProcessor::prepareSlot (rz::MixerSlot& slot)
+{
+    auto* p = slot.owned.get();
+    if (p == nullptr) return;
+    const double sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
+    if (auto* inst = dynamic_cast<juce::AudioPluginInstance*> (p))
+    {
+        // stereo in / out when the plug-in can do it
+        juce::AudioProcessor::BusesLayout stereo;
+        stereo.inputBuses.add (juce::AudioChannelSet::stereo());
+        stereo.outputBuses.add (juce::AudioChannelSet::stereo());
+        if (inst->checkBusesLayoutSupported (stereo))
+            inst->setBusesLayout (stereo);
+    }
+    p->setRateAndBufferSizeDetails (sr, preparedBlockSize);
+    p->prepareToPlay (sr, preparedBlockSize);
+    const int chans = juce::jmax (2, p->getTotalNumInputChannels(), p->getTotalNumOutputChannels());
+    slot.scratch.setSize (chans, juce::jmax (preparedBlockSize, 512));
+    slot.midi.ensureSize (256);
+}
+
+void RezalicaProcessor::processBusChain (int busIndex, int numSamples)
+{
+    auto& bus = buses[(size_t) busIndex];
+    auto& data = busBuffers[(size_t) busIndex];
+    const juce::SpinLock::ScopedTryLockType tl (bus.lock);
+    if (! tl.isLocked()) return; // the slots are being changed right now
+    for (auto& slot : bus.slots)
+    {
+        auto* p = slot.live;
+        if (p == nullptr || slot.bypass.load()) continue;
+        auto& sc = slot.scratch;
+        const int cap = sc.getNumSamples();
+        for (int pos = 0; pos < numSamples; pos += cap)
+        {
+            const int n = juce::jmin (cap, numSamples - pos);
+            juce::AudioBuffer<float> sub (sc.getArrayOfWritePointers(), sc.getNumChannels(), n);
+            sub.clear();
+            for (int ch = 0; ch < 2; ++ch)
+                sub.copyFrom (ch, 0, data, ch, pos, n);
+            slot.midi.clear();
+            p->processBlock (sub, slot.midi);
+            for (int ch = 0; ch < 2; ++ch)
+                data.copyFrom (ch, pos, sub, juce::jmin (ch, sub.getNumChannels() - 1), 0, n);
+        }
+    }
+}
+
+void RezalicaProcessor::setSlotProcessor (int busIndex, int slotIndex, std::unique_ptr<juce::AudioProcessor> p, const juce::PluginDescription* desc)
+{
+    auto& bus = getBus (busIndex);
+    auto& slot = bus.slots[(size_t) juce::jlimit (0, rz::MixerBus::numSlots - 1, slotIndex)];
+    if (onPluginsAboutToChange) onPluginsAboutToChange();
+    std::unique_ptr<juce::AudioProcessor> old;
+    {
+        // prepare the new one first, then swap it in while the audio thread is not using the slots
+        auto fresh = std::move (p);
+        if (fresh != nullptr)
+        {
+            slot.scratch.setSize (2, 1); // replaced in prepareSlot
+            std::swap (slot.owned, fresh);
+            prepareSlot (slot);
+            std::swap (slot.owned, fresh);
+        }
+        const juce::SpinLock::ScopedLockType sl (bus.lock);
+        old = std::move (slot.owned);
+        slot.owned = std::move (fresh);
+        slot.live = slot.owned.get();
+        slot.hasDesc = desc != nullptr;
+        if (desc != nullptr) slot.desc = *desc;
+        slot.bypass = false;
+    }
+    if (old != nullptr) old->releaseResources();
+    old = nullptr;
+    mixerChanged.sendChangeMessage();
+}
+
+bool RezalicaProcessor::loadPluginIntoSlot (int busIndex, int slotIndex, const juce::PluginDescription& desc, juce::String& error)
+{
+    auto inst = pluginHost->createInstance (desc, currentSampleRate > 0.0 ? currentSampleRate : 44100.0, preparedBlockSize, error);
+    if (inst == nullptr)
+    {
+        if (error.isEmpty()) error = "The plug-in could not be loaded";
+        return false;
+    }
+    setSlotProcessor (busIndex, slotIndex, std::move (inst), &desc);
+    return true;
+}
+
+void RezalicaProcessor::clearSlot (int busIndex, int slotIndex)
+{
+    setSlotProcessor (busIndex, slotIndex, nullptr, nullptr);
+}
+
+juce::AudioProcessor* RezalicaProcessor::getSlotProcessor (int busIndex, int slotIndex) const
+{
+    return buses[(size_t) juce::jlimit (0, rz::numBuses - 1, busIndex)].slots[(size_t) juce::jlimit (0, rz::MixerBus::numSlots - 1, slotIndex)].owned.get();
+}
+
+juce::String RezalicaProcessor::getSlotName (int busIndex, int slotIndex) const
+{
+    if (auto* p = getSlotProcessor (busIndex, slotIndex)) return p->getName();
+    return {};
+}
+
+juce::ValueTree RezalicaProcessor::mixerToValueTree() const
+{
+    juce::ValueTree m ("MIXER");
+    for (int b = 0; b < rz::numBanks; ++b)
+        m.setProperty ("bankBus" + juce::String (b), engine.bankBus[(size_t) b].load(), nullptr);
+    for (int bi = 0; bi < rz::numBuses; ++bi)
+    {
+        auto& bus = buses[(size_t) bi];
+        juce::ValueTree t ("BUS");
+        t.setProperty ("index", bi, nullptr);
+        t.setProperty ("gain", bus.gainDb.load(), nullptr);
+        t.setProperty ("mute", bus.mute.load(), nullptr);
+        t.setProperty ("solo", bus.solo.load(), nullptr);
+        for (int si = 0; si < rz::MixerBus::numSlots; ++si)
+        {
+            auto& slot = bus.slots[(size_t) si];
+            if (slot.owned == nullptr || ! slot.hasDesc) continue;
+            juce::ValueTree st ("SLOT");
+            st.setProperty ("index", si, nullptr);
+            st.setProperty ("bypass", slot.bypass.load(), nullptr);
+            if (auto xml = slot.desc.createXml())
+                st.appendChild (juce::ValueTree::fromXml (*xml), nullptr);
+            juce::MemoryBlock mb;
+            slot.owned->getStateInformation (mb);
+            st.setProperty ("state", mb.toBase64Encoding(), nullptr);
+            t.appendChild (st, nullptr);
+        }
+        m.appendChild (t, nullptr);
+    }
+    return m;
+}
+
+void RezalicaProcessor::mixerFromValueTree (const juce::ValueTree& m)
+{
+    for (int bi = 0; bi < rz::numBuses; ++bi)
+        for (int si = 0; si < rz::MixerBus::numSlots; ++si)
+            if (buses[(size_t) bi].slots[(size_t) si].owned != nullptr)
+                clearSlot (bi, si);
+    for (int b = 0; b < rz::numBanks; ++b)
+        engine.bankBus[(size_t) b] = juce::jlimit (0, rz::numBuses - 1, (int) m.getProperty ("bankBus" + juce::String (b), 0));
+    for (auto& bus : buses) { bus.gainDb = 0.0f; bus.mute = false; bus.solo = false; }
+    if (! m.isValid()) return;
+    for (auto t : m)
+    {
+        const int bi = t.getProperty ("index", -1);
+        if (bi < 0 || bi >= rz::numBuses) continue;
+        auto& bus = buses[(size_t) bi];
+        bus.gainDb = (float) t.getProperty ("gain", 0.0f);
+        bus.mute = (bool) t.getProperty ("mute", false);
+        bus.solo = (bool) t.getProperty ("solo", false);
+        for (auto st : t)
+        {
+            const int si = st.getProperty ("index", -1);
+            if (si < 0 || si >= rz::MixerBus::numSlots || st.getNumChildren() == 0) continue;
+            juce::PluginDescription d;
+            if (auto xml = st.getChild (0).createXml(); xml == nullptr || ! d.loadFromXml (*xml)) continue;
+            juce::String err;
+            if (! loadPluginIntoSlot (bi, si, d, err)) continue; // plug-in missing on this computer
+            juce::MemoryBlock mb;
+            mb.fromBase64Encoding (st.getProperty ("state").toString());
+            if (auto* p = getSlotProcessor (bi, si); p != nullptr && mb.getSize() > 0)
+                p->setStateInformation (mb.getData(), (int) mb.getSize());
+            bus.slots[(size_t) si].bypass = (bool) st.getProperty ("bypass", false);
+        }
+    }
+}
+
 void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     juce::ValueTree root ("REZALICA");
@@ -1965,6 +2131,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         p.setProperty ("reverse", ps.reverse.load(), nullptr);
         p.setProperty ("gate", ps.gate.load(), nullptr);
         p.setProperty ("choke", ps.chokeGroup.load(), nullptr);
+        p.setProperty ("bus", ps.outputBus.load(), nullptr);
         p.appendChild (ps.effects.toValueTree(), nullptr);
         if (auto ws = engine.getPadSample (i); ws != nullptr && ws->isWarped())
         {
@@ -2004,7 +2171,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
     }
     root.appendChild (seq, nullptr);
     root.appendChild (sequencer.songToValueTree(), nullptr);
-    root.appendChild (masterFxSettings.toValueTree(), nullptr);
+    root.appendChild (mixerToValueTree(), nullptr);
 
     juce::ValueTree chop ("CHOP");
     chop.setProperty ("mode", chopMode, nullptr);
@@ -2074,6 +2241,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         ps.reverse = (bool) p.getProperty ("reverse", false);
         ps.gate = (bool) p.getProperty ("gate", false);
         ps.chokeGroup = (int) p.getProperty ("choke", 0);
+        ps.outputBus = juce::jlimit (-1, rz::numBuses - 1, (int) p.getProperty ("bus", -1));
         olderProject = olderProject || ! p.hasProperty ("choke");
         ps.effects.fromValueTree (p.getChildWithName ("FX"));
         ps.mute = (bool) p.getProperty ("mute", false);
@@ -2202,7 +2370,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
     }
 
     sequencer.songFromValueTree (root.getChildWithName ("SONG"));
-    masterFxSettings.fromValueTree (root.getChildWithName ("MASTERFX"));
+    mixerFromValueTree (root.getChildWithName ("MIXER"));
 
     auto chop = root.getChildWithName ("CHOP");
     chopSource = nullptr;
