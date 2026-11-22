@@ -195,9 +195,12 @@ Tipkovnica računala svira trenutno odabranu banku:
 ## Instalacija (Windows)
 
 1. Na GitHubu otvori **Actions**, pa zadnji uspješni **Build**.
-2. Pod **Artifacts** preuzmi `Rezalica-VST3-Windows`.
-3. Raspakiraj i kopiraj mapu `Rezalica.vst3` u `C:\Program Files\Common Files\VST3\`.
-4. U DAW-u ponovno skeniraj pluginove. Rezalica se pojavljuje kao instrument.
+2. Pod **Artifacts** preuzmi `Rezalica-Setup-Windows` i raspakiraj ga.
+3. Pokreni `Rezalica-Setup-0.1.0.exe`. Instalacija stavlja program u `Program Files\Rezalica`,
+   dodaje ga u Start izbornik i (ako je kvačica uključena) ikonu na radnu površinu.
+4. Deinstalacija: *Postavke > Aplikacije* ili *Upravljačka ploča > Programi*.
+
+Program ne treba Visual C++ redistributable. Instalaciju gradi CI iz `installer/Rezalica.iss` (Inno Setup 6).
 
 ## Samostalna izrada (build)
 
