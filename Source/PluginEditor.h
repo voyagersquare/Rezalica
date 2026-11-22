@@ -162,10 +162,11 @@ private:
 
     std::unique_ptr<rz::SequencerWindow> sequencerWindow;
     // standalone: the step sequencer / piano roll open inside the main window, below the sample view and pads
-    enum DockView { dockNone = 0, dockSequencer = 1, dockPianoRoll = 2 };
+    enum DockView { dockNone = 0, dockSequencer = 1, dockPianoRoll = 2, dockSong = 3 };
     int dockView = dockNone;
     std::unique_ptr<rz::SequencerPanel> dockedSequencer;
     std::unique_ptr<rz::PianoRollPanel> dockedPianoRoll;
+    std::unique_ptr<rz::ScenePanel> dockedSong;
     juce::Rectangle<int> dockArea;
     std::vector<juce::Component*> hiddenByDock;
     void showDock (int view);

@@ -638,7 +638,7 @@ void ScenePanel::resized()
     b.removeFromBottom (6);
 
     const int avail = b.getHeight() - 2 * 30 - 16 - SongGrid::rulerHeight;
-    const int rowH = juce::jmax (110, avail / 2);
+    const int rowH = juce::jmax (60, avail / 2); // smaller when it sits inside the main window
 
     auto sceneHead = b.removeFromTop (26);
     for (int i = (int) slotPages.size(); --i >= 0;)
