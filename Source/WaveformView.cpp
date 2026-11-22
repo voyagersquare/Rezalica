@@ -393,12 +393,48 @@ void WaveformView::paintOverChildren (juce::Graphics& g)
         g.fillRect (b);
     }
     {
-        // reflection: a bright curved band in the upper part of the glass
+        // reflection: a bright curved band in the upper part of the glass (the room light on the bulging tube)
         juce::Path glare;
         glare.addEllipse (b.getX() - b.getWidth() * 0.15f, b.getY() - b.getHeight() * 0.75f, b.getWidth() * 1.1f, b.getHeight() * 1.05f);
-        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.10f), b.getX(), b.getY(),
-                                                 juce::Colours::white.withAlpha (0.0f), b.getX(), b.getY() + b.getHeight() * 0.32f, false));
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.22f), b.getX(), b.getY(),
+                                                 juce::Colours::white.withAlpha (0.0f), b.getX(), b.getY() + b.getHeight() * 0.38f, false));
         g.fillPath (glare);
+    }
+    {
+        // a soft diagonal window reflection across the left part of the glass
+        juce::Path streak;
+        const float sw = b.getWidth() * 0.10f, x0 = b.getX() + b.getWidth() * 0.12f;
+        streak.startNewSubPath (x0, b.getY());
+        streak.lineTo (x0 + sw, b.getY());
+        streak.lineTo (x0 + sw - b.getHeight() * 0.55f, b.getBottom());
+        streak.lineTo (x0 - b.getHeight() * 0.55f, b.getBottom());
+        streak.closeSubPath();
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.09f), b.getX(), b.getY(),
+                                                 juce::Colours::white.withAlpha (0.0f), b.getX(), b.getBottom(), false));
+        g.fillPath (streak);
+        juce::Path thin;
+        const float x1 = x0 + sw * 1.6f;
+        thin.startNewSubPath (x1, b.getY());
+        thin.lineTo (x1 + sw * 0.25f, b.getY());
+        thin.lineTo (x1 + sw * 0.25f - b.getHeight() * 0.55f, b.getBottom());
+        thin.lineTo (x1 - b.getHeight() * 0.55f, b.getBottom());
+        thin.closeSubPath();
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.06f), b.getX(), b.getY(),
+                                                 juce::Colours::white.withAlpha (0.0f), b.getX(), b.getBottom(), false));
+        g.fillPath (thin);
+    }
+    {
+        // the lamp itself: a small bright hot spot near the top-left corner
+        auto spot = juce::Rectangle<float> (b.getWidth() * 0.22f, b.getHeight() * 0.16f)
+                        .withCentre ({ b.getX() + b.getWidth() * 0.16f, b.getY() + b.getHeight() * 0.10f });
+        juce::ColourGradient hot (juce::Colours::white.withAlpha (0.20f), spot.getCentreX(), spot.getCentreY(),
+                                  juce::Colours::white.withAlpha (0.0f), spot.getRight(), spot.getCentreY(), true);
+        g.setGradientFill (hot);
+        g.fillEllipse (spot);
+        // light caught on the lower edge of the curved glass
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.0f), b.getCentreX(), b.getBottom() - b.getHeight() * 0.06f,
+                                                 juce::Colours::white.withAlpha (0.10f), b.getCentreX(), b.getBottom(), false));
+        g.fillRect (b.withTop (b.getBottom() - b.getHeight() * 0.06f));
     }
     g.setColour (juce::Colours::black.withAlpha (0.7f));
     g.drawRoundedRectangle (b.reduced (1.0f), r, 3.0f);

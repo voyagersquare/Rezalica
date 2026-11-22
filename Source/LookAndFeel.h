@@ -75,8 +75,8 @@ public:
         else if (highlighted) face = face.brighter (0.06f);
 
         // raised moulded rubber key: shadow under it, bright top, dark bottom, highlight on the top edge
-        const float lift = down ? 0.5f : 2.5f;
-        g.setColour (juce::Colours::black.withAlpha (0.5f));
+        const float lift = down ? 0.5f : 3.0f;
+        g.setColour (juce::Colours::black.withAlpha (0.6f));
         g.fillRoundedRectangle (r.translated (0.0f, lift), 4.0f);
         if (down) r = r.translated (0.0f, 1.0f);
         g.setGradientFill (juce::ColourGradient (face.brighter (down ? 0.05f : 0.25f), r.getX(), r.getY(),

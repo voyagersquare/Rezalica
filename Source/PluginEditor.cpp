@@ -1559,8 +1559,6 @@ bool RezalicaEditor::keyStateChanged (bool)
 void RezalicaEditor::renderFaceplate()
 {
     const int w = juce::jmax (1, getWidth()), h = juce::jmax (1, getHeight());
-    if (faceplate.isValid() && faceplate.getWidth() == w && faceplate.getHeight() == h)
-        return;
     faceplate = juce::Image (juce::Image::RGB, w, h, false);
     juce::Graphics g (faceplate);
     using namespace rz::colours;
@@ -1578,6 +1576,54 @@ void RezalicaEditor::renderFaceplate()
         const int x0 = rnd.nextInt (juce::jmax (1, w / 3));
         g.drawHorizontalLine (y, (float) x0, (float) (x0 + w / 2 + rnd.nextInt (juce::jmax (1, w / 2))));
     }
+
+    // the room light comes from the upper left: the far (lower right) side of the unit is a bit darker,
+    // and the edges fall off like a real object under a lamp
+    g.setGradientFill (juce::ColourGradient (juce::Colours::transparentBlack, (float) w * 0.15f, 0.0f,
+                                             juce::Colours::black.withAlpha (0.20f), (float) w, (float) h, false));
+    g.fillAll();
+    {
+        juce::ColourGradient vignette (juce::Colours::transparentBlack, (float) w * 0.45f, (float) h * 0.4f,
+                                       juce::Colours::black.withAlpha (0.22f), 0.0f, 0.0f, true);
+        vignette.addColour (0.7, juce::Colours::transparentBlack);
+        g.setGradientFill (vignette);
+        g.fillAll();
+    }
+
+    // everything that stands on the faceplate casts a soft shadow away from the light
+    juce::Image shapes (juce::Image::ARGB, w, h, true);
+    {
+        juce::Graphics sg (shapes);
+        sg.setColour (juce::Colours::black);
+        auto cast = [&sg] (juce::Rectangle<int> r, float radius)
+        {
+            if (! r.isEmpty()) sg.fillRoundedRectangle (r.toFloat(), radius);
+        };
+        for (auto r : { sampleArea, filterArea, satArea, delayArea, reverbArea })
+            cast (r, 8.0f);
+        std::function<void (juce::Component&, juce::Point<int>, int)> addChildren;
+        addChildren = [&] (juce::Component& parent, juce::Point<int> origin, int depth)
+        {
+            for (auto* c : parent.getChildren())
+            {
+                if (! c->isVisible() || c == &waveform || dynamic_cast<juce::Label*> (c) != nullptr)
+                    continue;
+                const auto r = c->getBounds() + origin;
+                if (dynamic_cast<rz::PadButton*> (c) != nullptr)
+                    cast (r.reduced (3), 7.0f);
+                else if (dynamic_cast<juce::Button*> (c) != nullptr || dynamic_cast<juce::ComboBox*> (c) != nullptr
+                         || dynamic_cast<rz::LedBpmDisplay*> (c) != nullptr)
+                    cast (r.reduced (1), 5.0f);
+                else if (c == browserPanel.get() || c == dockedPanel() || c == mixer.get())
+                    cast (r, 8.0f);
+                else if (depth == 0 && c->getNumChildComponents() > 0)
+                    addChildren (*c, r.getPosition(), depth + 1); // e.g. the count-in menu
+            }
+        };
+        addChildren (*this, {}, 0);
+    }
+    juce::DropShadow (juce::Colours::black.withAlpha (0.62f), 18, { 5, 11 }).drawForImage (g, shapes);  // the soft room shadow
+    juce::DropShadow (juce::Colours::black.withAlpha (0.55f), 4, { 1, 3 }).drawForImage (g, shapes);   // contact shadow right under it
 }
 
 void RezalicaEditor::paint (juce::Graphics& g)
@@ -1664,8 +1710,11 @@ void RezalicaEditor::paint (juce::Graphics& g)
         const float rScreen = juce::jlimit (8.0f, 26.0f, juce::jmin (screen.getWidth(), screen.getHeight()) * 0.07f);
         auto frame = screen.expanded ((float) tvBezel);
         const float rFrame = rScreen + (float) tvBezel * 0.8f;
-        g.setColour (juce::Colours::black.withAlpha (0.55f));
-        g.fillRoundedRectangle (frame.translated (0.0f, 3.0f), rFrame);
+        for (int i = 5; i > 0; --i)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.10f * (float) i));
+            g.fillRoundedRectangle (frame.translated (0.0f, (float) (7 - i)).expanded ((float) (5 - i) * 0.8f), rFrame);
+        }
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff1ecdf), frame.getX(), frame.getY(),
                                                  juce::Colour (0xffb9b19c), frame.getX(), frame.getBottom(), false));
         g.fillRoundedRectangle (frame, rFrame);
@@ -1683,8 +1732,8 @@ void RezalicaEditor::paint (juce::Graphics& g)
         // pads sit on the faceplate, in a slightly recessed area
         auto pf = padArea.toFloat();
         // a recessed well: dark top / left inner shadow, light bottom edge
-        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.28f), pf.getX(), pf.getY(),
-                                                 juce::Colours::black.withAlpha (0.06f), pf.getX(), pf.getY() + 40.0f, false));
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.42f), pf.getX(), pf.getY(),
+                                                 juce::Colours::black.withAlpha (0.10f), pf.getX(), pf.getY() + 48.0f, false));
         g.fillRoundedRectangle (pf, 8.0f);
         g.setColour (juce::Colours::black.withAlpha (0.45f));
         g.drawRoundedRectangle (pf.reduced (0.5f), 8.0f, 1.5f);
@@ -1708,7 +1757,12 @@ void RezalicaEditor::paint (juce::Graphics& g)
 
 void RezalicaEditor::resized()
 {
-    renderFaceplate();
+    layoutComponents();
+    renderFaceplate(); // after the layout: the shadows under the keys and panels are baked into it
+}
+
+void RezalicaEditor::layoutComponents()
+{
     auto b = getLocalBounds().reduced (14);
 
     // top block: one row of keys, the LED tempo display and the master volume knob on the right

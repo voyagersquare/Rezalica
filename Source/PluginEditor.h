@@ -81,6 +81,7 @@ private:
     static constexpr int logoIconSize = 50;
     juce::Image faceplate;                             // brushed silver texture, rendered on resize
     void renderFaceplate();
+    void layoutComponents();
     bool shouldDropFilesWhenDraggedExternally (const juce::DragAndDropTarget::SourceDetails&, juce::StringArray&, bool&) override;
     void toggleToolWindow (std::unique_ptr<rz::ToolWindow>& w, juce::TextButton& button, int which);
     // autosave / crash recovery / recent projects (standalone)
