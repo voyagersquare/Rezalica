@@ -230,4 +230,22 @@ public:
     juce::Slider slider;
     juce::Label label;
 };
+
+/** Keeps a Rezalica window above the others only while Rezalica is the active program:
+    click another program (a browser ...) and the window goes behind it like any other. */
+class StayOnTopOfRezalica : private juce::Timer
+{
+public:
+    explicit StayOnTopOfRezalica (juce::TopLevelWindow& w) : window (w) { timerCallback(); startTimerHz (4); }
+    ~StayOnTopOfRezalica() override { stopTimer(); }
+
+private:
+    void timerCallback() override
+    {
+        const bool front = juce::Process::isForegroundProcess();
+        if (window.isAlwaysOnTop() != front)
+            window.setAlwaysOnTop (front);
+    }
+    juce::TopLevelWindow& window;
+};
 } // namespace rz

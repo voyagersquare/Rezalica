@@ -232,6 +232,7 @@ private:
 //==============================================================================
 class ToolWindow : public juce::DocumentWindow
 {
+    std::unique_ptr<rz::StayOnTopOfRezalica> onTopHelper;
 public:
     ToolWindow (const juce::String& name, juce::Component* content, juce::LookAndFeel& lnf, bool canResize)
         : juce::DocumentWindow (name, colours::background, juce::DocumentWindow::closeButton)
@@ -242,7 +243,7 @@ public:
         setResizable (canResize, false);
         if (canResize)
             setResizeLimits (420, 360, 2000, 1600);
-        setAlwaysOnTop (true);
+        onTopHelper = std::make_unique<rz::StayOnTopOfRezalica> (*this); // on top only while Rezalica is in front
         centreWithSize (getWidth(), getHeight());
     }
     ~ToolWindow() override { setLookAndFeel (nullptr); }

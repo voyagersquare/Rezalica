@@ -123,6 +123,7 @@ private:
 
 class SceneWindow : public juce::DocumentWindow
 {
+    std::unique_ptr<rz::StayOnTopOfRezalica> onTopHelper;
 public:
     SceneWindow (RezalicaProcessor& p, juce::LookAndFeel& lnf)
         : juce::DocumentWindow ("Rezalica - Song", colours::background, juce::DocumentWindow::closeButton)
@@ -132,7 +133,7 @@ public:
         setContentOwned (new ScenePanel (p), true);
         setResizable (true, false);
         setResizeLimits (900, 520, 2800, 1600);
-        setAlwaysOnTop (true);
+        onTopHelper = std::make_unique<rz::StayOnTopOfRezalica> (*this); // on top only while Rezalica is in front
         centreWithSize (getWidth(), getHeight());
     }
     ~SceneWindow() override { setLookAndFeel (nullptr); }

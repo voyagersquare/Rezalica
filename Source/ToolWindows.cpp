@@ -122,20 +122,18 @@ RecorderPanel::RecorderPanel (RezalicaProcessor& p) : processor (p)
     recButton.onClick = [this]
     {
         auto& r = processor.getRecorder();
-        if (processor.padChoiceArmed.load()) { processor.padChoiceArmed = false; statusLabel.setText ("Cancelled.", juce::dontSendNotification); return; }
         if (r.isBusy())
         {
             r.stop();
             if (resamplingPattern) processor.getSequencer().stopPlayback();
             return;
         }
+        // like an MPC: REC arms at once and waits for the input above the threshold;
+        // meanwhile the pads blink and the pad that is hit gets the take (SP style)
         if (pickPadButton.getToggleState() && currentSource() != AudioRecorder::output)
         {
-            // SP style: the pads blink, the hit pad gets the take (the editor starts it)
             processor.armedRecordOptions = options();
             processor.padChoiceArmed = true;
-            statusLabel.setText ("Hit the pad that should get the sample...", juce::dontSendNotification);
-            return;
         }
         startTake();
     };
@@ -178,6 +176,7 @@ RecorderPanel::RecorderPanel (RezalicaProcessor& p) : processor (p)
         const int chopIds[] { RezalicaProcessor::chopOff, RezalicaProcessor::chop2, RezalicaProcessor::chop4, RezalicaProcessor::chop8,
                               RezalicaProcessor::chop16, RezalicaProcessor::chopTransients };
         const int pad = processor.selectedPad.load();
+        processor.padChoiceArmed = false;
         const auto f = processor.keepTake (pad, nameEditor.getText(), trimButton.getToggleState(), chopIds[juce::jlimit (0, 5, chopBox.getSelectedId() - 1)]);
         auto& set = AppSettings::get();
         set.setValue ("recTrim", trimButton.getToggleState());
@@ -187,7 +186,7 @@ RecorderPanel::RecorderPanel (RezalicaProcessor& p) : processor (p)
         if (f.existsAsFile() && onRecorded) onRecorded();
     };
     retryButton.onClick = [this] { processor.discardTake(); startTake(); };
-    discardButton.onClick = [this] { processor.discardTake(); statusLabel.setText ("Take thrown away.", juce::dontSendNotification); };
+    discardButton.onClick = [this] { processor.padChoiceArmed = false; processor.discardTake(); statusLabel.setText ("Take thrown away.", juce::dontSendNotification); };
     for (auto* b : { &playTakeButton, &keepButton, &retryButton, &discardButton })
     {
         b->setWantsKeyboardFocus (false);
@@ -310,9 +309,9 @@ void RecorderPanel::timerCallback()
     clipLabel.setColour (juce::Label::textColourId, r.clipped.load() ? juce::Colours::white : colours::dim);
     clipLabel.setColour (juce::Label::backgroundColourId, r.clipped.load() ? juce::Colour (0xffe0413a) : juce::Colours::transparentBlack);
 
-    const bool busy = r.isBusy() || processor.padChoiceArmed.load();
+    const bool busy = r.isBusy();
     recButton.setToggleState (busy, juce::dontSendNotification);
-    recButton.setButtonText (processor.padChoiceArmed.load() ? "HIT A PAD" : r.isBusy() ? "STOP" : "REC");
+    recButton.setButtonText (r.getState() == AudioRecorder::waiting ? "WAITING..." : r.isBusy() ? "STOP" : "REC");
     for (auto* b : { &inputButton, &computerButton, &resampleButton })
         b->setEnabled (! busy);
     cancelButton.setEnabled (busy);
@@ -322,9 +321,11 @@ void RecorderPanel::timerCallback()
     timeLabel.setColour (juce::Label::textColourId, r.getState() == AudioRecorder::recording ? juce::Colour (0xffe0413a) : colours::text);
 
     if (r.getState() == AudioRecorder::waiting)
-        statusLabel.setText (r.getSource() != AudioRecorder::output ? "Waiting for sound above the threshold..." : "Starting with the pattern...", juce::dontSendNotification);
+        statusLabel.setText (r.getSource() == AudioRecorder::output ? juce::String ("Starting with the pattern...")
+                             : processor.padChoiceArmed.load() ? juce::String ("Waiting for the input above the threshold... hit the pad that should get the sample")
+                                                               : juce::String ("Waiting for the input above the threshold..."), juce::dontSendNotification);
     else if (r.getState() == AudioRecorder::recording)
-        statusLabel.setText ("Recording...", juce::dontSendNotification);
+        statusLabel.setText (processor.padChoiceArmed.load() ? "Recording...  (hit the pad that should get it)" : "Recording...", juce::dontSendNotification);
     else if (r.getState() == AudioRecorder::finished)
     {
         if (resamplingPattern) { processor.getSequencer().stopPlayback(); resamplingPattern = false; }

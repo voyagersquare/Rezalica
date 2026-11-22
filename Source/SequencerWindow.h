@@ -75,6 +75,7 @@ private:
 
 class SequencerWindow : public juce::DocumentWindow
 {
+    std::unique_ptr<rz::StayOnTopOfRezalica> onTopHelper;
 public:
     SequencerWindow (RezalicaProcessor& p, juce::LookAndFeel& lnf)
         : juce::DocumentWindow ("Rezalica - Pattern Sequencer", colours::background, juce::DocumentWindow::closeButton)
@@ -84,7 +85,7 @@ public:
         setContentOwned (new SequencerPanel (p), true);
         setResizable (true, false);
         setResizeLimits (640, 420, 2000, 1400);
-        setAlwaysOnTop (true);
+        onTopHelper = std::make_unique<rz::StayOnTopOfRezalica> (*this); // on top only while Rezalica is in front
         centreWithSize (getWidth(), getHeight());
     }
 

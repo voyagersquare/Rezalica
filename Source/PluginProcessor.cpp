@@ -373,6 +373,13 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                 engine.noteOn (e.pad, e.velocity, e.tag < rz::Sequencer::midiTagBase, e.transpose, e.tag, e.flag);
                 break;
             case evOn:
+                if (padChoiceArmed.load())
+                {
+                    // sampling: this hit only chooses the pad (silent, so it can't start / spoil the take)
+                    engine.lastPlayedPad = e.pad;
+                    ++engine.playedCounter;
+                    break;
+                }
                 if (lazyActive.load())
                 {
                     const float pos = engine.getPreviewPositionNow();

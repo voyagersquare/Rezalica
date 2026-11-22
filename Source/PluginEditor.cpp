@@ -786,10 +786,12 @@ void RezalicaEditor::timerCallback()
         const int pad = processor.getEngine().lastPlayedPad.load();
         if (processor.padChoiceArmed.load() && pad >= 0 && pad < rz::numPads)
         {
+            // the hit chooses the pad that gets the take (it does not sound); the take itself
+            // started with REC and waits for the input above the threshold
             processor.padChoiceArmed = false;
-            processor.stopAll();                     // the hit only chooses the pad
             selectPad (pad, false);
-            processor.startRecording (processor.armedRecordOptions);
+            if (! processor.getRecorder().isBusy() && ! processor.hasTake())
+                processor.startRecording (processor.armedRecordOptions);
         }
         if (pad >= 0 && pad < rz::numPads && pad != processor.selectedPad.load())
             selectPad (pad, false);

@@ -5,6 +5,7 @@ namespace rz
 //==============================================================================
 struct MixerPanel::EditorWindow : public juce::DocumentWindow
 {
+    std::unique_ptr<rz::StayOnTopOfRezalica> onTopHelper;
     EditorWindow (MixerPanel& o, int k, juce::AudioProcessor& p)
         : juce::DocumentWindow (p.getName(), colours::background, juce::DocumentWindow::closeButton), owner (o), key (k)
     {
@@ -14,7 +15,7 @@ struct MixerPanel::EditorWindow : public juce::DocumentWindow
         setUsingNativeTitleBar (true);
         setContentOwned (ed, true);
         setResizable (ed->isResizable(), false);
-        setAlwaysOnTop (true);
+        onTopHelper = std::make_unique<rz::StayOnTopOfRezalica> (*this); // on top only while Rezalica is in front
         centreWithSize (getWidth(), getHeight());
         setVisible (true);
     }

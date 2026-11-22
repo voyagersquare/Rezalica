@@ -120,7 +120,7 @@ Tempo (crveni LED BPM zaslon) je zajednički za glavni prozor, STEP SEQ, PIANO R
 
 ## Izgled
 
-Veliki prozor za waveform izgleda kao ekran starog televizora (kremasti okvir, zaobljeno staklo s odsjajem i linijama). Sve tipke zaglavlja su u jednom redu s transportom. Sučelje izgleda kao hardverski sampler: brušena srebrna ploča, crni paneli s crvenim tiskom, sive gumene tipke s LED lampicom kad su uključene, crni knobovi s kremastim pokazivačem i crvenom skalom, kremasti gumeni padovi i crveni LED zaslon za tempo (BPM: povuci gore/dolje, Shift = fino, kotačić, dupli klik = upis). Isto je u standalone verziji i u VST pluginu.
+Veliki prozor za waveform izgleda kao ekran starog televizora (kremasti okvir, zaobljeno staklo s odsjajem i linijama). Sve tipke zaglavlja su u jednom redu s transportom. Prozori REZALICE (SAMPLING, efekti …) stoje iznad drugih samo dok je REZALICA aktivna. Sučelje izgleda kao hardverski sampler: brušena srebrna ploča, crni paneli s crvenim tiskom, sive gumene tipke s LED lampicom kad su uključene, crni knobovi s kremastim pokazivačem i crvenom skalom, kremasti gumeni padovi i crveni LED zaslon za tempo (BPM: povuci gore/dolje, Shift = fino, kotačić, dupli klik = upis). Isto je u standalone verziji i u VST pluginu.
 
 ## Sviranje
 
@@ -152,7 +152,8 @@ Tipkovnica računala svira trenutno odabranu banku:
   - **Start**: odmah ili **na zvuk iznad thresholda** (klizač, bijela crta na metru); **Length**: do STOP-a ili fiksno (1–8 s, 1 / 2 / 4 takta po tempu) – samo stane.
   - **Channels**: stereo, mono lijevi ili mono desni ulaz; **CLIP** svijetli kad je ulaz preglasan.
   - **Monitor**: ulaz se čuje dok snimaš; **Effects**: snimanje ulaza **kroz efekte** BUS-a A–D ili MASTER-a.
-  - **Choose the pad after REC**: nakon REC prazni padovi trepću – udari pad koji treba dobiti snimku (kao na SP-u).
+  - Kao na MPC-u: **REC** odmah naoruža sampler („WAITING…“) i čeka ulaz iznad thresholda; čim zvuk krene, snimanje počne samo od sebe.
+  - **Choose the pad after REC**: dok čeka (ili snima) prazni padovi trepću – udari pad koji treba dobiti snimku (taj udarac se ne čuje).
   - Nakon snimke **TAKE**: PLAY (preslušaj), **KEEP** (ime, „Trim the silence“, odmah chop na 2/4/8/16 ili po tranzijentima), **RETRY**, **DISCARD**.
   - **COMPUTER** (Windows): snima zvuk koji računalo reproducira (YouTube, Spotify, drugi programi …), bez kabela i virtualnih uređaja (WASAPI loopback zadanog izlaza). Pauze bez zvuka ostaju u snimci.
   - **INPUT**: snima ulaz zvučne kartice (mikrofon, line in, gramofon). „Start on sound“ čeka i kreće točno na prvom zvuku. Ulazni uređaj biraš u Audio Settings.

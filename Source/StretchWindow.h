@@ -42,6 +42,7 @@ private:
 
 class StretchWindow : public juce::DocumentWindow
 {
+    std::unique_ptr<rz::StayOnTopOfRezalica> onTopHelper;
 public:
     StretchWindow (RezalicaProcessor& p, juce::LookAndFeel& lnf)
         : juce::DocumentWindow ("Rezalica - Time Stretch / Warp", colours::background, juce::DocumentWindow::closeButton)
@@ -50,7 +51,7 @@ public:
         setUsingNativeTitleBar (true);
         setContentOwned (new StretchPanel (p), true);
         setResizable (false, false);
-        setAlwaysOnTop (true);
+        onTopHelper = std::make_unique<rz::StayOnTopOfRezalica> (*this); // on top only while Rezalica is in front
         centreWithSize (getWidth(), getHeight());
     }
 

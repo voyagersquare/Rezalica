@@ -1695,6 +1695,26 @@ int main (int argc, char** argv)
         r.discardTake();
         check (! r.hasTake(), "DISCARD / RETRY throw the take away");
 
+        // MPC flow: REC waits at once for the input above the threshold; meanwhile a pad hit only chooses the pad (silent)
+        {
+            r.loadFileToPad (12, file);
+            RezalicaProcessor::RecordOptions w;
+            w.source = rz::AudioRecorder::input; w.waitForSignal = true; w.thresholdDb = -30.0f; w.lengthSeconds = 0.5;
+            r.padChoiceArmed = true;
+            r.startRecording (w);
+            const int hits = r.getEngine().hitCounter[12].load();
+            r.triggerPadFromUi (12, 1.0f, true);
+            feed (10, 0.001f, 0.001f, 0);                       // silence: waiting
+            const bool waiting = r.getRecorder().getState() == rz::AudioRecorder::waiting;
+            const bool chosenSilently = r.getEngine().lastPlayedPad.load() == 12 && r.getEngine().hitCounter[12].load() == hits;
+            feed (120, 0.6f, 0.6f, 0);                          // the music starts: the take starts by itself
+            r.processBlock (blk, none);
+            check (waiting && chosenSilently && r.getRecorder().getState() == rz::AudioRecorder::finished && r.fetchTake(),
+                   "REC waits for the input above the threshold; the pad hit only chooses the pad; the take starts by itself");
+            r.padChoiceArmed = false;
+            r.discardTake();
+        }
+
         // monitor: the input is heard on the output
         r.monitorInput = true;
         feed (4, 0.5f, 0.5f, 0);
