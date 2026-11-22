@@ -91,7 +91,8 @@ public:
         recBuffer.setSize (2, (int) (sampleRate * 120.0)); // up to 2 minutes of scratching
         recWrite = 0;
         temp.setSize (2, juce::jmax (1, maxBlock));
-        smoothHand = 1.0 - std::exp (-1.0 / (0.0025 * sampleRate));
+        smoothHand = 1.0 - std::exp (-1.0 / (0.007 * sampleRate));   // 2 x 7 ms: smooth, still direct
+        motionSmooth = (float) (1.0 - std::exp (-1.0 / (0.004 * sampleRate)));
         gainStep = 1.0f / (float) juce::jmax (1.0, 0.0007 * sampleRate); // the fader moves in 0.7 ms
     }
 
@@ -134,21 +135,21 @@ public:
         {
             const double cycle = loop.load() ? std::floor (pos / len) * len : 0.0;
             pos = cycle + juce::jlimit (0.0, (double) len - 1.0, j);
-            if (touched.load()) touchOrigin = pos - handOffset.load();
+            if (touched.load()) { touchOrigin = pos - handOffset.load(); hand1 = hand2 = pos; }
         }
 
         const bool hand = touched.load();
         if (hand && ! wasTouched)
         {
             touchOrigin = pos - handOffset.load(); // the UI sends the movement since it grabbed the platter
-            handTarget = pos;
+            hand1 = hand2 = pos;
         }
         if (! hand && wasTouched)
             justReleased = true;
         wasTouched = hand;
 
-        // the hand target moves to the newest offset over the block (mouse events come a few ms apart)
-        const double handStart = handTarget;
+        // where the hand has put the record; the mouse reports it in small jumps a few ms apart,
+        // so it is followed through two smoothing stages: the record moves evenly, also very slowly
         const double handEnd = touchOrigin + handOffset.load();
 
         const float* srcL = rec->buffer.getReadPointer (0);
@@ -169,9 +170,10 @@ public:
 
             if (hand)
             {
-                handTarget = handStart + (handEnd - handStart) * (double) (i + 1) / (double) numSamples;
+                hand1 += (handEnd - hand1) * smoothHand;
+                hand2 += (hand1 - hand2) * smoothHand;
                 const double prev = pos;
-                pos += (handTarget - pos) * smoothHand;
+                pos = hand2;
                 rate = pos - prev;
             }
             else
@@ -206,8 +208,10 @@ public:
                 if (! looping && (pos <= 0.0 || pos >= (double) (len - 1))) l = r = 0.0f; // off the groove
             }
 
-            // a record that hardly moves is silent (no DC from a held needle)
-            const float motion = (float) juce::jlimit (0.0, 1.0, std::abs (rate) / (0.02 * base));
+            // a record that hardly moves is silent (no DC from a held needle); smoothed, so a slow,
+            // uneven hand does not switch the sound on and off (that crackled)
+            const float motionTarget = (float) juce::jlimit (0.0, 1.0, std::abs (rate) / (0.004 * base));
+            motion += (motionTarget - motion) * motionSmooth;
             gain += juce::jlimit (-gainStep, gainStep, targetGain - gain);
             const float g = gain * motion;
             temp.setSample (0, i, l * g);
@@ -290,7 +294,8 @@ private:
     bool recordChanged = false;
 
     double hostRate = 44100.0;
-    double pos = 0.0, rate = 0.0, touchOrigin = 0.0, handTarget = 0.0, smoothHand = 0.1;
+    double pos = 0.0, rate = 0.0, touchOrigin = 0.0, hand1 = 0.0, hand2 = 0.0, smoothHand = 0.1;
+    float motion = 0.0f, motionSmooth = 0.01f;
     bool wasTouched = false, justReleased = false;
     float gain = 1.0f, gainStep = 0.01f;
     juce::AudioBuffer<float> temp, recBuffer;

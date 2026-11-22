@@ -2173,6 +2173,35 @@ int main (int argc, char** argv)
         deck.motorOn = false;
         run (1.5);
         check (std::abs (deck.speed.load()) < 0.01f, "STOP: the brake stops the platter");
+
+        // a very slow scratch with the motor off: the mouse moves in jumps every 16 ms, the sound must stay smooth
+        {
+            deck.handOffset = 0.0;
+            deck.touched = true;
+            run (0.05);
+            juce::AudioBuffer<float> small (2, 256);
+            double hand = 0.0;
+            long long done = 0, nextMove = 0;
+            float worst = 0.0f, peak = 0.0f, y1 = 0.0f, y2 = 0.0f;
+            for (int blk = 0; blk < 400; ++blk)
+            {
+                if (done >= nextMove) { hand += 0.04 * 768.0; deck.handOffset = hand; nextMove += 768; } // 4 % speed, 60 Hz mouse
+                juce::MidiBuffer m;
+                small.clear();
+                t.processBlock (small, m);
+                for (int i = 0; i < 256; ++i)
+                {
+                    const float y = small.getSample (0, i);
+                    if (blk > 20) worst = juce::jmax (worst, std::abs (y - 2.0f * y1 + y2)); // jumps = crackle
+                    peak = juce::jmax (peak, std::abs (y));
+                    y2 = y1; y1 = y;
+                }
+                done += 256;
+            }
+            deck.touched = false;
+            std::cout << "       slow scratch: peak " << peak << ", largest jump " << worst << "\n";
+            check (peak > 0.05f && worst < 2.0e-3f, "a very slow scratch is smooth (no crackle)");
+        }
     }
 
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");

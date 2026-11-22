@@ -39,6 +39,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#SourceDir}\Rezalica.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\Resources\PressStart2P-OFL.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
+Source: "..\Resources\GreatVibes-OFL.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Rezalica"; Filename: "{app}\Rezalica.exe"

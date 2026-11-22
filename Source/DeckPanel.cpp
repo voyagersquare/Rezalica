@@ -1,4 +1,5 @@
 #include "DeckPanel.h"
+#include "BinaryData.h"
 
 namespace rz
 {
@@ -282,10 +283,8 @@ DeckPanel::DeckPanel (RezalicaProcessor& p) : processor (p), platter (p), wave (
     addAndMakeVisible (wave);
     platter.onLoaded = [this] { syncControls(); };
 
-    title.setText ("DECK", juce::dontSendNotification);
-    title.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-    title.setColour (juce::Label::textColourId, colours::accent);
-    addAndMakeVisible (title);
+    title.setVisible (false); // the title is painted (calligraphy, bigger than the look-and-feel lets a Label be)
+    addChildComponent (title);
 
     startButton.onClick = [this] { startStop(); };
     startButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff6f7276));
@@ -503,6 +502,17 @@ void DeckPanel::paint (juce::Graphics& g)
     }
     g.setColour (juce::Colours::black.withAlpha (0.6f));
     g.drawRoundedRectangle (b.reduced (0.5f), 6.0f, 1.0f);
+    {
+        // "Deck" in calligraphy (Great Vibes, SIL Open Font License), red print with a soft shadow
+        static const juce::Typeface::Ptr script = juce::Typeface::createSystemTypefaceFor (BinaryData::GreatVibesRegular_ttf,
+                                                                                         BinaryData::GreatVibesRegular_ttfSize);
+        g.setFont (juce::Font (juce::FontOptions (script).withHeight (52.0f)));
+        auto t = title.getBounds().toFloat();
+        g.setColour (juce::Colours::black.withAlpha (0.6f));
+        g.drawText ("Deck", t.translated (2.0f, 2.0f), juce::Justification::centredLeft);
+        g.setColour (colours::accent);
+        g.drawText ("Deck", t, juce::Justification::centredLeft);
+    }
     // the fader: open / closed lamp
     auto& d = processor.getDeck();
     const bool closed = d.cut.load() != d.reverseFader.load();
@@ -527,7 +537,7 @@ void DeckPanel::resized()
     b.removeFromBottom (8);
 
     // DECK in the top left corner
-    title.setBounds (b.getX(), b.getY(), 60, 22);
+    title.setBounds (b.getX() + 4, b.getY() - 8, 170, 60);
 
     // the platter in the middle, the controls around it: left = motor / tempo, right = pitch fader, cues, fader, REC
     const int colW = 210, pitchW = 70, gap = 18;
