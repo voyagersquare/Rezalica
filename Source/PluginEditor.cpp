@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "BinaryData.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 
@@ -1624,13 +1625,20 @@ void RezalicaEditor::paint (juce::Graphics& g)
         }
     };
 
-    // logo
-    g.setColour (ink);
-    g.setFont (juce::FontOptions (30.0f, juce::Font::bold).withStyle ("Bold Italic"));
-    g.drawText ("REZALICA", logoArea.withHeight (40).translated (2, 0), juce::Justification::centredLeft);
-    g.setColour (accent.darker (0.15f));
-    g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
-    g.drawText ("SLICE SAMPLER  4 x 16 PADS", logoArea.withTrimmedTop (36).withHeight (14).translated (3, 0), juce::Justification::centredLeft);
+    // logo: pixel font, pressed into the faceplate (a light edge under the dark letters)
+    {
+        static const juce::Typeface::Ptr pixelFont = juce::Typeface::createSystemTypefaceFor (BinaryData::PressStart2PRegular_ttf,
+                                                                                             BinaryData::PressStart2PRegular_ttfSize);
+        auto area = logoArea.withHeight (44).translated (2, 2).toFloat();
+        juce::Font f { juce::FontOptions (pixelFont).withHeight (21.0f) };
+        while (f.getHeight() > 10.0f && juce::GlyphArrangement::getStringWidth (f, "REZALICA") > area.getWidth() - 4.0f)
+            f = f.withHeight (f.getHeight() - 1.0f);
+        g.setFont (f);
+        g.setColour (juce::Colours::white.withAlpha (0.8f));
+        g.drawText ("REZALICA", area.translated (0.0f, 1.5f), juce::Justification::centredLeft);
+        g.setColour (ink);
+        g.drawText ("REZALICA", area, juce::Justification::centredLeft);
+    }
 
     // red band behind the effects title
     if (fxTitle.isVisible())

@@ -69,8 +69,12 @@ else()
     message(STATUS "Rezalica: ASIO support not enabled (no ASIO SDK given)")
 endif()
 
+# the logo font (Press Start 2P, SIL Open Font License - see Resources/PressStart2P-OFL.txt)
+juce_add_binary_data(RezalicaData SOURCES Resources/PressStart2P-Regular.ttf)
+
 target_link_libraries(Rezalica
     PRIVATE
+        RezalicaData
         juce::juce_audio_utils
         juce::juce_dsp
     PUBLIC
