@@ -102,7 +102,7 @@ public:
                 for (auto& n : row)
                     n = 0;
         for (auto& l : length)
-            l = 16;
+            l = 32; // 2 bars by default
         for (auto& sw : patternSwing) sw = 0.0f;
         for (auto& g : swingGrid) g = 0;
         patternColours.fill (0);

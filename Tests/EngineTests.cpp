@@ -1576,7 +1576,7 @@ int main (int argc, char** argv)
         auto& sq = e.getSequencer();
         sq.syncToHost = false; sq.bpm = 120.0f;
         sq.setStep (0, 0, 0, 127);
-        sq.setSongStep (0, 0);                                   // 1 bar = 2 s
+        sq.setSongStep (0, 0);                                   // 2 bars (32 steps) = 4 s
         sq.effectiveBpm = 120.0f;
         RezalicaProcessor::ExportSettings es;
         es.sampleRate = 44100.0; es.bitDepth = 16; es.mono = true; es.normalize = true; es.tailSeconds = 1.0;
@@ -1590,7 +1590,7 @@ int main (int argc, char** argv)
         std::cout << "       export: " << (rd ? (int) rd->sampleRate : 0) << " Hz, " << (rd ? (int) rd->bitsPerSample : 0) << " bit, "
                   << (rd ? (int) rd->numChannels : 0) << " ch, " << (rd ? (int) rd->lengthInSamples : 0) << " samples, peak " << juce::jmax (peak[0], -low[0]) << "\n";
         check (ok && rd != nullptr && (int) rd->sampleRate == 44100 && rd->bitsPerSample == 16 && rd->numChannels == 1
-                   && (int) rd->lengthInSamples == 44100 * 3 && std::abs (juce::jmax (peak[0], -low[0]) - juce::Decibels::decibelsToGain (-0.3f)) < 0.01f,
+                   && (int) rd->lengthInSamples == 44100 * 5 && std::abs (juce::jmax (peak[0], -low[0]) - juce::Decibels::decibelsToGain (-0.3f)) < 0.01f,
                "song export: 44.1 kHz / 16-bit / mono / normalized, length = song + tail");
         check (rd != nullptr && rd->metadataValues.getValue (juce::WavAudioFormat::riffInfoTitle, {}) == "Test Song", "the title is written into the WAV");
         rd.reset();

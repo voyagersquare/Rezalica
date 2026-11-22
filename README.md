@@ -103,6 +103,13 @@ Veliki prozor sampla prati i padove koje okidaju step sekvencer i piano roll: pr
 
 Tempo (crveni LED BPM zaslon) je zajednički za glavni prozor, STEP SEQ, PIANO ROLL i SONG; svaki prozor ima svoj mali LED zaslon koji pokazuje i mijenja isti tempo. Warpani (time-stretch) samplovi s uključenim „FOLLOW SAMPLER TEMPO“ automatski se prilagode kad promijeniš tempo. U standalone verziji nema „SYNC HOST“ (nema DAW-a).
 
+## Piano roll: odabir i velocity
+
+- **DRAW** alat ima pokazivač u obliku olovke.
+- Klik na tipku klavijature lijevo (u MELODIC i DRUMS prikazu) odabire sve note tog reda; povlačenje po klavijaturi odabire sve note u redovima između (Shift / Ctrl: dodaje postojećem odabiru).
+- Kad su note odabrane, traka **VELOCITY** mijenja jačinu svih odabranih nota odjednom.
+- Novi patterni u step sekvenceru i piano rollu imaju po defaultu **32 koraka** (2 takta).
+
 ## Računalna tipkovnica u prozorima STEP SEQ i PIANO ROLL
 
 - **Padovi**: 1 2 3 4 / Q W E R / A S D F / Z X C V (i u step sekvenceru i u piano rollu u DRUMS prikazu).

@@ -104,6 +104,11 @@ private:
     int shownPattern = -1;
     std::vector<PianoNote> notes;        // working copy (all kinds)
     std::set<juce::uint32> selection;
+    // clicking / dragging on the keyboard selects whole rows
+    int keyboardAnchorRow = 0;
+    bool keyboardAddToSelection = false;
+    std::set<juce::uint32> keyboardBaseSelection;
+    void selectRowsBetween (int rowA, int rowB);
     std::vector<std::vector<PianoNote>> undoStack, redoStack;
     std::vector<PianoNote> clipboard;
 

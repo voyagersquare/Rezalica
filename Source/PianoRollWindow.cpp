@@ -389,6 +389,50 @@ void PianoRollEditor::mouseWheelMove (const juce::MouseEvent& e, const juce::Mou
 }
 
 //==============================================================================
+namespace
+{
+/** DRAW tool cursor: a small pencil, its tip is the hot spot. */
+const juce::MouseCursor& pencilCursor()
+{
+    static const juce::MouseCursor cursor = []
+    {
+        const int sz = 24;
+        juce::Image img (juce::Image::ARGB, sz, sz, true);
+        juce::Graphics g (img);
+        // drawn pointing down-left: tip at (2, 22)
+        juce::Path body;
+        body.startNewSubPath (2.0f, 22.0f);   // tip
+        body.lineTo (5.0f, 14.0f);
+        body.lineTo (16.0f, 3.0f);
+        body.lineTo (21.0f, 8.0f);
+        body.lineTo (10.0f, 19.0f);
+        body.closeSubPath();
+        g.setColour (juce::Colours::black);
+        g.strokePath (body, juce::PathStrokeType (2.2f, juce::PathStrokeType::mitered));
+        g.setColour (juce::Colour (0xffffc94a));
+        g.fillPath (body);
+        juce::Path wood;                    // the sharpened wood and the lead
+        wood.addTriangle (2.0f, 22.0f, 5.0f, 14.0f, 10.0f, 19.0f);
+        g.setColour (juce::Colour (0xffe8cfa0));
+        g.fillPath (wood);
+        g.setColour (juce::Colours::black);
+        g.fillEllipse (1.0f, 19.5f, 3.5f, 3.5f);
+        juce::Path eraser;                  // pink eraser at the end
+        eraser.startNewSubPath (16.0f, 3.0f);
+        eraser.lineTo (18.5f, 0.5f);
+        eraser.lineTo (23.5f, 5.5f);
+        eraser.lineTo (21.0f, 8.0f);
+        eraser.closeSubPath();
+        g.setColour (juce::Colour (0xffff8fa3));
+        g.fillPath (eraser);
+        g.setColour (juce::Colours::black);
+        g.strokePath (eraser, juce::PathStrokeType (1.2f));
+        return juce::MouseCursor (img, 2, 22);
+    }();
+    return cursor;
+}
+} // namespace
+
 void PianoRollEditor::mouseMove (const juce::MouseEvent& e)
 {
     const auto p = e.position;
@@ -403,7 +447,8 @@ void PianoRollEditor::mouseMove (const juce::MouseEvent& e)
         }
         else
         {
-            setMouseCursor (tool == Tool::draw ? juce::MouseCursor::CrosshairCursor : juce::MouseCursor::NormalCursor);
+            if (tool == Tool::draw) setMouseCursor (pencilCursor());
+            else                    setMouseCursor (juce::MouseCursor::NormalCursor);
         }
     }
     else
@@ -424,6 +469,11 @@ void PianoRollEditor::mouseDown (const juce::MouseEvent& e)
         drag = Drag::keyboard;
         previewRow = rowForY (p.y);
         preview (previewRow, true, newVelocity);
+        // click a key: all notes of that row are selected; drag over the keys: all rows in between
+        keyboardAnchorRow = previewRow;
+        keyboardAddToSelection = e.mods.isShiftDown() || e.mods.isCommandDown();
+        keyboardBaseSelection = keyboardAddToSelection ? selection : std::set<juce::uint32>();
+        selectRowsBetween (keyboardAnchorRow, previewRow);
         return;
     }
 
@@ -549,6 +599,7 @@ void PianoRollEditor::mouseDrag (const juce::MouseEvent& e)
         {
             const int r = rowForY (p.y);
             if (r != previewRow) { preview (previewRow, false); previewRow = r; preview (r, true, newVelocity); }
+            selectRowsBetween (keyboardAnchorRow, r);
             break;
         }
 
@@ -557,10 +608,19 @@ void PianoRollEditor::mouseDrag (const juce::MouseEvent& e)
             auto va = velocityArea().toFloat();
             const int vel = juce::jlimit (1, 127, (int) std::round ((va.getBottom() - p.y) / (va.getHeight() - 6.0f) * 127.0f));
             const float x0 = juce::jmin (lastVelocityX, p.x) - 3.0f, x1 = juce::jmax (lastVelocityX, p.x) + 3.0f;
+            // with notes selected, the velocity bar changes all of them at once
+            bool anySelected = false;
+            for (auto& n : notes)
+                anySelected = anySelected || ((int) n.kind == getViewMode() && isSelected (n));
             for (auto& n : notes)
             {
-                if ((int) n.kind != getViewMode() || (! selection.empty() && ! isSelected (n)))
+                if ((int) n.kind != getViewMode())
                     continue;
+                if (anySelected)
+                {
+                    if (isSelected (n)) { n.velocity = (juce::uint8) vel; changedDuringDrag = true; }
+                    continue;
+                }
                 const float nx = xForStep (n.start);
                 if (nx >= x0 && nx <= x1) { n.velocity = (juce::uint8) vel; changedDuringDrag = true; }
             }
@@ -762,6 +822,19 @@ bool PianoRollEditor::keyPressed (const juce::KeyPress& k)
         return true;
     }
     return false;
+}
+
+void PianoRollEditor::selectRowsBetween (int rowA, int rowB)
+{
+    const int dA = displayForRow (rowA), dB = displayForRow (rowB);
+    const int lo = juce::jmin (dA, dB), hi = juce::jmax (dA, dB);
+    selection = keyboardBaseSelection;
+    for (auto& n : notes)
+        if ((int) n.kind == getViewMode())
+            if (const int d = displayForRow (n.row); d >= lo && d <= hi)
+                selection.insert (n.id);
+    repaint();
+    if (onChanged) onChanged();
 }
 
 bool PianoRollEditor::keyStateChanged (bool)
