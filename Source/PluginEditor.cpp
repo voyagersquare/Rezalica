@@ -1741,13 +1741,17 @@ void RezalicaEditor::paint (juce::Graphics& g)
         g.drawHorizontalLine ((int) pf.getBottom(), pf.getX() + 8.0f, pf.getRight() - 8.0f);
         const int bank = processor.currentBank.load();
         const int lo = RezalicaProcessor::midiBaseNote + bank * rz::padsPerBank;
+        // two lines left of the bank keys A-D, so nothing runs under them
+        auto info = padArea.reduced (10).removeFromTop (24);
+        info.setRight (bankButtons[0].getX() - 6);
         g.setColour (ink);
         g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawText ("BANK " + juce::String::charToString ((juce::juce_wchar) ('A' + bank))
-                        + "   MIDI " + juce::MidiMessage::getMidiNoteName (lo, true, true, 3)
-                        + "-" + juce::MidiMessage::getMidiNoteName (lo + 15, true, true, 3)
-                        + "   keys 1-4 Q-R A-F Z-V",
-                    padArea.reduced (10, 6).removeFromTop (14), juce::Justification::topLeft);
+        g.drawFittedText ("BANK " + juce::String::charToString ((juce::juce_wchar) ('A' + bank))
+                              + "   MIDI " + juce::MidiMessage::getMidiNoteName (lo, true, true, 3)
+                              + "-" + juce::MidiMessage::getMidiNoteName (lo + 15, true, true, 3),
+                          info.removeFromTop (12), juce::Justification::centredLeft, 1, 1.0f);
+        g.setFont (juce::FontOptions (10.5f));
+        g.drawFittedText ("keys 1-4  Q-R  A-F  Z-V", info, juce::Justification::centredLeft, 1, 1.0f);
     }
     drawPanel (filterArea, {});
     drawPanel (satArea, {});
