@@ -141,7 +141,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         if (s.isPaused()) s.resumePlayback(); else s.pausePlayback();
         grabKeyboardFocus();
     };
-    stopKey.onClick = [this] { processor.getSequencer().stopPlayback(); grabKeyboardFocus(); };
+    stopKey.onClick = [this] { processor.getSequencer().stopPressed(); grabKeyboardFocus(); }; // twice = hard stop
     addChildComponent (metronome);
     metronome.setVisible (isStandalone);
     addChildComponent (autosaveLabel);
@@ -737,6 +737,12 @@ void RezalicaEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void RezalicaEditor::timerCallback()
 {
+    // a double STOP also clears the reverb / delay tails of the mixer's plug-ins
+    if (const int hs = processor.getSequencer().hardStops.load(); hs != lastHardStops)
+    {
+        lastHardStops = hs;
+        processor.clearEffectTails();
+    }
     // the sound card's output delay (driver latency + one buffer): the playheads show what is heard
     if (isStandalone && ++latencyPoll % 15 == 0)
         if (auto* holder = juce::StandalonePluginHolder::getInstance())
@@ -1426,7 +1432,7 @@ void RezalicaEditor::showDock (int view)
     else if (view == dockPianoRoll)
     {
         if (dockedPianoRoll == nullptr) { dockedPianoRoll = std::make_unique<rz::PianoRollPanel> (processor); addChildComponent (*dockedPianoRoll); }
-        dockedPianoRoll->showMelodic();
+        dockedPianoRoll->showDrums();
         dockedPianoRoll->setVisible (true);
     }
     else if (view == dockSong)
@@ -1455,7 +1461,7 @@ void RezalicaEditor::togglePianoRoll()
     const bool show = ! pianoRollWindow->isVisible();
     if (show)
         if (auto* panel = dynamic_cast<rz::PianoRollPanel*> (pianoRollWindow->getContentComponent()))
-            panel->showMelodic();
+            panel->showDrums();
     pianoRollWindow->setVisible (show);
     if (show)
         pianoRollWindow->toFront (true);

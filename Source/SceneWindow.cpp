@@ -440,7 +440,6 @@ ScenePanel::ScenePanel (RezalicaProcessor& p) : processor (p), transport (p.getS
     stopButton.setWantsKeyboardFocus (false);
     playButton.setVisible (false);   // the transport block (PLAY / PAUSE / STOP / metronome) replaces them
     addAndMakeVisible (transport);
-    transport.onStop = [this] { processor.stopAll(); };
     playButton.setTooltip ("Play the song from its start marker (space bar in this window). The sampler's PLAY plays just the selected pattern");
     loopButton.setTooltip ("Start the song again when it ends");
 
@@ -608,7 +607,7 @@ bool ScenePanel::keyPressed (const juce::KeyPress& k)
 {
     if (k != juce::KeyPress::spaceKey) return false;
     auto& s = processor.getSequencer();
-    if (s.isPlayingSong()) s.stopPlayback(); else s.playSong(); // space in the SCENE window: the song
+    if (s.isPlayingSong() || s.justStopped()) s.stopPressed(); else s.playSong(); // space in the SCENE window: the song
     return true;
 }
 

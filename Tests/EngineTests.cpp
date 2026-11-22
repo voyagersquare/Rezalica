@@ -930,7 +930,7 @@ int main (int argc, char** argv)
         check (! other.loadProjectFromFile (file), "a non-project file is refused");
         p.getEngine().getPad (7).gainDb = 0.0f;
         proj.deleteFile();
-        check (rz::NoteClip().mode == rz::NoteClip::melodic, "piano roll opens in melodic mode");
+        check (rz::NoteClip().mode == rz::NoteClip::drum, "piano roll opens in DRUMS mode");
     }
 
     // ---- SCENES / SONG ----
@@ -2061,6 +2061,66 @@ int main (int argc, char** argv)
             check (std::abs (a - (spb + 1000)) <= 2 && std::abs (b - a) <= 2 && std::abs (c - a) <= 2,
                    where == 0 ? "MASTER plug-in delay: pads and metronome stay together" : "BUS A plug-in delay: other buses and metronome wait for it");
         }
+    }
+
+    {
+        // STOP: once = the sample (one-shot, no GATE) fades out with RELEASE; twice = cut at once.
+        // Ruler: a jump into the middle of a long piano roll note plays it from there.
+        auto longFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_long.wav");
+        {
+            juce::AudioBuffer<float> b (1, 48000 * 4);
+            for (int i = 0; i < b.getNumSamples(); ++i) b.setSample (0, i, 0.5f * std::sin ((float) i * 0.03f));
+            juce::WavAudioFormat wav;
+            longFile.deleteFile();
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (longFile), 48000, 1, 24, {}, 0));
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+        }
+        auto tp = std::make_unique<RezalicaProcessor> (false);
+        auto& t = *tp;
+        t.prepareToPlay (48000.0, 480);
+        t.loadFileToPad (0, longFile);
+        t.getEngine().getPad (0).releaseMs = 30.0f;
+        auto& sq = t.getSequencer();
+        sq.bpm = 120.0f;
+        sq.setStep (0, 0, 0, 127);
+        juce::AudioBuffer<float> buf (2, 480);
+        auto blocks = [&] (int n) { float pk = 0.0f; for (int i = 0; i < n; ++i) { juce::MidiBuffer m; buf.clear(); t.processBlock (buf, m); pk = buf.getMagnitude (0, 0, 480); } return pk; };
+
+        sq.playPattern();
+        blocks (20);                                   // 0.2 s into a 4 s one-shot sample
+        sq.stopPressed();
+        const float afterFade = blocks (10);           // 100 ms later: RELEASE 30 ms is over
+        check (afterFade < 1.0e-4f, "STOP once: a one-shot sample fades out with its RELEASE");
+
+        t.getEngine().getPad (0).releaseMs = 2000.0f;  // a long release ...
+        juce::Time::waitForMillisecondCounter (juce::Time::getMillisecondCounter() + sq.doubleStopMs + 20);
+        sq.playPattern();
+        blocks (20);
+        sq.stopPressed();
+        const float stillRinging = blocks (3);
+        sq.stopPressed();                              // ... and STOP again right away
+        const float cut = blocks (2);
+        check (stillRinging > 0.05f && cut < 1.0e-4f, "STOP twice: everything is cut at once");
+        sq.setStep (0, 0, 0, 0);
+        t.getEngine().getPad (0).releaseMs = 30.0f;
+
+        // piano roll: one 4-bar note; start from the ruler at bar 2 -> it plays from its middle
+        rz::NoteClip::Ptr clip = new rz::NoteClip();
+        rz::PianoNote n; n.id = sq.newNoteId(); n.kind = rz::NoteClip::drum; n.row = 0; n.start = 0.0f; n.length = 64.0f; n.velocity = 127;
+        clip->notes = { n };
+        sq.length[0] = 64;
+        sq.setClip (0, clip);
+        juce::Time::waitForMillisecondCounter (juce::Time::getMillisecondCounter() + sq.doubleStopMs + 20);
+        sq.locateTo (16.0);                            // bar 2
+        sq.playPattern();
+        const float chased = blocks (5);
+        check (chased > 0.05f, "a jump into the middle of a piano roll note plays it from there");
+        sq.locateTo (40.0);                            // jump while playing
+        blocks (3);
+        check (std::abs (sq.getPlayPositionSteps() - 40.0) < 1.0, "a click in the ruler while playing jumps the playhead");
+        sq.stopPressed();
+        blocks (10);
+        sq.locateTo (0.0);
     }
 
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");

@@ -5,7 +5,7 @@ namespace rz
 {
 //==============================================================================
 void Voice::start (int padIndex, SampleData::Ptr s, const PadSettings& ps, float velocity, double hostRate, juce::uint32 order,
-                   float transposeSemitones, int noteTag)
+                   float transposeSemitones, int noteTag, double skipHostSamples)
 {
     transpose = transposeSemitones;
     tag = noteTag;
@@ -33,6 +33,21 @@ void Voice::start (int padIndex, SampleData::Ptr s, const PadSettings& ps, float
     stage = Stage::attack;
     attackInc = 1.0f / juce::jmax (1.0f, ps.attackMs.load() * 0.001f * (float) sr);
     active = len > 0;
+
+    if (skipHostSamples > 0.0 && active)
+    {
+        // jumped into the middle of the note: the sample carries on from where it would be by now
+        const double skip = skipHostSamples * baseRatio * std::pow (2.0, (double) (ps.pitch.load() + transpose) / 12.0);
+        const double regionLen = (double) (s1 - s0);
+        double into = skip;
+        if (into >= regionLen)
+        {
+            if (! loop) { stop(); return; }   // that one-shot has already finished
+            into = std::fmod (into, regionLen);
+        }
+        pos = reverse ? (double) (s1 - 1) - into : (double) s0 + into;
+        attackInc = 1.0f / juce::jmax (1.0f, 0.003f * (float) sr); // a short fade in, no click
+    }
 }
 
 void Voice::release()
@@ -225,7 +240,7 @@ bool SamplerEngine::isPadPlaying (int pad) const
     return false;
 }
 
-void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer, float transpose, int tag, bool poly)
+void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer, float transpose, int tag, bool poly, double skipHostSamples)
 {
     if (pad < 0 || pad >= numPads)
         return;
@@ -270,7 +285,7 @@ void SamplerEngine::noteOn (int pad, float velocity, bool fromSequencer, float t
                 target = &v;
     }
 
-    target->start (pad, s, ps, velocity, sampleRate, ++voiceCounter, transpose, tag);
+    target->start (pad, s, ps, velocity, sampleRate, ++voiceCounter, transpose, tag, skipHostSamples);
     hitCounter[(size_t) pad]++;
 }
 
@@ -299,6 +314,12 @@ void SamplerEngine::noteOffTag (int tag, bool force)
             if (force || ps.gate.load() || ps.loop.load())
                 v.release();
         }
+}
+
+void SamplerEngine::releaseAll()
+{
+    for (auto& v : voices)
+        v.release();
 }
 
 void SamplerEngine::allNotesOff()

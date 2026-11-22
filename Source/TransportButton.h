@@ -154,7 +154,7 @@ public:
             else if (! seq.internalPlay.load()) seq.playPattern();
         };
         pauseKey.onClick = [this] { if (seq.isPaused()) seq.resumePlayback(); else seq.pausePlayback(); };
-        stopKey.onClick = [this] { seq.stopPlayback(); if (onStop) onStop(); };
+        stopKey.onClick = [this] { seq.stopPressed(); if (onStop) onStop(); }; // once: fade out, twice: cut
         clickKey.onClick = [this] { seq.metronome = ! seq.metronome.load(); };
         clickKey.onRightClick = [this]
         {

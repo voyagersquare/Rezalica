@@ -457,12 +457,35 @@ void PianoRollEditor::mouseMove (const juce::MouseEvent& e)
     }
 }
 
+double PianoRollEditor::rulerStep (float x) const
+{
+    const double raw = juce::jlimit (0.0, juce::jmax (0.0, patternLength() - 1.0e-3), stepForX (x));
+    return snap > 0.0 ? snapFloor (raw) : raw;
+}
+
 void PianoRollEditor::mouseDown (const juce::MouseEvent& e)
 {
     grabKeyboardFocus();
     const auto p = e.position;
     dragStart = p;
     changedDuringDrag = false;
+
+    if (rulerArea().toFloat().contains (p) && e.mods.isLeftButtonDown())
+    {
+        // the playhead jumps here; when stopped, holding the mouse plays from here (scrub)
+        drag = Drag::ruler;
+        auto& sq = processor.getSequencer();
+        lastRulerStep = rulerStep (p.x);
+        sq.locateTo (lastRulerStep);
+        scrubbing = ! sq.internalPlay.load();
+        if (scrubbing)
+        {
+            sq.stopPlayback(); // (also leaves PAUSE)
+            sq.playPattern();
+        }
+        repaint();
+        return;
+    }
 
     if (keyboardArea().toFloat().contains (p))
     {
@@ -589,6 +612,18 @@ void PianoRollEditor::mouseDown (const juce::MouseEvent& e)
 void PianoRollEditor::mouseDrag (const juce::MouseEvent& e)
 {
     const auto p = e.position;
+    if (drag == Drag::ruler)
+    {
+        // scrub: every time the mouse reaches another grid step, playback jumps there
+        const double st = rulerStep (p.x);
+        if (std::abs (st - lastRulerStep) > 1.0e-6)
+        {
+            lastRulerStep = st;
+            processor.getSequencer().locateTo (st);
+            repaint();
+        }
+        return;
+    }
     const double deltaSteps = stepForX (p.x) - stepForX (dragStart.x);
     const double len = patternLength();
     const double minLen = snap > 0.0 ? juce::jmin (snap, 1.0) : (double) minNoteLength;
@@ -729,6 +764,20 @@ void PianoRollEditor::mouseDrag (const juce::MouseEvent& e)
 
 void PianoRollEditor::mouseUp (const juce::MouseEvent&)
 {
+    if (drag == Drag::ruler)
+    {
+        drag = Drag::none;
+        if (scrubbing)
+        {
+            // end of the scrub: stop and fade out (the playhead stays where the mouse let go)
+            auto& sq = processor.getSequencer();
+            sq.stopPlayback();
+            sq.stopSound = 1;
+            scrubbing = false;
+        }
+        repaint();
+        return;
+    }
     if (previewRow >= 0 && (drag == Drag::keyboard || drag == Drag::move || drag == Drag::create))
         preview (previewRow, false);
     previewRow = -1;
@@ -908,6 +957,15 @@ void PianoRollEditor::paintRuler (juce::Graphics& g)
     const float endX = xForStep (patternLength());
     g.setColour (colours::accent);
     g.fillRect (endX - 1.0f, (float) r.getY(), 2.0f, (float) r.getHeight());
+
+    // start marker: where PLAY starts (click the ruler to move it, hold + drag to scrub)
+    {
+        const float cx = xForStep (processor.getSequencer().cueSteps.load());
+        juce::Path tri;
+        tri.addTriangle (cx - 6.0f, (float) r.getY() + 2.0f, cx + 6.0f, (float) r.getY() + 2.0f, cx, (float) r.getY() + 11.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.9f));
+        g.fillPath (tri);
+    }
     g.restoreState();
 }
 
@@ -1226,7 +1284,7 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
     addAndMakeVisible (velocitySlider);
 
     infoLabel.setText ("KEYS: melodic A W S E D F T G Z H U J K = notes, Y / X = octave down / up; drums 1-4 Q-R A-F Z-V = pads   |   "
-                       "Click = note  edge = resize  right-click = delete  Ctrl+drag = copy  wheel / Ctrl = zoom  Ctrl+Z/Y C/V/D  Del",
+                       "Ruler: click = jump, hold + drag = scrub  STOP x2 = cut  |  Click = note  edge = resize  right-click = delete  Ctrl+drag = copy  wheel / Ctrl = zoom  Ctrl+Z/Y C/V/D  Del",
                        juce::dontSendNotification);
     infoLabel.setColour (juce::Label::textColourId, colours::dim);
     infoLabel.setFont (juce::FontOptions (11.0f));

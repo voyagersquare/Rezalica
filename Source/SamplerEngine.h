@@ -254,8 +254,9 @@ struct PadSettings
 class Voice
 {
 public:
+    /** skipHostSamples: start that far into the sound (a note the playback jumped into). */
     void start (int padIndex, SampleData::Ptr s, const PadSettings& ps, float velocity, double hostRate, juce::uint32 order,
-                float transposeSemitones = 0.0f, int noteTag = -1);
+                float transposeSemitones = 0.0f, int noteTag = -1, double skipHostSamples = 0.0);
     int getTag() const noexcept { return tag; }
     void release();
     void fastStop();
@@ -304,11 +305,14 @@ public:
     void syncSamples();
     /** transpose: semitones on top of the pad's pitch (piano roll / chromatic MIDI).
         tag >= 0 identifies the note for noteOffTag(); poly = several notes of this pad may sound at once. */
-    void noteOn (int pad, float velocity, bool fromSequencer, float transpose = 0.0f, int tag = -1, bool poly = false);
+    void noteOn (int pad, float velocity, bool fromSequencer, float transpose = 0.0f, int tag = -1, bool poly = false,
+                 double skipHostSamples = 0.0);
     void noteOff (int pad, bool fromSequencer);
     /** Ends the note with this tag. force: always release, else only if the pad is in gate / loop mode. */
     void noteOffTag (int tag, bool force);
     void allNotesOff();
+    /** STOP: every voice fades out with its pad's RELEASE (also one-shot samples). */
+    void releaseAll();
     /** Renders every voice into the mixer bus of its pad (buses[0] = MASTER). */
     void render (std::array<juce::AudioBuffer<float>, numBuses>& buses, int startSample, int numSamples);
     /** The mixer bus a pad plays into: its own choice, else its bank's. */

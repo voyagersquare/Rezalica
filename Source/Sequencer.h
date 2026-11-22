@@ -26,7 +26,7 @@ struct NoteClip : public juce::ReferenceCountedObject
     using Ptr = juce::ReferenceCountedObjectPtr<NoteClip>;
     enum Mode { drum = 0, melodic = 1 };
 
-    int mode = melodic;       // which part the piano roll shows / edits (both parts always play)
+    int mode = drum;          // which part the piano roll shows / edits (both parts always play)
     int targetPad = 0;        // melodic notes play this pad's sample chromatically (C3 = original pitch)
     std::vector<PianoNote> notes;
 
@@ -220,7 +220,8 @@ public:
     juce::uint32& noteIdCounter() noexcept { return nextNoteId; }
 
     //==============================================================================
-    /** Callbacks: stepHit (pad, velocity, offset), noteOn (clip mode, pad or note, velocity, offset, tag, targetPad),
+    /** Callbacks: stepHit (pad, velocity, offset), noteOn (clip mode, pad or note, velocity, offset, tag, targetPad,
+        samples already played: > 0 when the note started before the play position),
         noteOff (clip mode, row, offset, tag, targetPad). */
     template <typename StepHit, typename NoteOn, typename NoteOff>
     void process (const juce::Optional<juce::AudioPlayHead::PositionInfo>& pos, int numSamples,
@@ -251,7 +252,9 @@ public:
             // the song starts at its start marker; REC with count-in first plays 1-2 bars of clicks
             const double startAt = (songMode.load() && songLengthSteps() > 0) ? songStartPpq() : 0.0;
             const int countBars = (recording.load() || pianoRecording.load()) ? juce::jlimit (0, 4, countInBars.load()) : 0;
-            internalPpq = startAt - countBars * 4.0;
+            const bool fromCue = ! (songMode.load() && songLengthSteps() > 0);
+            internalPpq = startAt + (fromCue ? cueSteps.load() * stepLengthPpq : 0.0) - countBars * 4.0;
+            chasePending = fromCue;
             countInUntil = countBars > 0 ? startAt : -1.0e18;
             if (running && ! hostPlaying)
                 releaseAllNotes (0, noteOff);
@@ -260,6 +263,19 @@ public:
         if (hostPlaying)
             countInUntil = -1.0e18;
         wasInternal = internal;
+
+        // a click in the piano roll ruler while playing: jump there (pattern mode)
+        if (const double loc = locateRequest.exchange (-1.0); loc >= 0.0 && internal && ! hostPlaying
+            && ! (songMode.load() && songLengthSteps() > 0))
+        {
+            releaseAllNotes (0, noteOff);
+            stopSound = 1;          // what sounded fades out (also one-shot samples)
+            internalPpq = loc * stepLengthPpq;
+            countInUntil = -1.0e18;
+            lastPpqEnd = -1.0e9;
+            chasePending = true;
+            playStartMs = juce::Time::getMillisecondCounterHiRes();
+        }
 
         ppqPerSample = tempo / 60.0 / sampleRate;
 
@@ -377,7 +393,7 @@ public:
                         const double lenPpq = juce::jmin ((double) n.length, (double) len) * stepLengthPpq;
                         const int offset = toOffset (t);
                         const int tag = (int) (n.id & 0xffffff) + tagOffset; // tracks playing the same pattern get their own tags
-                        noteOn ((int) n.kind, n.row, (float) n.velocity / 127.0f, offset, tag, clip->targetPad);
+                        noteOn ((int) n.kind, n.row, (float) n.velocity / 127.0f, offset, tag, clip->targetPad, 0.0);
 
                         if (numActive < (int) active.size())
                             active[(size_t) numActive++] = { (juce::uint32) tag, t + lenPpq * 0.995, (int) n.kind, n.row, clip->targetPad };
@@ -445,6 +461,24 @@ public:
             const int pattern = currentPattern.load();
             const int len = juce::jlimit (1, maxSteps, length[(size_t) pattern].load());
             const double s = ppqStart / stepLengthPpq;
+            if (chasePending && ppqStart >= countInUntil)
+            {
+                // started / jumped into the middle of piano roll notes: they play from that point
+                chasePending = false;
+                const double at = std::fmod (std::fmod (s, (double) len) + len, (double) len);
+                if (auto* clip = audioClips[(size_t) pattern].get(); clip != nullptr)
+                    for (auto& n : clip->notes)
+                    {
+                        const double end = juce::jmin ((double) n.start + (double) n.length, (double) len);
+                        if ((double) n.start >= at - 1.0e-6 || end <= at + 1.0e-6)
+                            continue;
+                        const double into = (at - (double) n.start) * stepLengthPpq / ppqPerSample; // samples since its start
+                        const int tag = (int) (n.id & 0xffffff);
+                        noteOn ((int) n.kind, n.row, (float) n.velocity / 127.0f, 0, tag, clip->targetPad, into);
+                        if (numActive < (int) active.size())
+                            active[(size_t) numActive++] = { (juce::uint32) tag, ppqStart + (end - at) * stepLengthPpq * 0.995, (int) n.kind, n.row, clip->targetPad };
+                    }
+            }
             patternPosSteps = (float) std::fmod (std::fmod (s, (double) len) + len, (double) len);
             songPosStep = -1;
             songPosPpq = -1.0f;
@@ -780,6 +814,38 @@ public:
     /** PLAY SONG of the SCENE window. */
     void playSong() { paused = false; resumeFromPause = false; songMode = true; restartRequested = true; internalPlay = true; }
     void stopPlayback() { paused = false; resumeFromPause = false; internalPlay = false; }
+
+    /** The STOP key / space bar. Once: the sequencer stops and what sounds fades out with each pad's
+        RELEASE. Twice quickly (like an MPC): everything is cut at once, effect tails too. */
+    static constexpr juce::uint32 doubleStopMs = 450;
+    void stopPressed()
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        const bool second = now - lastStopMs < doubleStopMs;
+        lastStopMs = now;
+        stopPlayback();
+        if (second)
+        {
+            stopSound = 2;
+            ++hardStops;
+        }
+        else if (stopSound.load() != 2)
+            stopSound = 1;
+    }
+    /** True right after a STOP: a second press of the space bar is then a hard stop, not PLAY. */
+    bool justStopped() const { return juce::Time::getMillisecondCounter() - lastStopMs < doubleStopMs; }
+    std::atomic<int> stopSound { 0 };   // 1 = release what sounds, 2 = cut it (the processor takes it)
+    std::atomic<int> hardStops { 0 };   // counts double-STOPs (the editor then clears the effect tails)
+
+    /** Piano roll ruler: where PLAY starts in the pattern (steps), and a jump while playing. */
+    std::atomic<double> cueSteps { 0.0 };
+    void locateTo (double steps)
+    {
+        steps = juce::jmax (0.0, steps);
+        cueSteps = steps;
+        if (internalPlay.load()) locateRequest = steps;
+    }
+    std::atomic<double> locateRequest { -1.0 };
     /** PAUSE: stops, the next PLAY carries on from the same place. */
     void pausePlayback()
     {
@@ -796,7 +862,12 @@ public:
     }
     bool isPaused() const { return paused.load(); }
     /** Space bar / PLAY button toggle for the sampler. */
-    void togglePatternPlay() { if (internalPlay.load()) stopPlayback(); else if (paused.load()) resumePlayback(); else playPattern(); }
+    void togglePatternPlay()
+    {
+        if (internalPlay.load() || justStopped()) stopPressed(); // the second tap = hard stop
+        else if (paused.load()) resumePlayback();
+        else playPattern();
+    }
     bool isPlayingSong() const { return internalPlay.load() && songMode.load() && songLengthSteps() > 0; }
     bool isPlayingPattern() const { return internalPlay.load() && ! isPlayingSong(); }
     std::atomic<int> songPosStep { -1 };
@@ -890,6 +961,8 @@ private:
     double sampleRate = 44100.0;
     double internalPpq = 0.0, blockPpq = 0.0, ppqPerSample = 0.0, lastPpqEnd = -1.0e9;
     double countInUntil = -1.0e18; // ppq where the count-in ends
+    bool chasePending = false;     // audio thread: start the notes that span the play position
+    juce::uint32 lastStopMs = 0;   // message thread: for the double STOP
     bool running = false, wasInternal = false;
 };
 } // namespace rz

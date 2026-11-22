@@ -64,7 +64,7 @@ public:
 
 private:
     ComputerKeyboard computerKeys; // play (and record) from the computer keyboard
-    enum class Drag { none, create, move, resizeLeft, resizeRight, rubberBand, erase, velocity, keyboard };
+    enum class Drag { none, create, move, resizeLeft, resizeRight, rubberBand, erase, velocity, keyboard, ruler };
     static constexpr int keyboardWidth = 96, rulerHeight = 22, velocityHeight = 72, scrollSize = 12;
 
     // geometry
@@ -79,7 +79,10 @@ private:
     int lastPlayheadX = -1;
     juce::VBlankAttachment playheadVBlank { this, [this]
     {
-        const double ph = processor.getSequencer().getPlayPositionSteps();
+        auto& sq = processor.getSequencer();
+        double ph = sq.getPlayPositionSteps();
+        if (ph < 0.0 && sq.cueSteps.load() > 0.0)
+            ph = sq.cueSteps.load(); // stopped: the playhead waits where PLAY will start
         const int x = ph >= 0.0 ? (int) xForStep (ph) : -1;
         if (x == lastPlayheadX) return;
         if (lastPlayheadX >= 0) repaint (lastPlayheadX - 2, 0, 5, getHeight());
@@ -129,6 +132,10 @@ private:
     int rowHeight = 16;
 
     Drag drag = Drag::none;
+    // ruler: click = move the playhead there (PLAY starts there), hold + drag = scrub (plays while held)
+    bool scrubbing = false;
+    double lastRulerStep = -1.0;
+    double rulerStep (float x) const;
     juce::Point<float> dragStart;
     std::vector<PianoNote> dragOriginal;  // selected notes when the drag started
     juce::Rectangle<float> rubber;
@@ -148,11 +155,11 @@ class PianoRollPanel : public juce::Component,
 public:
     explicit PianoRollPanel (RezalicaProcessor& p);
     ~PianoRollPanel() override;
-    /** The piano roll opens in melodic mode. */
+    /** The piano roll opens in DRUMS mode (MELODIC is one click away). */
     void focusEditor() { editor.grabKeyboardFocus(); }
     bool forwardKeyPressed (const juce::KeyPress& k) { return editor.keyPressed (k); }
     bool forwardKeyState (bool down) { return editor.keyStateChanged (down); }
-    void showMelodic() { editor.refreshFromSequencer(); editor.setViewMode (NoteClip::melodic); syncControls(); }
+    void showDrums() { editor.refreshFromSequencer(); editor.setViewMode (NoteClip::drum); syncControls(); }
     void paint (juce::Graphics&) override;
     void resized() override;
 

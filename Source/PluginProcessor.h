@@ -161,6 +161,8 @@ public:
 
     void triggerPadFromUi (int pad, float velocity, bool isNoteOn);
     void stopAll() { triggerPadFromUi (-1, 0.0f, false); }
+    /** After a double STOP: effect plug-ins forget their tails (reverb, delay ...). Message thread. */
+    void clearEffectTails();
     /** Plays the pad transposed (piano roll keyboard / note preview). */
     void previewNoteFromUi (int pad, float velocity, float transpose, bool isNoteOn, bool recordIt = false);
 
@@ -260,6 +262,7 @@ private:
         float transpose = 0.0f;
         int tag = -1;
         bool flag = false; // evOnTag: polyphonic, evOffTag: force release
+        double skip = 0.0; // evOnTag: samples of the note already played (the playback jumped into it)
     };
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
@@ -284,7 +287,7 @@ private:
     void prepareManualSource();
     float snapToZeroCrossing (float normalisedPosition) const;
     void addEvent (int offset, int type, int pad, float velocity);
-    void addTaggedEvent (int offset, int type, int pad, float velocity, float transpose, int tag, bool flag);
+    void addTaggedEvent (int offset, int type, int pad, float velocity, float transpose, int tag, bool flag, double skip = 0.0);
     rz::FxChain::Params readFxParams (int pad, bool padSounding) const;
 
     juce::AudioProcessorValueTreeState apvts;

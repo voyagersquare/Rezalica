@@ -101,10 +101,21 @@ void RezalicaProcessor::addEvent (int offset, int type, int pad, float velocity)
         events[(size_t) numEvents++] = { offset, type, pad, velocity };
 }
 
-void RezalicaProcessor::addTaggedEvent (int offset, int type, int pad, float velocity, float transpose, int tag, bool flag)
+void RezalicaProcessor::addTaggedEvent (int offset, int type, int pad, float velocity, float transpose, int tag, bool flag, double skip)
 {
     if (numEvents < (int) events.size())
-        events[(size_t) numEvents++] = { offset, type, pad, velocity, transpose, tag, flag };
+        events[(size_t) numEvents++] = { offset, type, pad, velocity, transpose, tag, flag, skip };
+}
+
+void RezalicaProcessor::clearEffectTails()
+{
+    for (auto& bus : buses)
+    {
+        const juce::SpinLock::ScopedLockType sl (bus.lock); // the audio thread skips the slots meanwhile
+        for (auto& slot : bus.slots)
+            if (slot.owned != nullptr)
+                slot.owned->reset();
+    }
 }
 
 bool RezalicaProcessor::collectRecordedPianoNotes()
@@ -226,17 +237,28 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             addEvent (offset, evOnSeq, pad, vel);
             pendingSeqOff[(size_t) pad] = offset + sequencer.getSamplesPerStep() * 0.98;
         },
-        [&] (int mode, int row, float vel, int offset, int tag, int targetPad)   // piano roll note on
+        [&] (int mode, int row, float vel, int offset, int tag, int targetPad, double skip)   // piano roll note on
         {
             if (mode == rz::NoteClip::melodic)
-                addTaggedEvent (offset, evOnTag, targetPad, vel, (float) (row - 60), tag, true);
+                addTaggedEvent (offset, evOnTag, targetPad, vel, (float) (row - 60), tag, true, skip);
             else if (row >= 0 && row < rz::numPads)
-                addTaggedEvent (offset, evOnTag, row, vel, 0.0f, tag, false);
+                addTaggedEvent (offset, evOnTag, row, vel, 0.0f, tag, false, skip);
         },
         [&] (int mode, int, int offset, int tag, int)              // piano roll note off
         {
             addTaggedEvent (offset, evOffTag, -1, 0.0f, 0.0f, tag, mode == rz::NoteClip::melodic);
         });
+
+    // STOP once: what sounds fades out with each pad's RELEASE; twice: cut at once (+ the metronome click)
+    if (const int stopKind = sequencer.stopSound.exchange (0); stopKind == 2)
+    {
+        engine.allNotesOff();
+        clickSamplesLeft = 0;
+    }
+    else if (stopKind == 1)
+    {
+        engine.releaseAll();
+    }
 
     if (sequencer.justRestarted)
     {
@@ -374,7 +396,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             case evOnTag:
                 if (lazyActive.load() && e.tag >= rz::Sequencer::midiTagBase)
                     break;
-                engine.noteOn (e.pad, e.velocity, e.tag < rz::Sequencer::midiTagBase, e.transpose, e.tag, e.flag);
+                engine.noteOn (e.pad, e.velocity, e.tag < rz::Sequencer::midiTagBase, e.transpose, e.tag, e.flag, e.skip);
                 break;
             case evOn:
                 if (padChoiceArmed.load())
