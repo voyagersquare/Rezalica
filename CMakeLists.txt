@@ -4,6 +4,9 @@ project(Rezalica VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# static MSVC runtime: Rezalica.exe runs on a fresh Windows without the Visual C++ redistributable
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 # Optional: point to a local JUCE checkout with -DREZALICA_JUCE_PATH=...,
 # otherwise JUCE is downloaded automatically.
 set(REZALICA_JUCE_PATH "" CACHE PATH "Path to a local JUCE checkout (optional)")
@@ -25,6 +28,8 @@ juce_add_plugin(Rezalica
     PLUGIN_CODE Rz16
     FORMATS VST3 Standalone
     PRODUCT_NAME "Rezalica"
+    ICON_BIG Resources/RezalicaAppIcon.png       # program icon (exe, desktop shortcut, taskbar)
+    ICON_SMALL Resources/RezalicaAppIcon.png
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
