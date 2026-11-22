@@ -144,7 +144,8 @@ void SequencerGrid::paint (juce::Graphics& g)
     auto& seq = processor.getSequencer();
     const int pattern = seq.currentPattern.load();
     const int steps = numSteps();
-    const int current = seq.currentStep.load();
+    const double heard = seq.getPlayPositionSteps(); // the step you hear now (not the one being computed)
+    const int current = heard >= 0.0 ? juce::jmin (steps - 1, (int) std::floor (heard)) : -1;
     const float rowH = (float) getHeight() / (float) padsPerBank;
     const int bankBase = processor.currentBank.load() * padsPerBank;
 
@@ -466,7 +467,8 @@ void SequencerPanel::timerCallback()
     followButton.setVisible (pages > 1);
     int first = grid.getFirstStep();
     if (first >= steps) first = 0;
-    const int cur = processor.getSequencer().currentStep.load();
+    const double heard = processor.getSequencer().getPlayPositionSteps();
+    const int cur = heard >= 0.0 ? (int) std::floor (heard) : -1;
     if (followButton.getToggleState() && cur >= 0)
         first = (cur / SequencerGrid::stepsPerPage) * SequencerGrid::stepsPerPage;
     grid.setFirstStep (pages > 1 ? first : 0);

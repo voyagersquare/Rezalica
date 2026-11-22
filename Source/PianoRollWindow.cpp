@@ -1051,11 +1051,11 @@ void PianoRollEditor::paintNotes (juce::Graphics& g)
     }
 
     // playhead
-    const double ph = processor.getSequencer().getPlayPositionSteps();
-    if (ph >= 0.0)
+    // (drawn where the v-blank callback last put it, so the strip it repaints always matches)
+    if (lastPlayheadX >= 0)
     {
         g.setColour (juce::Colours::white.withAlpha (0.8f));
-        g.drawVerticalLine ((int) xForStep (ph), (float) a.getY(), (float) a.getBottom());
+        g.drawVerticalLine (lastPlayheadX, (float) a.getY(), (float) a.getBottom());
     }
 
     if (! rubber.isEmpty())

@@ -737,6 +737,11 @@ void RezalicaEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void RezalicaEditor::timerCallback()
 {
+    // the sound card's output delay (driver latency + one buffer): the playheads show what is heard
+    if (isStandalone && ++latencyPoll % 15 == 0)
+        if (auto* holder = juce::StandalonePluginHolder::getInstance())
+            if (auto* dev = holder->deviceManager.getCurrentAudioDevice())
+                processor.deviceOutputLatencySamples = juce::jmax (0, dev->getOutputLatencyInSamples()) + juce::jmax (0, dev->getCurrentBufferSizeSamples());
     for (int i = 0; i < rz::numPads; ++i)
     {
         const int h = processor.getEngine().hitCounter[(size_t) i].load();

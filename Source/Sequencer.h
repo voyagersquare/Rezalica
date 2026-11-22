@@ -247,6 +247,7 @@ public:
         else if ((internal && ! wasInternal) || restart)
         {
             justRestarted = internal;
+            playStartMs = juce::Time::getMillisecondCounterHiRes();
             // the song starts at its start marker; REC with count-in first plays 1-2 bars of clicks
             const double startAt = (songMode.load() && songLengthSteps() > 0) ? songStartPpq() : 0.0;
             const int countBars = (recording.load() || pianoRecording.load()) ? juce::jlimit (0, 4, countInBars.load()) : 0;
@@ -450,6 +451,9 @@ public:
             renderRange (pattern, 0.0, true, ppqStart, ppqEnd, 0);
         }
 
+        positionStampMs = juce::Time::getMillisecondCounterHiRes();
+        stepsPerMs = (float) (tempo / 60000.0 / stepLengthPpq);
+
         // note-offs of notes that start and end inside this block
         for (int i = 0; i < numActive;)
         {
@@ -542,10 +546,29 @@ public:
     double getSamplesPerStep() const noexcept { return ppqPerSample > 0.0 ? stepLengthPpq / ppqPerSample : sampleRate * 0.125; }
     bool isRunning() const noexcept { return running; }
     /** Play position inside the current pattern, in steps (for the piano roll playhead), -1 when stopped. */
+    /** Where the music is that you HEAR right now, in steps of the current pattern: the audio thread's
+        position moved on by the time since that block, minus the delay to the speakers (plug-ins + sound card).
+        Smooth (not only once per audio block) and in time with the metronome you hear. */
     double getPlayPositionSteps() const noexcept
     {
-        return running ? (double) patternPosSteps.load() : -1.0;
+        if (! running)
+            return -1.0;
+        const double p = (double) patternPosSteps.load();
+        if (p < 0.0)
+            return p;
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        const double latencyMs = (double) displayLatencySamples.load() / juce::jmax (1.0, sampleRate) * 1000.0;
+        if (now - playStartMs.load() < latencyMs)
+            return p; // the first notes are still on their way to the speakers
+        const double elapsed = juce::jlimit (0.0, 200.0, now - positionStampMs.load()); // a stalled audio thread: don't run away
+        double pos = p + (double) stepsPerMs.load() * (elapsed - latencyMs);
+        const int len = juce::jlimit (1, maxSteps, length[(size_t) juce::jlimit (0, numPatterns - 1, currentPattern.load())].load());
+        if (songPosPpq.load() >= 0.0f)
+            return juce::jlimit (0.0, (double) len, pos); // SONG: the position inside this song step's pattern
+        pos = std::fmod (pos, (double) len);
+        return pos < 0.0 ? pos + len : pos;
     }
+    std::atomic<int> displayLatencySamples { 0 };
 
     //==============================================================================
     // SONG: the scene has up to 4 tracks of 128 pattern slots (the tracks play at the same time,
@@ -845,6 +868,8 @@ private:
     std::array<std::array<std::atomic<juce::int8>, slotsPerScene>, numTracks> sceneSlots;
     std::array<std::array<std::atomic<juce::int8>, maxSongSteps>, numTracks> songSteps;
     std::atomic<float> patternPosSteps { -1.0f };
+    std::atomic<double> positionStampMs { 0.0 }, playStartMs { 0.0 }; // when patternPosSteps was computed / playback started
+    std::atomic<float> stepsPerMs { 0.0f };
 
     // piano roll clips: message thread side (guarded) and the audio thread's copy
     mutable juce::SpinLock clipLock;

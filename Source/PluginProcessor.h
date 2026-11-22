@@ -217,6 +217,9 @@ public:
     /** Monitor: the input is heard while sampling. Through a bus: the input goes through that bus's
         effects (and is recorded with them). -1 = straight. */
     std::atomic<bool> monitorInput { false };
+    /** Delay of the mixer's plug-ins (compensated, set by the audio thread) and of the sound card's
+        output (set by the standalone app): the playhead shows what is heard, not what is computed. */
+    std::atomic<int> pluginLatencySamples { 0 }, deviceOutputLatencySamples { 0 };
     /** SP style: REC pressed, the pads blink, the next pad hit gets the take (started by the editor). */
     std::atomic<bool> padChoiceArmed { false };
     RecordOptions armedRecordOptions;
@@ -326,6 +329,9 @@ private:
     rz::AudioRecorder recorder;
     rz::LoopbackCapture loopback;
     int clickSamplesLeft = 0, clickLength = 1;
+    juce::AudioBuffer<float> clickBuffer;          // the metronome, delayed like the mixer's plug-ins
+    rz::LatencyDelay clickDelay;
+    static constexpr int maxCompensation = 1 << 16; // samples of plug-in delay that can be compensated
     double clickPhase = 0.0, clickFreq = 1000.0;
     rz::SampleData::Ptr previewData;
     juce::AudioBuffer<float> pendingTake;

@@ -87,6 +87,10 @@ void RezalicaProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     masterFx.prepare (sampleRate, juce::jmax (1, samplesPerBlock));
     clickLength = juce::jmax (1, (int) (sampleRate * 0.035));
     clickSamplesLeft = 0;
+    clickBuffer.setSize (1, juce::jmax (1, samplesPerBlock));
+    clickDelay.prepare (maxCompensation);
+    for (auto& bus : buses)
+        bus.compensation.prepare (maxCompensation);
     pendingSeqOff.fill (-1.0);
 }
 
@@ -409,11 +413,35 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     bool anySolo = false;
     for (int bi = 1; bi < rz::numBuses; ++bi) anySolo = anySolo || buses[(size_t) bi].solo.load();
     auto& masterBus = busBuffers[0];
+
+    // plug-in delay compensation: every bus (and the pads that go straight to MASTER) is delayed
+    // to the slowest bus, and the metronome by that plus the MASTER plug-ins, so everything stays in time
+    for (int bi = 0; bi < rz::numBuses; ++bi)
+    {
+        auto& bus = buses[(size_t) bi];
+        const juce::SpinLock::ScopedTryLockType tl (bus.lock);
+        if (! tl.isLocked()) continue; // keep the last value while the slots change
+        int lat = 0;
+        for (auto& slot : bus.slots)
+            if (slot.live != nullptr && ! slot.bypass.load())
+                lat += juce::jmax (0, slot.live->getLatencySamples());
+        bus.latency = lat;
+    }
+    int busLatency = 0;
+    for (int bi = 1; bi < rz::numBuses; ++bi)
+        busLatency = juce::jmax (busLatency, buses[(size_t) bi].latency);
+    busLatency = juce::jmin (busLatency, maxCompensation - 1);
+    const int totalLatency = juce::jmin (maxCompensation - 1, busLatency + buses[0].latency);
+    pluginLatencySamples = totalLatency;
+    sequencer.displayLatencySamples = totalLatency + deviceOutputLatencySamples.load();
+    buses[0].compensation.process (masterBus.getArrayOfWritePointers(), 2, numSamples, busLatency);
+
     for (int bi = 1; bi < rz::numBuses; ++bi)
     {
         auto& bus = buses[(size_t) bi];
         auto& data = busBuffers[(size_t) bi];
         processBusChain (bi, numSamples);
+        bus.compensation.process (data.getArrayOfWritePointers(), 2, numSamples, busLatency - bus.latency);
         if (bi == throughBus && inputCopyChannels > 0)
             recorder.capture (rz::AudioRecorder::input, data.getArrayOfReadPointers(), 2, numSamples); // with the bus effects
         const bool silent = bus.mute.load() || (anySolo && ! bus.solo.load());
@@ -443,9 +471,14 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         for (int ch = 0; ch < outChannels; ++ch)
             buffer.addFrom (ch, 0, inputCopy, ch, 0, numSamples);
 
+    // metronome: rendered on its own, then delayed like the music (plug-in delay compensation)
+    if (clickBuffer.getNumSamples() < numSamples)
+        clickBuffer.setSize (1, numSamples, false, false, true); // only if the host sends a bigger block than promised
+    clickBuffer.clear (0, 0, numSamples);
     if (sequencer.numClicks > 0 || clickSamplesLeft > 0)
     {
         const float level = juce::jlimit (0.0f, 1.0f, sequencer.metronomeLevel.load()) * 0.5f;
+        auto* cb = clickBuffer.getWritePointer (0);
         int ci = 0;
         for (int i = 0; i < numSamples; ++i)
         {
@@ -458,12 +491,16 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             }
             if (clickSamplesLeft <= 0) continue;
             const float env = (float) clickSamplesLeft / (float) clickLength;
-            const float v = (float) std::sin (clickPhase) * env * env * level;
+            cb[i] = (float) std::sin (clickPhase) * env * env * level;
             clickPhase += juce::MathConstants<double>::twoPi * clickFreq / currentSampleRate;
             --clickSamplesLeft;
-            for (int ch = 0; ch < outChannels; ++ch)
-                buffer.addSample (ch, i, v);
         }
+    }
+    {
+        float* ch[2] = { clickBuffer.getWritePointer (0), clickBuffer.getWritePointer (0) };
+        clickDelay.process (ch, 1, numSamples, totalLatency);
+        for (int c = 0; c < outChannels; ++c)
+            buffer.addFrom (c, 0, clickBuffer, 0, 0, numSamples);
     }
 }
 
@@ -1440,14 +1477,20 @@ juce::AudioBuffer<float> RezalicaProcessor::renderSong (double sr, double tailSe
     juce::AudioBuffer<float> out (2, totalSamples);
     juce::AudioBuffer<float> buf (2, block);
     juce::MidiBuffer noMidi;
-    for (int pos = 0; pos < totalSamples; pos += block)
+    // the mixer's plug-ins delay everything by the same (compensated) amount: drop that from the start
+    int skip = -1, written = 0;
+    for (long long pos = 0; written < totalSamples; pos += block)
     {
-        const int n = juce::jmin (block, totalSamples - pos);
-        juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+        juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, block);
         offline.processBlock (sub, noMidi);
         noMidi.clear();
-        for (int ch = 0; ch < 2; ++ch)
-            out.copyFrom (ch, pos, sub, ch, 0, n);
+        if (skip < 0)
+            skip = juce::jmax (0, offline.pluginLatencySamples.load());
+        const int from = (int) juce::jlimit ((long long) 0, (long long) block, (long long) skip - pos); // first sample of this block to keep
+        const int n = juce::jmin (block - from, totalSamples - written);
+        for (int ch = 0; ch < 2 && n > 0; ++ch)
+            out.copyFrom (ch, written, sub, ch, from, n);
+        written += juce::jmax (0, n);
     }
     return out;
 }

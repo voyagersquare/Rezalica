@@ -1909,6 +1909,160 @@ int main (int argc, char** argv)
 
     file.deleteFile();
     longFile.deleteFile();
+    {
+        // timing: a step on every beat must sound exactly with the metronome click (sample-accurate),
+        // also with odd block sizes and with a piano roll note
+        auto clickFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_timing.wav");
+        {
+            juce::AudioBuffer<float> b (1, 4800);
+            b.clear();
+            for (int i = 0; i < 200; ++i) b.setSample (0, i, 0.9f);
+            juce::WavAudioFormat wav;
+            clickFile.deleteFile();
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (clickFile), 48000, 1, 24, {}, 0));
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+        }
+        for (int blockSize : { 512, 441, 1024 })
+        {
+            RezalicaProcessor t;
+            t.prepareToPlay (48000.0, blockSize);
+            t.loadFileToPad (0, clickFile);
+            auto& sq = t.getSequencer();
+            sq.bpm = 96.0f;
+            const int spb = 30000; // samples per beat at 96 BPM / 48 kHz
+            auto run = [&] (bool steps, bool metro, bool note)
+            {
+                for (int st = 0; st < 32; ++st) sq.setStep (0, 0, st, steps && st % 4 == 0 ? 127 : 0);
+                sq.metronome = metro;
+                sq.metronomeLevel = 1.0f;
+                rz::NoteClip::Ptr clip = new rz::NoteClip();
+                clip->mode = rz::NoteClip::drum;
+                if (note)
+                {
+                    rz::PianoNote n; n.id = sq.newNoteId(); n.kind = rz::NoteClip::drum; n.row = 0; n.start = 8.0f; n.length = 1.0f; n.velocity = 127;
+                    clip->notes = { n };
+                }
+                sq.setClip (0, clip);
+                std::vector<int> onsets;
+                juce::AudioBuffer<float> buf (2, blockSize);
+                long long pos = 0;
+                bool above = false;
+                sq.internalPlay = true;
+                while (pos < 4LL * spb)
+                {
+                    buf.clear();
+                    juce::MidiBuffer m;
+                    t.processBlock (buf, m);
+                    for (int i = 0; i < blockSize; ++i)
+                    {
+                        const bool a = std::abs (buf.getSample (0, i)) > 0.05f;
+                        if (a && ! above) onsets.push_back ((int) (pos + i));
+                        above = a;
+                        if (! a && std::abs (buf.getSample (0, i)) < 0.001f) above = false;
+                    }
+                    pos += blockSize;
+                }
+                sq.internalPlay = false;
+                juce::AudioBuffer<float> flush (2, blockSize);
+                for (int k = 0; k < 20; ++k) { juce::MidiBuffer m; t.processBlock (flush, m); }
+                return onsets;
+            };
+            auto pads = run (true, false, false);
+            auto clicks = run (false, true, false);
+            auto notes = run (false, false, true);
+            auto first = [] (const std::vector<int>& v, int from) { for (int x : v) if (x >= from) return x; return -1; };
+            const int padBeat2 = first (pads, spb / 2), clickBeat2 = first (clicks, spb / 2), noteAt = first (notes, 0);
+            std::cout << "  block " << blockSize << ": pad beat 2 at " << padBeat2 << ", click beat 2 at " << clickBeat2
+                      << ", piano roll note (step 8) at " << noteAt << " (expected " << spb << " / " << 2 * spb << ")\n";
+            check (std::abs (padBeat2 - spb) <= 2 && std::abs (clickBeat2 - spb) <= 2, "step and metronome click on the same sample");
+            check (std::abs (noteAt - 2 * spb) <= 2, "piano roll note exactly on its beat");
+        }
+    }
+
+    {
+        // plug-in delay compensation: an effect with 1000 samples of latency on BUS A or MASTER
+        // must not pull the pads out of time with the metronome or with the pads on other buses
+        struct Late : public juce::AudioProcessor
+        {
+            Late() : juce::AudioProcessor (BusesProperties().withInput ("In", juce::AudioChannelSet::stereo()).withOutput ("Out", juce::AudioChannelSet::stereo()))
+            { setLatencySamples (1000); }
+            juce::AudioBuffer<float> line { 2, 1000 };
+            int pos = 0;
+            const juce::String getName() const override { return "Late"; }
+            void prepareToPlay (double, int) override { line.clear(); pos = 0; }
+            void releaseResources() override {}
+            void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer&) override
+            {
+                for (int i = 0; i < b.getNumSamples(); ++i)
+                {
+                    for (int ch = 0; ch < 2; ++ch)
+                    {
+                        const float in = b.getSample (ch, i);
+                        b.setSample (ch, i, line.getSample (ch, pos));
+                        line.setSample (ch, pos, in);
+                    }
+                    pos = (pos + 1) % 1000;
+                }
+            }
+            double getTailLengthSeconds() const override { return 0.0; }
+            bool acceptsMidi() const override { return false; }
+            bool producesMidi() const override { return false; }
+            juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+            bool hasEditor() const override { return false; }
+            int getNumPrograms() override { return 1; }
+            int getCurrentProgram() override { return 0; }
+            void setCurrentProgram (int) override {}
+            const juce::String getProgramName (int) override { return {}; }
+            void changeProgramName (int, const juce::String&) override {}
+            void getStateInformation (juce::MemoryBlock&) override {}
+            void setStateInformation (const void*, int) override {}
+        };
+        auto clickFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_timing.wav");
+        for (int where : { 1, 0 })
+        {
+            auto tp = std::make_unique<RezalicaProcessor> (false);
+            auto& t = *tp;
+            t.prepareToPlay (48000.0, 512);
+            t.loadFileToPad (0, clickFile);
+            t.loadFileToPad (1, clickFile);
+            t.getEngine().getPad (0).outputBus = 1;   // pad A1 -> BUS A
+            t.getEngine().getPad (1).outputBus = 2;   // pad A2 -> BUS B (no effect)
+            t.setSlotProcessor (where, 0, std::make_unique<Late>(), nullptr);
+            auto& sq = t.getSequencer();
+            sq.bpm = 96.0f;
+            const int spb = 30000;
+            auto firstOnset = [&] (int pad, bool metro)
+            {
+                for (int p2 = 0; p2 < 2; ++p2)
+                    for (int st = 0; st < 32; ++st) sq.setStep (0, p2, st, p2 == pad && st % 4 == 0 ? 127 : 0);
+                sq.metronome = metro;
+                sq.metronomeLevel = 1.0f;
+                juce::AudioBuffer<float> buf (2, 512);
+                long long pos = 0;
+                int found = -1;
+                sq.internalPlay = true;
+                while (pos < 2LL * spb && found < 0)
+                {
+                    juce::MidiBuffer m;
+                    buf.clear();
+                    t.processBlock (buf, m);
+                    for (int i = 0; i < 512 && found < 0; ++i)
+                        if (pos + i > spb / 2 && std::abs (buf.getSample (0, i)) > 0.05f) found = (int) (pos + i);
+                    pos += 512;
+                }
+                sq.internalPlay = false;
+                juce::AudioBuffer<float> flush (2, 512);
+                for (int k = 0; k < 120; ++k) { juce::MidiBuffer m; flush.clear(); t.processBlock (flush, m); }
+                return found;
+            };
+            const int a = firstOnset (0, false), b = firstOnset (1, false), c = firstOnset (-1, true);
+            std::cout << "  latency 1000 on " << (where == 0 ? "MASTER" : "BUS A") << ": BUS A pad " << a << ", BUS B pad " << b
+                      << ", click " << c << " (reported " << t.pluginLatencySamples.load() << ")\n";
+            check (std::abs (a - (spb + 1000)) <= 2 && std::abs (b - a) <= 2 && std::abs (c - a) <= 2,
+                   where == 0 ? "MASTER plug-in delay: pads and metronome stay together" : "BUS A plug-in delay: other buses and metronome wait for it");
+        }
+    }
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

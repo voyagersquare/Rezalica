@@ -17,6 +17,38 @@ struct MixerSlot
     juce::MidiBuffer midi;
 };
 
+/** A fixed delay for plug-in delay compensation: the audio comes out 'delay' samples later.
+    It always records, so a change of the delay does not lose what came before. */
+struct LatencyDelay
+{
+    juce::AudioBuffer<float> line;
+    int pos = 0;
+
+    void prepare (int maxDelay)
+    {
+        line.setSize (2, juce::jmax (2, maxDelay + 1));
+        line.clear();
+        pos = 0;
+    }
+
+    void process (float* const* data, int numChannels, int numSamples, int delay)
+    {
+        const int size = line.getNumSamples();
+        delay = juce::jlimit (0, size - 1, delay);
+        const int chans = juce::jmin (2, numChannels);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const int rd = (pos - delay + size) % size;
+            for (int ch = 0; ch < chans; ++ch)
+            {
+                line.setSample (ch, pos, data[ch][i]);
+                data[ch][i] = line.getSample (ch, rd);
+            }
+            pos = (pos + 1) % size;
+        }
+    }
+};
+
 /** BUS A-D and MASTER: 4 effect slots, a fader, mute / solo and a level meter. */
 struct MixerBus
 {
@@ -27,6 +59,8 @@ struct MixerBus
     float lastGain = 1.0f;
     std::array<MixerSlot, numSlots> slots;
     juce::SpinLock lock;
+    int latency = 0;          // audio thread: the delay of its active plug-ins (samples)
+    LatencyDelay compensation; // audio thread: lines this bus up with the slowest one
 };
 
 inline juce::String busName (int bus) { return bus == 0 ? juce::String ("MASTER") : "BUS " + juce::String::charToString ((juce::juce_wchar) ('A' + bus - 1)); }

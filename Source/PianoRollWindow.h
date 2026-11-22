@@ -75,6 +75,17 @@ private:
     int numRows() const;                 // 64 pads or 128 notes
     int rowForDisplay (int displayIndex) const;
     int displayForRow (int row) const;
+    // the playhead line moves at the screen's refresh rate (only its thin strip is repainted)
+    int lastPlayheadX = -1;
+    juce::VBlankAttachment playheadVBlank { this, [this]
+    {
+        const double ph = processor.getSequencer().getPlayPositionSteps();
+        const int x = ph >= 0.0 ? (int) xForStep (ph) : -1;
+        if (x == lastPlayheadX) return;
+        if (lastPlayheadX >= 0) repaint (lastPlayheadX - 2, 0, 5, getHeight());
+        if (x >= 0) repaint (x - 2, 0, 5, getHeight());
+        lastPlayheadX = x;
+    } };
     float xForStep (double step) const;
     double stepForX (float x) const;
     float yForRow (int row) const;
