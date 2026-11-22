@@ -70,7 +70,7 @@ else()
 endif()
 
 # the logo font (Press Start 2P, SIL Open Font License - see Resources/PressStart2P-OFL.txt)
-juce_add_binary_data(RezalicaData SOURCES Resources/PressStart2P-Regular.ttf)
+juce_add_binary_data(RezalicaData SOURCES Resources/PressStart2P-Regular.ttf Resources/RezalicaIcon.png)
 
 target_link_libraries(Rezalica
     PRIVATE

@@ -78,6 +78,7 @@ private:
     bool titleButtonsDone = false;
     int transportCentreY = 0;                          // project tempo: red LED display, drag / wheel / double-click
     juce::Rectangle<int> logoArea;
+    static constexpr int logoIconSize = 50;
     juce::Image faceplate;                             // brushed silver texture, rendered on resize
     void renderFaceplate();
     bool shouldDropFilesWhenDraggedExternally (const juce::DragAndDropTarget::SourceDetails&, juce::StringArray&, bool&) override;

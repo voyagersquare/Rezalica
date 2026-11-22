@@ -1625,13 +1625,21 @@ void RezalicaEditor::paint (juce::Graphics& g)
         }
     };
 
-    // logo: pixel font, pressed into the faceplate (a light edge under the dark letters)
+    // logo: the saw-and-waveform icon on the far left, then the name in the pixel font,
+    // pressed into the faceplate (a light edge under the dark letters)
     {
+        static const juce::Image icon = juce::ImageCache::getFromMemory (BinaryData::RezalicaIcon_png, BinaryData::RezalicaIcon_pngSize);
+        auto iconBox = logoArea.withWidth (logoIconSize).withSizeKeepingCentre (logoIconSize, logoIconSize).toFloat();
+        g.setColour (juce::Colours::black.withAlpha (0.25f));
+        g.fillRoundedRectangle (iconBox.translated (0.0f, 2.0f), logoIconSize * 0.23f);
+        g.setOpacity (1.0f); // drawImage uses the current colour's alpha
+        g.drawImage (icon, iconBox, juce::RectanglePlacement::stretchToFit);
+
         static const juce::Typeface::Ptr pixelFont = juce::Typeface::createSystemTypefaceFor (BinaryData::PressStart2PRegular_ttf,
                                                                                              BinaryData::PressStart2PRegular_ttfSize);
-        auto area = logoArea.withHeight (44).translated (2, 2).toFloat();
-        juce::Font f { juce::FontOptions (pixelFont).withHeight (21.0f) };
-        while (f.getHeight() > 10.0f && juce::GlyphArrangement::getStringWidth (f, "REZALICA") > area.getWidth() - 4.0f)
+        auto area = logoArea.withTrimmedLeft (logoIconSize + 10).withSizeKeepingCentre (logoArea.getWidth() - logoIconSize - 10, 32).toFloat();
+        juce::Font f { juce::FontOptions (pixelFont).withHeight (17.0f) };
+        while (f.getHeight() > 10.0f && juce::GlyphArrangement::getStringWidth (f, "REZALICA") > area.getWidth() - 2.0f)
             f = f.withHeight (f.getHeight() - 1.0f);
         g.setFont (f);
         g.setColour (juce::Colours::white.withAlpha (0.8f));
@@ -1705,59 +1713,62 @@ void RezalicaEditor::resized()
 
     // top block: one row of keys, the LED tempo display and the master volume knob on the right
     auto topBlock = b.removeFromTop (64);
-    logoArea = topBlock.withWidth (170);
+    logoArea = topBlock.withWidth (logoIconSize + 10 + 140);
     {
-        auto right = topBlock.removeFromRight (isStandalone ? 460 : 214);
-        masterKnob.setBounds (right.removeFromRight (104));
-        right.removeFromRight (12);
-        ledBpm.setBounds (right.removeFromRight (98).withSizeKeepingCentre (98, 54));
+        // LED tempo display + master knob on the right, the transport keys next to them
+        auto right = topBlock.removeFromRight (isStandalone ? 406 : 196);
+        masterKnob.setBounds (right.removeFromRight (92));
+        right.removeFromRight (10);
+        ledBpm.setBounds (right.removeFromRight (88).withSizeKeepingCentre (88, 48));
         if (isStandalone)
         {
             // REC  PLAY  PAUSE  STOP  METRONOME next to the tempo display
             right.removeFromRight (10);
-            auto keys = right.removeFromRight (5 * 44 + 4 * 4).withSizeKeepingCentre (5 * 44 + 4 * 4, 42).translated (0, 4);
+            const int key = 38, keyGap = 4;
+            auto keys = right.removeFromRight (5 * key + 4 * keyGap).withSizeKeepingCentre (5 * key + 4 * keyGap, 36);
             transportCentreY = keys.getCentreY();
             for (auto* k : { &clickKey, &stopKey, &pauseKey, &playKey, &recKey })
             {
-                k->setBounds (keys.removeFromRight (44));
-                keys.removeFromRight (4);
+                k->setBounds (keys.removeFromRight (key));
+                keys.removeFromRight (keyGap);
             }
         }
-        topBlock.removeFromRight (10);
+        topBlock.removeFromRight (14);
     }
     headerArea = topBlock;
     {
-        auto row = topBlock.withTrimmedLeft (170);
-        row = row.withY (isStandalone ? transportCentreY - 15 : row.getCentreY() - 15).withHeight (30); // one line with the transport keys
+        auto row = topBlock.withTrimmedLeft (logoArea.getWidth() + 12);
+        row = row.withY ((isStandalone ? transportCentreY : row.getCentreY()) - 12).withHeight (24); // one line with the transport keys
         auto put = [&row] (juce::Component& c, int w, int gap = 3) { c.setBounds (row.removeFromLeft (w)); row.removeFromLeft (gap); };
         auto putRight = [&row] (juce::Component& c, int w, int gap = 3) { c.setBounds (row.removeFromRight (w)); row.removeFromRight (gap); };
         if (isStandalone)
         {
-            put (fileButton, 42);
-            put (browserButton, 72);
-            put (samplingButton, 76, 10);
-            if (masterFxButton.isVisible()) put (masterFxButton, 80, 10);
-            put (chopModeBox, 98);
-            put (lazyButton, 74);
-            put (undoButton, 50);
-            put (redoButton, 50);
-            put (metronome, 100, 8);                    // count-in
-            putRight (pianoRollButton, 84);
-            putRight (seqButton, 70);
-            putRight (sceneButton, 54, 8);
+            // three groups with the same spacing: files | editing | views
+            put (fileButton, 38);
+            put (browserButton, 64);
+            put (samplingButton, 68, 12);
+            if (masterFxButton.isVisible()) put (masterFxButton, 70, 12);
+            put (chopModeBox, 92);
+            put (lazyButton, 66);
+            put (undoButton, 44);
+            put (redoButton, 44, 12);
+            put (metronome, 92);                        // count-in
+            putRight (pianoRollButton, 74);
+            putRight (seqButton, 62);
+            putRight (sceneButton, 48);
         }
         else
         {
-            if (loadChopButton.isVisible()) put (loadChopButton, 108, 6);
-            put (chopModeBox, 108, 6);
-            put (lazyButton, 90, 8);
-            put (undoButton, 58);
-            put (redoButton, 58, 8);
-            if (stopButton.isVisible()) putRight (stopButton, 86, 6);
-            putRight (pianoRollButton, 100, 6);
-            putRight (seqButton, 90, 6);
+            if (loadChopButton.isVisible()) put (loadChopButton, 100, 6);
+            put (chopModeBox, 100, 6);
+            put (lazyButton, 80, 8);
+            put (undoButton, 52);
+            put (redoButton, 52, 8);
+            if (stopButton.isVisible()) putRight (stopButton, 78, 6);
+            putRight (pianoRollButton, 90, 6);
+            putRight (seqButton, 82, 6);
         }
-        autosaveLabel.setBounds (logoArea.withTrimmedTop (50).withHeight (13).translated (3, 0));
+        autosaveLabel.setBounds (logoArea.withTrimmedLeft (logoIconSize + 10).withTrimmedTop (47).withHeight (13).translated (1, 0));
     }
     b.removeFromTop (12);
 
