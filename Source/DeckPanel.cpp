@@ -526,57 +526,84 @@ void DeckPanel::resized()
     wave.setBounds (b.removeFromBottom (juce::jlimit (60, 110, b.getHeight() / 4)));
     b.removeFromBottom (8);
 
-    const int side = juce::jmin (b.getHeight(), b.getWidth() / 2);
-    platter.setBounds (b.removeFromLeft (side + 40).withSizeKeepingCentre (side + 40, side));
-    b.removeFromLeft (16);
+    // DECK in the top left corner
+    title.setBounds (b.getX(), b.getY(), 60, 22);
 
-    // the pitch fader on the far right, like on the deck
-    auto pitchCol = b.removeFromRight (90);
-    pitchLabel.setBounds (pitchCol.removeFromTop (18));
-    auto ranges = pitchCol.removeFromBottom (24);
-    range8.setBounds (ranges.removeFromLeft (ranges.getWidth() / 2).reduced (1, 0));
-    range16.setBounds (ranges.reduced (1, 0));
-    pitchSlider.setBounds (pitchCol.reduced (20, 4));
-    b.removeFromRight (12);
+    // the platter in the middle, the controls around it: left = motor / tempo, right = pitch fader, cues, fader, REC
+    const int colW = 210, pitchW = 70, gap = 18;
+    const int side = juce::jmax (120, juce::jmin (b.getHeight(), b.getWidth() - 2 * colW - pitchW - 4 * gap));
+    const int groupW = colW + gap + side + gap + pitchW + gap + colW;
+    auto group = b.withSizeKeepingCentre (juce::jmin (groupW, b.getWidth()), b.getHeight());
 
-    const int rowH = 30, gap = 8;
-    auto row = [&] { auto r = b.removeFromTop (rowH); b.removeFromTop (gap); return r; };
-    auto r1 = row();
-    title.setBounds (r1.removeFromLeft (60));
-    startButton.setBounds (r1.removeFromLeft (170));
-    r1.removeFromLeft (10);
-    rpm33.setBounds (r1.removeFromLeft (46));
-    r1.removeFromLeft (4);
-    rpm45.setBounds (r1.removeFromLeft (46));
-    r1.removeFromLeft (14);
-    loopButton.setBounds (r1.removeFromLeft (70));
+    auto left = group.removeFromLeft (colW);
+    group.removeFromLeft (gap);
+    platter.setBounds (group.removeFromLeft (side).withSizeKeepingCentre (side, side));
+    group.removeFromLeft (gap);
+    auto pitchCol = group.removeFromLeft (pitchW);
+    group.removeFromLeft (gap);
+    auto right = group.removeFromLeft (colW);
 
-    auto r2 = row();
-    syncButton.setBounds (r2.removeFromLeft (70));
-    r2.removeFromLeft (10);
-    bpmCaption.setBounds (r2.removeFromLeft (82));
-    bpmLabel.setBounds (r2.removeFromLeft (70));
-    r2.removeFromLeft (14);
-    loadPadButton.setBounds (r2.removeFromLeft (100));
+    const int rowH = 30, rowGap = 8;
+    auto row = [rowH, rowGap] (juce::Rectangle<int>& col) { auto r = col.removeFromTop (rowH); col.removeFromTop (rowGap); return r; };
 
-    auto r3 = row();
-    cueCaption.setBounds (r3.removeFromLeft (40));
-    for (auto& c : cueButtons)
+    // left of the platter: START / STOP, speed, tempo
+    left.removeFromTop (28); // (room for the DECK title)
+    startButton.setBounds (row (left).withHeight (rowH + 10));
+    left.removeFromTop (10);
     {
-        c.setBounds (r3.removeFromLeft (52));
-        r3.removeFromLeft (6);
+        auto r = row (left);
+        rpm33.setBounds (r.removeFromLeft (r.getWidth() / 2 - 3));
+        r.removeFromLeft (6);
+        rpm45.setBounds (r);
     }
+    {
+        auto r = row (left);
+        syncButton.setBounds (r.removeFromLeft (r.getWidth() / 2 - 3));
+        r.removeFromLeft (6);
+        loopButton.setBounds (r);
+    }
+    {
+        auto r = row (left);
+        bpmCaption.setBounds (r.removeFromLeft (90));
+        bpmLabel.setBounds (r);
+    }
+    loadPadButton.setBounds (row (left));
 
-    auto r4 = b.removeFromTop (rowH + 14);
-    cutButton.setBounds (r4.removeFromLeft (120).withHeight (rowH));
-    r4.removeFromLeft (8);
-    hamsterButton.setBounds (r4.removeFromLeft (96).withHeight (rowH));
-    r4.removeFromLeft (16);
-    recButton.setBounds (r4.removeFromLeft (70).withHeight (rowH));
-    r4.removeFromLeft (8);
-    recLabel.setBounds (r4.withHeight (rowH));
-    b.removeFromTop (gap);
+    // right of the platter: the pitch fader (like on the deck), then cues, fader and REC
+    pitchLabel.setBounds (pitchCol.removeFromTop (18).expanded (12, 0));
+    auto ranges = pitchCol.removeFromBottom (54);
+    range8.setBounds (ranges.removeFromTop (24));
+    ranges.removeFromTop (6);
+    range16.setBounds (ranges.removeFromTop (24));
+    pitchSlider.setBounds (pitchCol.reduced (18, 4));
 
-    volumeKnob.setBounds (b.removeFromLeft (90).withHeight (juce::jmin (b.getHeight(), 100)));
+    cueCaption.setBounds (right.removeFromTop (16));
+    for (int rr = 0; rr < 2; ++rr)
+    {
+        auto r = row (right);
+        for (int k = 0; k < 2; ++k)
+        {
+            cueButtons[(size_t) (rr * 2 + k)].setBounds (r.removeFromLeft (r.getWidth() / (2 - k) - (k == 0 ? 3 : 0)));
+            if (k == 0) r.removeFromLeft (6);
+        }
+    }
+    right.removeFromTop (6);
+    {
+        auto r = right.removeFromTop (rowH);
+        cutButton.setBounds (r.removeFromLeft (r.getWidth() / 2 - 3));
+        r.removeFromLeft (6);
+        hamsterButton.setBounds (r);
+        right.removeFromTop (rowGap + 8); // (the open / closed lamp under CUT)
+    }
+    {
+        // REC and the deck's volume side by side, what REC does under them
+        recLabel.setBounds (right.removeFromBottom (18));
+        auto r = right.removeFromTop (juce::jmin (right.getHeight(), 84));
+        const int w = r.getWidth() / 2 - 3;
+        recButton.setBounds (r.removeFromLeft (w).withSizeKeepingCentre (w, rowH));
+        r.removeFromLeft (6);
+        volumeKnob.setBounds (r.removeFromLeft (80));
+    }
 }
+
 } // namespace rz
