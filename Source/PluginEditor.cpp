@@ -1559,8 +1559,12 @@ bool RezalicaEditor::keyStateChanged (bool)
 void RezalicaEditor::renderFaceplate()
 {
     const int w = juce::jmax (1, getWidth()), h = juce::jmax (1, getHeight());
-    faceplate = juce::Image (juce::Image::RGB, w, h, false);
+    // rendered at the screen's real pixel density (Windows display scaling 125 %, 150 %, 4K ...),
+    // so the texture stays as sharp as the vector-drawn keys and text
+    const float s = juce::jlimit (1.0f, 4.0f, faceplateScale);
+    faceplate = juce::Image (juce::Image::RGB, juce::roundToInt ((float) w * s), juce::roundToInt ((float) h * s), false);
     juce::Graphics g (faceplate);
+    g.addTransform (juce::AffineTransform::scale ((float) faceplate.getWidth() / (float) w, (float) faceplate.getHeight() / (float) h));
     using namespace rz::colours;
     // brushed aluminium: a soft vertical sheen plus fine horizontal grain
     g.setGradientFill (juce::ColourGradient (silver.brighter (0.12f), 0.0f, 0.0f, silverDark, 0.0f, (float) h, false));
@@ -1568,13 +1572,16 @@ void RezalicaEditor::renderFaceplate()
     g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.18f), (float) w * 0.3f, 0.0f,
                                              juce::Colours::transparentWhite, (float) w * 0.75f, (float) h, false));
     g.fillAll();
+    // fine grain: one hairline per physical pixel row
     juce::Random rnd (303);
-    for (int y = 0; y < h; ++y)
+    const int rows = faceplate.getHeight();
+    const float rowH = (float) h / (float) rows;
+    for (int y = 0; y < rows; ++y)
     {
         const float a = rnd.nextFloat() * 0.06f;
         g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (a));
         const int x0 = rnd.nextInt (juce::jmax (1, w / 3));
-        g.drawHorizontalLine (y, (float) x0, (float) (x0 + w / 2 + rnd.nextInt (juce::jmax (1, w / 2))));
+        g.fillRect (juce::Rectangle<float> ((float) x0, (float) y * rowH, (float) (w / 2 + rnd.nextInt (juce::jmax (1, w / 2))), rowH));
     }
 
     // the room light comes from the upper left: the far (lower right) side of the unit is a bit darker,
@@ -1636,8 +1643,15 @@ void RezalicaEditor::paint (juce::Graphics& g)
         juce::Path face;
         face.addRoundedRectangle (getLocalBounds().toFloat().reduced (5.0f), 12.0f);
         g.reduceClipRegion (face);
+        // a different screen density (another monitor, scaling changed): render the texture again
+        const float physical = g.getInternalContext().getPhysicalPixelScaleFactor();
+        if (std::abs (physical - faceplateScale) > 0.01f)
+        {
+            faceplateScale = physical;
+            renderFaceplate();
+        }
         if (faceplate.isValid())
-            g.drawImageAt (faceplate, 0, 0);
+            g.drawImage (faceplate, getLocalBounds().toFloat());
         else
             g.fillAll (silver);
     }

@@ -80,6 +80,7 @@ private:
     juce::Rectangle<int> logoArea;
     static constexpr int logoIconSize = 50;
     juce::Image faceplate;                             // brushed silver texture, rendered on resize
+    float faceplateScale = 1.0f;                       // physical pixels per point it was rendered at
     void renderFaceplate();
     void layoutComponents();
     bool shouldDropFilesWhenDraggedExternally (const juce::DragAndDropTarget::SourceDetails&, juce::StringArray&, bool&) override;
