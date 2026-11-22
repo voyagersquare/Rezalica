@@ -1715,10 +1715,15 @@ void RezalicaEditor::resized()
     auto topBlock = b.removeFromTop (64);
     logoArea = topBlock.withWidth (logoIconSize + 10 + 140);
     {
-        // LED tempo display + master knob on the right, the transport keys next to them
-        auto right = topBlock.removeFromRight (isStandalone ? 406 : 196);
-        masterKnob.setBounds (right.removeFromRight (92));
-        right.removeFromRight (10);
+        // standalone: the LED tempo display at the right edge, the transport keys next to it;
+        // plug-in: the master knob at the right edge, then the tempo display
+        auto right = topBlock.removeFromRight (isStandalone ? 304 : 196);
+        masterKnob.setVisible (! isStandalone);
+        if (! isStandalone)
+        {
+            masterKnob.setBounds (right.removeFromRight (92));
+            right.removeFromRight (10);
+        }
         ledBpm.setBounds (right.removeFromRight (88).withSizeKeepingCentre (88, 48));
         if (isStandalone)
         {
@@ -1743,19 +1748,19 @@ void RezalicaEditor::resized()
         auto putRight = [&row] (juce::Component& c, int w, int gap = 3) { c.setBounds (row.removeFromRight (w)); row.removeFromRight (gap); };
         if (isStandalone)
         {
-            // three groups with the same spacing: files | editing | views
+            // FILE + BROWSER next to the name; everything else to the right, up to the transport keys
             put (fileButton, 38);
             put (browserButton, 64);
-            put (samplingButton, 68, 12);
-            if (masterFxButton.isVisible()) put (masterFxButton, 70, 12);
-            put (chopModeBox, 92);
-            put (lazyButton, 66);
-            put (undoButton, 44);
-            put (redoButton, 44, 12);
-            put (metronome, 92);                        // count-in
             putRight (pianoRollButton, 74);
             putRight (seqButton, 62);
-            putRight (sceneButton, 48);
+            putRight (sceneButton, 48, 12);
+            putRight (metronome, 92, 12);               // count-in
+            putRight (redoButton, 44);
+            putRight (undoButton, 44);
+            putRight (lazyButton, 66);
+            putRight (chopModeBox, 92, 12);
+            if (masterFxButton.isVisible()) putRight (masterFxButton, 70, 12);
+            putRight (samplingButton, 68);
         }
         else
         {
