@@ -2123,6 +2123,58 @@ int main (int argc, char** argv)
         sq.locateTo (0.0);
     }
 
+    {
+        // DECK: the motor spins the record up, the hand stops / reverses it, the fader cuts, the brake stops it,
+        // SYNC follows the tempo, REC puts the scratch on a pad
+        auto longFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_long.wav");
+        auto tp = std::make_unique<RezalicaProcessor> (false);
+        auto& t = *tp;
+        t.prepareToPlay (48000.0, 480);
+        auto& deck = t.getDeck();
+        check (t.loadFileToDeck (longFile) && deck.motorOn.load(), "a sample dropped on the DECK starts turning");
+        check (rz::Turntable::bpmFromName ("looperman-l-6328942-0408332-boom-bap-drum-85-bpm-hd") == 85.0f
+               && rz::Turntable::bpmFromName ("Break 95bpm") == 95.0f && rz::Turntable::bpmFromName ("BPM_120 loop") == 120.0f
+               && rz::Turntable::bpmFromName ("Cold Hearted Revenge 3") == 0.0f, "the sample's BPM is read from its name");
+        juce::AudioBuffer<float> buf (2, 480);
+        auto run = [&] (double seconds) { float pk = 0.0f; for (int i = 0; i < (int) (seconds * 100); ++i) { juce::MidiBuffer m; buf.clear(); t.processBlock (buf, m); pk = buf.getMagnitude (0, 0, 480); } return pk; };
+        const float playing = run (0.8);
+        check (playing > 0.05f && std::abs (deck.speed.load() - 1.0f) < 0.02f, "the motor brings it to normal speed");
+
+        deck.handOffset = 0.0;
+        deck.touched = true;                           // the hand holds the record
+        const float held = run (0.1);
+        check (held < 1.0e-3f && std::abs (deck.speed.load()) < 0.01f, "holding the record stops the sound");
+        double off = 0.0;
+        for (int i = 0; i < 20; ++i) { off -= 480.0 * 1.5; deck.handOffset = off; run (0.01); } // pull it back, 1.5 x speed
+        check (deck.speed.load() < -1.0f, "pulling the record back plays it backwards");
+        deck.touched = false;
+        run (0.4);
+        check (std::abs (deck.speed.load() - 1.0f) < 0.02f, "let go: the motor takes it back to speed");
+
+        deck.cut = true;
+        check (run (0.05) < 1.0e-4f, "SHIFT / CUT closes the fader");
+        deck.cut = false;
+
+        t.getSequencer().bpm = 120.0f;
+        deck.recordBpm = 100.0f;
+        deck.sync = true;
+        run (0.5);
+        check (std::abs (deck.speed.load() - 1.2f) < 0.02f, "SYNC: the record turns at the sequencer tempo");
+        deck.sync = false;
+
+        deck.startRecording();
+        run (0.5);
+        deck.stopRecording();
+        run (0.02);
+        const auto file = t.collectDeckRecording (3);
+        check (file.existsAsFile() && t.getEngine().getPadSample (3) != nullptr, "the DECK's REC puts the scratch on a pad");
+        file.deleteFile();
+
+        deck.motorOn = false;
+        run (1.5);
+        check (std::abs (deck.speed.load()) < 0.01f, "STOP: the brake stops the platter");
+    }
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

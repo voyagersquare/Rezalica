@@ -579,6 +579,14 @@ public:
 
     double getSamplesPerStep() const noexcept { return ppqPerSample > 0.0 ? stepLengthPpq / ppqPerSample : sampleRate * 0.125; }
     bool isRunning() const noexcept { return running; }
+    /** Audio thread, after process(): sample offset of the next beat in this block, -1 if none / stopped. */
+    int nextBeatOffset (int numSamples) const noexcept
+    {
+        if (! running || ppqPerSample <= 0.0) return -1;
+        const double beat = std::ceil (blockPpq - 1.0e-9);
+        const int off = (int) std::llround ((beat - blockPpq) / ppqPerSample);
+        return off >= 0 && off < numSamples ? off : -1;
+    }
     /** Play position inside the current pattern, in steps (for the piano roll playhead), -1 when stopped. */
     /** Where the music is that you HEAR right now, in steps of the current pattern: the audio thread's
         position moved on by the time since that block, minus the delay to the speakers (plug-ins + sound card).

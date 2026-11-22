@@ -91,7 +91,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     // standalone app: project files and audio device settings (in a DAW the DAW does this)
     isStandalone = processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
-    for (auto* b : { &fileButton, &sceneButton, &samplingButton, &browserButton, &masterFxButton })
+    for (auto* b : { &fileButton, &sceneButton, &deckButton, &samplingButton, &browserButton, &masterFxButton })
     {
         b->setWantsKeyboardFocus (false);
         addChildComponent (*b);
@@ -203,6 +203,9 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     stopPlayButton.onClick = [this] { processor.getSequencer().stopPlayback(); grabKeyboardFocus(); };
     fileButton.onClick = [this] { showFileMenu(); };
     sceneButton.onClick = [this] { toggleSceneWindow(); };
+    styleToggle (deckButton, juce::Colour (0xff9fd3ff));
+    deckButton.setTooltip ("DECK: a turntable for scratching samples (drag one from the BROWSER onto the record)");
+    deckButton.onClick = [this] { showDock (dockDeck); };
     undoButton.onClick = [this] { if (processor.undo()) selectPad (processor.selectedPad.load()); };
     redoButton.onClick = [this] { if (processor.redo()) selectPad (processor.selectedPad.load()); };
     styleToggle (pianoRollButton, rz::colours::accent2);
@@ -585,6 +588,7 @@ RezalicaEditor::~RezalicaEditor()
     dockedSequencer = nullptr;
     dockedPianoRoll = nullptr;
     dockedSong = nullptr;
+    dockedDeck = nullptr;
     samplingWindow = nullptr;
     browserPanel = nullptr;
     masterFxWindow = nullptr;
@@ -826,6 +830,7 @@ void RezalicaEditor::timerCallback()
         seqButton.setToggleState (dockView == dockSequencer, juce::dontSendNotification);
         pianoRollButton.setToggleState (dockView == dockPianoRoll, juce::dontSendNotification);
         sceneButton.setToggleState (dockView == dockSong, juce::dontSendNotification);
+        deckButton.setToggleState (dockView == dockDeck, juce::dontSendNotification);
     }
     else if (sequencerWindow != nullptr)
         seqButton.setToggleState (sequencerWindow->isVisible(), juce::dontSendNotification);
@@ -1385,6 +1390,7 @@ juce::Component* RezalicaEditor::dockedPanel() const
     if (dockView == dockSequencer) return dockedSequencer.get();
     if (dockView == dockPianoRoll) return dockedPianoRoll.get();
     if (dockView == dockSong) return dockedSong.get();
+    if (dockView == dockDeck) return dockedDeck.get();
     return nullptr;
 }
 
@@ -1440,14 +1446,21 @@ void RezalicaEditor::showDock (int view)
         if (dockedSong == nullptr) { dockedSong = std::make_unique<rz::ScenePanel> (processor); addChildComponent (*dockedSong); }
         dockedSong->setVisible (true);
     }
+    else if (view == dockDeck)
+    {
+        if (dockedDeck == nullptr) { dockedDeck = std::make_unique<rz::DeckPanel> (processor); addChildComponent (*dockedDeck); }
+        dockedDeck->setVisible (true);
+    }
     seqButton.setToggleState (view == dockSequencer, juce::dontSendNotification);
     pianoRollButton.setToggleState (view == dockPianoRoll, juce::dontSendNotification);
     sceneButton.setToggleState (view == dockSong, juce::dontSendNotification);
+    deckButton.setToggleState (view == dockDeck, juce::dontSendNotification);
     resized();
     repaint();
     if (view == dockPianoRoll) dockedPianoRoll->focusEditor();
     else if (view == dockSequencer) dockedSequencer->grabKeyboardFocus();
     else if (view == dockSong) dockedSong->grabKeyboardFocus();
+    else if (view == dockDeck) dockedDeck->grabKeyboardFocus();
 }
 
 void RezalicaEditor::togglePianoRoll()
@@ -1545,7 +1558,7 @@ bool RezalicaEditor::keyStateChanged (bool)
 {
     bool used = false;
     // the docked step sequencer / piano roll play the computer keyboard themselves
-    if (auto* panel = dockedPanel(); panel != nullptr && dockView != dockSong && panel->hasKeyboardFocus (true))
+    if (auto* panel = dockedPanel(); panel != nullptr && dockView != dockSong && dockView != dockDeck && panel->hasKeyboardFocus (true))
         return false; // (the SONG view leaves the pad keys to the main window)
     // Ctrl / Cmd shortcuts (Ctrl+Z ...) must not play the pads on those keys
     if (juce::ModifierKeys::getCurrentModifiers().isCommandDown())
@@ -1836,7 +1849,8 @@ void RezalicaEditor::layoutComponents()
             put (browserButton, 64);
             putRight (pianoRollButton, 74);
             putRight (seqButton, 62);
-            putRight (sceneButton, 48, 12);
+            putRight (sceneButton, 48);
+            putRight (deckButton, 48, 12);
             putRight (metronome, 92, 12);               // count-in
             putRight (redoButton, 44);
             putRight (undoButton, 44);

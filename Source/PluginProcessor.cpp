@@ -88,6 +88,7 @@ void RezalicaProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     clickLength = juce::jmax (1, (int) (sampleRate * 0.035));
     clickSamplesLeft = 0;
     clickBuffer.setSize (1, juce::jmax (1, samplesPerBlock));
+    deck.prepare (sampleRate, juce::jmax (1, samplesPerBlock));
     clickDelay.prepare (maxCompensation);
     for (auto& bus : buses)
         bus.compensation.prepare (maxCompensation);
@@ -427,6 +428,9 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     engine.render (busBuffers, cursor, numSamples - cursor);
     engine.updatePlayPositions();
 
+    // DECK: into MASTER (its plug-ins and fader), synced to the sequencer when asked
+    deck.render (busBuffers[0], numSamples, sequencer.effectiveBpm.load(), sequencer.nextBeatOffset (numSamples));
+
     if (lazyActive.load() && ! engine.isPreviewBusy())
         lazyActive = false; // preview reached the end of the sample
 
@@ -676,6 +680,38 @@ juce::File RezalicaProcessor::keepTake (int pad, const juce::String& name, bool 
         chopPadSample (pad, chopModeAfter);
     pendingTake.setSize (2, 0);
     return file;
+}
+
+bool RezalicaProcessor::loadFileToDeck (const juce::File& file)
+{
+    auto s = loadSample (file, true);
+    if (s == nullptr) return false;
+    deck.setRecord (s);
+    deck.recordBpm = rz::Turntable::guessBpm (*s);
+    deck.motorOn = true; // dropped on the deck: it starts turning
+    return true;
+}
+
+bool RezalicaProcessor::loadPadToDeck (int pad)
+{
+    auto s = engine.getPadSample (juce::jlimit (0, rz::numPads - 1, pad));
+    if (s == nullptr) return false;
+    deck.setRecord (s);
+    deck.recordBpm = rz::Turntable::guessBpm (*s);
+    deck.motorOn = true;
+    return true;
+}
+
+juce::File RezalicaProcessor::collectDeckRecording (int pad)
+{
+    juce::AudioBuffer<float> take;
+    double sr = 44100.0;
+    if (! deck.takeRecording (take, sr))
+        return {};
+    pendingTake = std::move (take);
+    pendingTakeRate = sr;
+    pendingTakeSource = rz::AudioRecorder::output;
+    return keepTake (pad, "Deck scratch " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S"), true, chopOff);
 }
 
 juce::File RezalicaProcessor::collectRecording (int pad)
@@ -2442,6 +2478,23 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
     root.appendChild (seq, nullptr);
     root.appendChild (sequencer.songToValueTree(), nullptr);
     root.appendChild (mixerToValueTree(), nullptr);
+    {
+        juce::ValueTree d ("DECK");
+        if (auto r = deck.getRecord(); r != nullptr && r->file.existsAsFile())
+            d.setProperty ("file", r->file.getFullPathName(), nullptr);
+        d.setProperty ("bpm", deck.recordBpm.load(), nullptr);
+        d.setProperty ("sync", deck.sync.load(), nullptr);
+        d.setProperty ("pitch", deck.pitch.load(), nullptr);
+        d.setProperty ("range", deck.pitchRange.load(), nullptr);
+        d.setProperty ("rpm45", deck.rpm45.load(), nullptr);
+        d.setProperty ("loop", deck.loop.load(), nullptr);
+        d.setProperty ("volume", deck.volume.load(), nullptr);
+        d.setProperty ("hamster", deck.reverseFader.load(), nullptr);
+        juce::StringArray cs;
+        for (auto& c : deck.cues) cs.add (juce::String (c.load(), 1));
+        d.setProperty ("cues", cs.joinIntoString (","), nullptr);
+        root.appendChild (d, nullptr);
+    }
 
     juce::ValueTree chop ("CHOP");
     chop.setProperty ("mode", chopMode, nullptr);
@@ -2641,6 +2694,25 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     sequencer.songFromValueTree (root.getChildWithName ("SONG"));
     mixerFromValueTree (root.getChildWithName ("MIXER"));
+    if (auto d = root.getChildWithName ("DECK"); d.isValid())
+    {
+        const juce::File f (d.getProperty ("file", juce::String()).toString());
+        if (f.existsAsFile())
+            if (auto s = loadSample (f, true))
+                deck.setRecord (s);
+        deck.motorOn = false; // a project opens with the deck standing still
+        deck.recordBpm = (float) d.getProperty ("bpm", 0.0f);
+        deck.sync = (bool) d.getProperty ("sync", false);
+        deck.pitch = (float) d.getProperty ("pitch", 0.0f);
+        deck.pitchRange = (float) d.getProperty ("range", 0.08f);
+        deck.rpm45 = (bool) d.getProperty ("rpm45", false);
+        deck.loop = (bool) d.getProperty ("loop", true);
+        deck.volume = (float) d.getProperty ("volume", 1.0f);
+        deck.reverseFader = (bool) d.getProperty ("hamster", false);
+        auto cs = juce::StringArray::fromTokens (d.getProperty ("cues", juce::String()).toString(), ",", {});
+        for (int i = 0; i < rz::Turntable::numCues; ++i)
+            deck.cues[(size_t) i] = i < cs.size() ? cs[i].getDoubleValue() : -1.0;
+    }
 
     auto chop = root.getChildWithName ("CHOP");
     chopSource = nullptr;

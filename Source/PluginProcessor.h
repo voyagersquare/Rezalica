@@ -10,6 +10,7 @@
 #include "Recorder.h"
 #include "LoopbackCapture.h"
 #include "Mixer.h"
+#include "Turntable.h"
 #include "PluginHost.h"
 
 class RezalicaProcessor : public juce::AudioProcessor,
@@ -200,6 +201,15 @@ public:
 
     // ---- sampling / resampling ----
     rz::AudioRecorder& getRecorder() noexcept { return recorder; }
+
+    // ---- DECK (turntable) ----
+    rz::Turntable& getDeck() noexcept { return deck; }
+    /** Puts a sample on the DECK (from the browser); it starts turning. */
+    bool loadFileToDeck (const juce::File& file);
+    /** The selected pad's whole sample onto the DECK. */
+    bool loadPadToDeck (int pad);
+    /** After the deck's REC: the scratch goes onto a pad (silence trimmed). Returns the file, or {}. */
+    juce::File collectDeckRecording (int pad);
     bool hasAudioInput() const { return getTotalNumInputChannels() > 0; }
     double getSampleRateNow() const noexcept { return currentSampleRate; }
     /** Starts a take. source: input or Rezalica's output; patternLength: resample exactly one loop
@@ -330,6 +340,7 @@ private:
     void mixerFromValueTree (const juce::ValueTree&);
     rz::MasterFx masterFx;
     rz::AudioRecorder recorder;
+    rz::Turntable deck;
     rz::LoopbackCapture loopback;
     int clickSamplesLeft = 0, clickLength = 1;
     juce::AudioBuffer<float> clickBuffer;          // the metronome, delayed like the mixer's plug-ins

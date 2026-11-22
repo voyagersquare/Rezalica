@@ -53,7 +53,8 @@ target_sources(Rezalica PRIVATE
     Source/MixerPanel.cpp
     Source/RezalicaApp.cpp
     Source/Mp3Writer.cpp
-    Source/ExportDialog.cpp)
+    Source/ExportDialog.cpp
+    Source/DeckPanel.cpp)
 
 target_compile_definitions(Rezalica PUBLIC
     JUCE_WEB_BROWSER=0
