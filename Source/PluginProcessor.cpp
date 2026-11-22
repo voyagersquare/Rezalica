@@ -74,6 +74,7 @@ void RezalicaProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     engine.prepare (sampleRate);
     sequencer.prepare (sampleRate);
     preparedBlockSize = juce::jmax (1, samplesPerBlock);
+    inputCopy.setSize (2, juce::jmax (8192, samplesPerBlock));
     for (auto& b : busBuffers)
         b.setSize (2, juce::jmax (1, samplesPerBlock));
     for (auto& bus : buses)
@@ -171,8 +172,21 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
     // sampling: the sound card input arrives in the first channels
+    inputCopyChannels = 0;
+    const int throughBus = inputThroughBus.load();
     if (const int inCh = juce::jmin (getTotalNumInputChannels(), buffer.getNumChannels()); inCh > 0)
-        recorder.capture (rz::AudioRecorder::input, buffer.getArrayOfReadPointers(), inCh, numSamples);
+    {
+        if (throughBus < 0)
+            recorder.capture (rz::AudioRecorder::input, buffer.getArrayOfReadPointers(), inCh, numSamples);
+        if ((monitorInput.load() || throughBus >= 0) && inputCopy.getNumSamples() >= numSamples)
+        {
+            inputCopyChannels = juce::jmin (2, inCh);
+            for (int ch = 0; ch < 2; ++ch)
+                inputCopy.copyFrom (ch, 0, buffer, juce::jmin (ch, inCh - 1), 0, numSamples);
+            if (const int mode = recorder.inputMode.load(); mode > 0)   // mono L / R for monitor and bus too
+                inputCopy.copyFrom (mode == 1 ? 1 : 0, 0, inputCopy, mode == 1 ? 0 : 1, 0, numSamples);
+        }
+    }
     buffer.clear();
 
     if (busBuffers[0].getNumSamples() < numSamples)
@@ -180,6 +194,10 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             b.setSize (2, numSamples, false, false, true);
     for (auto& b : busBuffers)
         b.clear (0, numSamples);
+    // sampling through a bus: the input goes into that bus (its effects), recorded after them
+    if (throughBus >= 0 && inputCopyChannels > 0)
+        for (int ch = 0; ch < 2; ++ch)
+            busBuffers[(size_t) juce::jlimit (0, rz::numBuses - 1, throughBus)].addFrom (ch, 0, inputCopy, ch, 0, numSamples);
 
     engine.syncSamples();
     numEvents = 0;
@@ -389,6 +407,8 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         auto& bus = buses[(size_t) bi];
         auto& data = busBuffers[(size_t) bi];
         processBusChain (bi, numSamples);
+        if (bi == throughBus && inputCopyChannels > 0)
+            recorder.capture (rz::AudioRecorder::input, data.getArrayOfReadPointers(), 2, numSamples); // with the bus effects
         const bool silent = bus.mute.load() || (anySolo && ! bus.solo.load());
         const float g = silent ? 0.0f : juce::Decibels::decibelsToGain (bus.gainDb.load(), -59.9f);
         for (int ch = 0; ch < 2; ++ch)
@@ -397,6 +417,8 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         bus.peak = juce::jmax (bus.peak.load() * 0.85f, juce::jmax (data.getMagnitude (0, 0, numSamples), data.getMagnitude (1, 0, numSamples)) * g);
     }
     processBusChain (0, numSamples);
+    if (throughBus == 0 && inputCopyChannels > 0)
+        recorder.capture (rz::AudioRecorder::input, masterBus.getArrayOfReadPointers(), 2, numSamples);
     {
         auto& mb = buses[0];
         const float master = mb.mute.load() ? 0.0f : juce::Decibels::decibelsToGain (pMaster->load(), -59.9f);
@@ -409,6 +431,10 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     // ---- resampling, metronome ----
     masterFx.reportPeak (buffer, outChannels, numSamples); // (the built-in master effects are gone: the mixer has plug-ins now)
     recorder.capture (rz::AudioRecorder::output, buffer.getArrayOfReadPointers(), outChannels, numSamples);
+    // monitor: hear the input (not when it already plays through a bus)
+    if (monitorInput.load() && throughBus < 0 && inputCopyChannels > 0)
+        for (int ch = 0; ch < outChannels; ++ch)
+            buffer.addFrom (ch, 0, inputCopy, ch, 0, numSamples);
 
     if (sequencer.numClicks > 0 || clickSamplesLeft > 0)
     {
@@ -481,6 +507,109 @@ bool RezalicaProcessor::startRecording (rz::AudioRecorder::Source source, bool p
     }
     recorder.start (source, (int) (sr * 600.0), waitForSignal, false, sr); // up to 10 minutes
     return true;
+}
+
+bool RezalicaProcessor::startRecording (const RecordOptions& o)
+{
+    if (recorder.isBusy()) return false;
+    discardTake();
+    recorder.inputMode = o.inputMode;
+    recorder.setThresholdDb (o.thresholdDb);
+    recorder.clipped = false;
+    if (o.source == rz::AudioRecorder::computer)
+    {
+        if (! startComputerAudio()) return false;
+        const double lr = loopback.getSampleRate();
+        const int n = (int) (lr * (o.lengthSeconds > 0.0 ? o.lengthSeconds : 600.0));
+        recorder.start (o.source, n, o.waitForSignal, false, lr); // the take keeps the PC's sample rate
+        return true;
+    }
+    if (o.source == rz::AudioRecorder::input && ! hasAudioInput()) return false;
+    if (o.source == rz::AudioRecorder::output && o.patternLength)
+        return startRecording (o.source, true, false);
+    const double sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
+    const int n = (int) (sr * (o.lengthSeconds > 0.0 ? o.lengthSeconds : 600.0));
+    recorder.start (o.source, n, o.source != rz::AudioRecorder::output && o.waitForSignal, false, sr);
+    return true;
+}
+
+bool RezalicaProcessor::fetchTake()
+{
+    juce::AudioBuffer<float> take;
+    double sr = 44100.0;
+    pendingTakeSource = recorder.getSource();
+    if (! recorder.takeRecording (take, sr))
+        return false;
+    pendingTake = std::move (take);
+    pendingTakeRate = sr;
+    return true;
+}
+
+void RezalicaProcessor::previewTake()
+{
+    engine.stopPreview();
+    if (! hasTake()) return;
+    previewData = new rz::SampleData();
+    previewData->buffer = pendingTake;
+    previewData->sampleRate = pendingTakeRate;
+    previewData->name = "take";
+    samplePool.add (previewData);
+    engine.setPreviewSample (previewData);
+    engine.startPreview();
+}
+
+void RezalicaProcessor::discardTake()
+{
+    engine.stopPreview();
+    pendingTake.setSize (2, 0);
+}
+
+juce::File RezalicaProcessor::keepTake (int pad, const juce::String& name, bool trimSilence, int chopModeAfter)
+{
+    if (! hasTake()) return {};
+    engine.stopPreview();
+    auto take = pendingTake;
+    if (trimSilence)
+    {
+        // cut what is quieter than -50 dB at both ends (keep 5 ms before the first sound)
+        const float floor = juce::Decibels::decibelsToGain (-50.0f);
+        const int n = take.getNumSamples();
+        int first = 0, last = n - 1;
+        auto loud = [&] (int i) { return std::abs (take.getSample (0, i)) > floor || std::abs (take.getSample (1, i)) > floor; };
+        while (first < n && ! loud (first)) ++first;
+        while (last > first && ! loud (last)) --last;
+        if (first < n)
+        {
+            first = juce::jmax (0, first - (int) (pendingTakeRate * 0.005));
+            last = juce::jmin (n - 1, last + (int) (pendingTakeRate * 0.02));
+            juce::AudioBuffer<float> t (2, last - first + 1);
+            for (int ch = 0; ch < 2; ++ch) t.copyFrom (ch, 0, take, ch, first, t.getNumSamples());
+            take = std::move (t);
+        }
+    }
+    auto folder = getRecordingFolder();
+    folder.createDirectory();
+    const auto base = juce::File::createLegalFileName (name.trim()).isNotEmpty() ? juce::File::createLegalFileName (name.trim())
+        : (pendingTakeSource == rz::AudioRecorder::input ? juce::String ("Sample ") : pendingTakeSource == rz::AudioRecorder::computer ? juce::String ("Computer ") : juce::String ("Resample "))
+              + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S");
+    auto file = folder.getNonexistentChildFile (base, ".wav", false);
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> os (file.createOutputStream());
+        if (os == nullptr) return {};
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), pendingTakeRate, 2, 24, {}, 0));
+        if (w == nullptr) return {};
+        os.release();
+        if (! w->writeFromAudioSampleBuffer (take, 0, take.getNumSamples())) return {};
+    }
+    pad = juce::jlimit (0, rz::numPads - 1, pad);
+    pushUndo ("Record to " + rz::padLabel (pad));
+    selectedPad = pad;
+    if (! loadFileForChopping (file)) return {};
+    if (chopModeAfter != chopOff)
+        chopPadSample (pad, chopModeAfter);
+    pendingTake.setSize (2, 0);
+    return file;
 }
 
 juce::File RezalicaProcessor::collectRecording (int pad)

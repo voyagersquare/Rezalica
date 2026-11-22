@@ -11,6 +11,7 @@ namespace rz
 struct LevelMeter : public juce::Component
 {
     float level = 0.0f;
+    float threshold = -100.0f; // dB: a line on the meter (sampling threshold)
     void paint (juce::Graphics& g) override
     {
         auto b = getLocalBounds().toFloat();
@@ -21,6 +22,12 @@ struct LevelMeter : public juce::Component
         auto bar = b.reduced (2.0f).withWidth ((b.getWidth() - 4.0f) * frac);
         g.setColour (db > -1.0f ? juce::Colour (0xffe0413a) : db > -9.0f ? juce::Colour (0xffffc94a) : juce::Colour (0xff6fd36f));
         g.fillRoundedRectangle (bar, 2.0f);
+        if (threshold > -60.0f)
+        {
+            const float tx = b.getX() + 2.0f + (b.getWidth() - 4.0f) * (threshold + 60.0f) / 60.0f;
+            g.setColour (juce::Colours::white);
+            g.fillRect (tx - 1.0f, b.getY(), 2.0f, b.getHeight());
+        }
     }
 };
 
@@ -31,26 +38,32 @@ class RecorderPanel : public juce::Component,
 {
 public:
     explicit RecorderPanel (RezalicaProcessor& p);
-    ~RecorderPanel() override
-    {
-        stopTimer();
-        if (! processor.getRecorder().isBusy()) processor.stopComputerAudio();
-    }
+    ~RecorderPanel() override;
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent& e) override { if (e.eventComponent == &clipLabel) processor.getRecorder().clipped = false; }
     std::function<void()> onAudioSettings, onRecorded;
 
 private:
     void timerCallback() override;
     void updateSourceUi();
-    RezalicaProcessor& processor;
+    void startTake();
+    RezalicaProcessor::RecordOptions options() const;
     AudioRecorder::Source currentSource() const;
-    juce::TextButton computerButton { "COMPUTER" };
-    juce::TextButton inputButton { "INPUT" }, resampleButton { "RESAMPLE" }, recButton { "REC" }, cancelButton { "CANCEL" },
-                     settingsButton { "Audio Settings..." };
-    juce::ToggleButton waitButton { "Start on sound" }, patternButton { "One loop of the pattern (starts it)" };
-    juce::Label title, targetLabel, statusLabel, timeLabel, helpLabel;
+    RezalicaProcessor& processor;
+
+    juce::TextButton inputButton { "INPUT" }, computerButton { "COMPUTER" }, resampleButton { "RESAMPLE" }, settingsButton { "Audio Settings..." };
+    juce::ComboBox channelsBox, startBox, lengthBox, throughBox, chopBox;
+    juce::Slider threshold;
+    juce::ToggleButton monitorButton { "Monitor (hear the input)" }, patternButton { "One loop of the pattern (starts it)" },
+                       pickPadButton { "Choose the pad after REC (empty pads blink)" }, trimButton { "Trim the silence at both ends" };
+    juce::TextButton recButton { "REC" }, cancelButton { "CANCEL" };
+    juce::TextButton playTakeButton { "PLAY" }, keepButton { "KEEP" }, retryButton { "RETRY" }, discardButton { "DISCARD" };
+    juce::TextEditor nameEditor;
+    juce::Label title, channelsL, startL, lengthL, throughL, targetLabel, statusLabel, timeLabel, clipLabel, takeTitle, nameL, chopL;
     LevelMeter meter;
+    juce::Rectangle<int> takeArea;
+    bool resamplingPattern = false;
 };
 
 //==============================================================================

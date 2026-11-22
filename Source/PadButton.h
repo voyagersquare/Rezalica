@@ -35,6 +35,8 @@ public:
     void setSampleName (const juce::String& n) { if (n != name) { name = n; repaint(); } }
     void setHasFx (bool f)                   { if (f != hasFx) { hasFx = f; repaint(); } }
     void setBusBadge (const juce::String& b) { if (b != busBadge) { busBadge = b; repaint(); } }
+    /** Sampling: the pad blinks while REC waits for the pad that should get the take. */
+    void setArmed (bool a)                   { if (a != armed) { armed = a; repaint(); } }
     void flash()                             { flashLevel = 1.0f; repaint(); }
 
     void decay()
@@ -73,6 +75,13 @@ public:
         {
             g.setColour (juce::Colour (0xffffc94a).withAlpha (0.22f));
             g.fillRoundedRectangle (body, 6.0f);
+        }
+        if (armed)
+        {
+            g.setColour (juce::Colour (0xffe8423f).withAlpha (0.45f));
+            g.fillRoundedRectangle (body, 6.0f);
+            g.setColour (juce::Colour (0xffe8423f));
+            g.drawRoundedRectangle (body.reduced (1.0f), 6.0f, 3.0f);
         }
         g.setColour (selected ? accent : multiSelected ? juce::Colour (0xffe0a020) : juce::Colours::black.withAlpha (0.45f));
         g.drawRoundedRectangle (body, 6.0f, selected || multiSelected ? 2.5f : 1.0f);
@@ -235,6 +244,7 @@ private:
     int heldIndex = 0;
     bool selected = false, held = false, dragOver = false, hasFx = false, multiSelected = false;
     juce::String busBadge;
+    bool armed = false;
     float flashLevel = 0.0f;
 };
 } // namespace rz

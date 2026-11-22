@@ -770,12 +770,27 @@ void RezalicaEditor::timerCallback()
     if (! processor.getSequencer().isRunning() && waveform.getShownPad() != processor.selectedPad.load() && ! processor.isLazyChopActive())
         waveform.setPad (processor.selectedPad.load()); // stopped: back to the selected pad
 
+    // sampling, SP style: while REC waits for a pad, the empty pads blink; the next pad hit gets the take
+    {
+        const bool armed = processor.padChoiceArmed.load();
+        const bool blinkOn = (juce::Time::getMillisecondCounter() / 250) % 2 == 0;
+        for (auto& p : pads)
+            p->setArmed (armed && blinkOn && processor.getEngine().getPadSample (p->getIndex()) == nullptr);
+    }
+
     // follow pads played from MIDI / computer keyboard: show them in the waveform
     const int played = processor.getEngine().playedCounter.load();
     if (played != lastPlayedCounter)
     {
         lastPlayedCounter = played;
         const int pad = processor.getEngine().lastPlayedPad.load();
+        if (processor.padChoiceArmed.load() && pad >= 0 && pad < rz::numPads)
+        {
+            processor.padChoiceArmed = false;
+            processor.stopAll();                     // the hit only chooses the pad
+            selectPad (pad, false);
+            processor.startRecording (processor.armedRecordOptions);
+        }
         if (pad >= 0 && pad < rz::numPads && pad != processor.selectedPad.load())
             selectPad (pad, false);
     }

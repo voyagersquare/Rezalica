@@ -148,7 +148,12 @@ Tipkovnica računala svira trenutno odabranu banku:
   - Projekti se spremaju kao `.rezalica` datoteke (zadano u `Dokumenti/Rezalica/Projects`). Samplovi se pamte po putanji.
   - **Spremanje promjena**: pri zatvaranju programa, New Project i Open, ako ima nespremljenih promjena, pita „Save changes?“ — **YES** (spremi), **NO** (ne spremaj), **CANCEL** (ostani).
 - **Autosave**: svake minute (ako se nešto promijenilo) projekt se automatski sprema. Ako se Rezalica sruši ili nestane struje, pri sljedećem pokretanju nudi vraćanje automatski spremljenog projekta.
-- **SAMPLING**: snimanje na odabrani pad.
+- **SAMPLING**: snimanje na odabrani pad, kao na hardverskom sampleru (MPC 2000XL / Roland SP):
+  - **Start**: odmah ili **na zvuk iznad thresholda** (klizač, bijela crta na metru); **Length**: do STOP-a ili fiksno (1–8 s, 1 / 2 / 4 takta po tempu) – samo stane.
+  - **Channels**: stereo, mono lijevi ili mono desni ulaz; **CLIP** svijetli kad je ulaz preglasan.
+  - **Monitor**: ulaz se čuje dok snimaš; **Effects**: snimanje ulaza **kroz efekte** BUS-a A–D ili MASTER-a.
+  - **Choose the pad after REC**: nakon REC prazni padovi trepću – udari pad koji treba dobiti snimku (kao na SP-u).
+  - Nakon snimke **TAKE**: PLAY (preslušaj), **KEEP** (ime, „Trim the silence“, odmah chop na 2/4/8/16 ili po tranzijentima), **RETRY**, **DISCARD**.
   - **COMPUTER** (Windows): snima zvuk koji računalo reproducira (YouTube, Spotify, drugi programi …), bez kabela i virtualnih uređaja (WASAPI loopback zadanog izlaza). Pauze bez zvuka ostaju u snimci.
   - **INPUT**: snima ulaz zvučne kartice (mikrofon, line in, gramofon). „Start on sound“ čeka i kreće točno na prvom zvuku. Ulazni uređaj biraš u Audio Settings.
   - **RESAMPLE**: snima ono što Rezalica svira (padovi, efekti, sekvencer, master). „One loop of the pattern“ pokreće odabrani pattern od početka i snimi točno jedan njegov krug.

@@ -62,6 +62,10 @@ public:
     double getMaxSeconds() const { return buffer.getNumSamples() / juce::jmax (1.0, rate); }
     Source getSource() const { return source; }
 
+    /** INPUT / COMPUTER: 0 = stereo, 1 = mono from the left channel, 2 = mono from the right channel. */
+    std::atomic<int> inputMode { 0 };
+    std::atomic<bool> clipped { false };  // a sample hit full scale (reset by the UI)
+    void setThresholdDb (float db) { signalThreshold = juce::Decibels::decibelsToGain (db); }
     std::atomic<float> level { 0.0f };    // peak of what comes in (meter)
     std::atomic<float> inputLevel { 0.0f }; // input peak even when not recording (monitor meter)
     float signalThreshold = 0.02f;       // about -34 dB
@@ -83,7 +87,10 @@ public:
             for (int i = 0; i < numSamples; ++i)
                 pk = juce::jmax (pk, std::abs (data[ch][i]));
         if (from != output)
+        {
             inputLevel = juce::jmax (pk, inputLevel.load() * 0.8f);
+            if (pk >= 0.999f) clipped = true;
+        }
 
         const int st = state.load();
         if (from != source || (st != waiting && st != recording))
@@ -110,8 +117,13 @@ public:
 
         const int pos = writePos.load();
         const int n = juce::jmin (numSamples - first, buffer.getNumSamples() - pos);
+        const int mode = from == output ? 0 : inputMode.load();
         for (int ch = 0; ch < 2; ++ch)
-            buffer.copyFrom (ch, pos, data[juce::jmin (ch, numChannels - 1)] + first, n);
+        {
+            // mono L / mono R: one input channel on both sides of the take
+            const int srcCh = mode == 1 ? 0 : mode == 2 ? juce::jmin (1, numChannels - 1) : juce::jmin (ch, numChannels - 1);
+            buffer.copyFrom (ch, pos, data[srcCh] + first, n);
+        }
         writePos = pos + n;
         if (pos + n >= buffer.getNumSamples())
             state = finished; // full (or the planned length is done)

@@ -25,97 +25,239 @@ void sectionTitle (juce::Graphics& g, juce::Rectangle<int> area, const juce::Str
 //==============================================================================
 RecorderPanel::RecorderPanel (RezalicaProcessor& p) : processor (p)
 {
+    auto& st = AppSettings::get();
     title.setText ("SAMPLING", juce::dontSendNotification);
     title.setFont (juce::FontOptions (18.0f, juce::Font::bold));
     title.setColour (juce::Label::textColourId, colours::accent);
     addAndMakeVisible (title);
 
-    styleToggleButton (inputButton, colours::accent2);
-    styleToggleButton (resampleButton, colours::accent2);
-    styleToggleButton (computerButton, colours::accent2);
-    inputButton.setRadioGroupId (8101);
-    resampleButton.setRadioGroupId (8101);
-    computerButton.setRadioGroupId (8101);
-    computerButton.setTooltip ("Record what the computer plays (YouTube, Spotify, other programs ...) - Windows 'what you hear'");
-    computerButton.onClick = [this] { updateSourceUi(); };
+    // source
+    for (auto* b : { &inputButton, &computerButton, &resampleButton })
+    {
+        styleToggleButton (*b, colours::accent2);
+        b->setRadioGroupId (8101);
+        b->onClick = [this] { updateSourceUi(); };
+        addAndMakeVisible (*b);
+    }
     computerButton.setVisible (LoopbackCapture::isAvailable());
-    addChildComponent (computerButton);
-    inputButton.setToggleState (true, juce::dontSendNotification);
     inputButton.setTooltip ("Record the sound card input (microphone, line in, turntable ...)");
+    computerButton.setTooltip ("Record what the computer plays (YouTube, Spotify, other programs ...)");
     resampleButton.setTooltip ("Record what Rezalica plays (pads, effects, sequencer) onto a pad");
-    inputButton.onClick = [this] { updateSourceUi(); };
-    resampleButton.onClick = [this] { updateSourceUi(); };
-    addAndMakeVisible (inputButton);
-    addAndMakeVisible (resampleButton);
+    const int src = st.getIntValue ("recSource", 0);
+    (src == 2 ? resampleButton : src == 1 && LoopbackCapture::isAvailable() ? computerButton : inputButton).setToggleState (true, juce::dontSendNotification);
+    settingsButton.setWantsKeyboardFocus (false);
+    settingsButton.onClick = [this] { if (onAudioSettings) onAudioSettings(); };
+    addAndMakeVisible (settingsButton);
 
-    for (auto* t : { &waitButton, &patternButton })
+    auto label = [this] (juce::Label& l, const juce::String& t)
+    {
+        l.setText (t, juce::dontSendNotification);
+        l.setColour (juce::Label::textColourId, colours::text);
+        l.setJustificationType (juce::Justification::centredRight);
+        addAndMakeVisible (l);
+    };
+    label (channelsL, "Channels");
+    label (startL, "Start");
+    label (lengthL, "Length");
+    label (throughL, "Effects");
+
+    channelsBox.addItem ("Stereo", 1);
+    channelsBox.addItem ("Mono (left input)", 2);
+    channelsBox.addItem ("Mono (right input)", 3);
+    channelsBox.setSelectedId (st.getIntValue ("recChannels", 1), juce::dontSendNotification);
+    startBox.addItem ("At once (REC)", 1);
+    startBox.addItem ("On sound above the threshold", 2);
+    startBox.setSelectedId (st.getIntValue ("recStart", 2), juce::dontSendNotification);
+    lengthBox.addItem ("Until STOP", 1);
+    int id = 2;
+    for (auto t : { "1 second", "2 seconds", "4 seconds", "8 seconds", "1 bar", "2 bars", "4 bars" })
+        lengthBox.addItem (t, id++);
+    lengthBox.setSelectedId (st.getIntValue ("recLength", 1), juce::dontSendNotification);
+    throughBox.addItem ("Straight (no effects)", 1);
+    for (int b = 1; b < numBuses; ++b) throughBox.addItem ("Through " + busName (b) + " effects", b + 1);
+    throughBox.addItem ("Through MASTER effects", numBuses + 1);
+    throughBox.setSelectedId (1, juce::dontSendNotification);
+    throughBox.setTooltip ("Record the input through the plug-in effects of a mixer bus (like sampling through an effect on an SP)");
+    throughBox.onChange = [this]
+    {
+        const int sel = throughBox.getSelectedId();
+        processor.inputThroughBus = sel <= 1 ? -1 : (sel == numBuses + 1 ? 0 : sel - 1);
+    };
+    channelsBox.onChange = [this] { processor.getRecorder().inputMode = channelsBox.getSelectedId() - 1; };
+    processor.getRecorder().inputMode = channelsBox.getSelectedId() - 1;
+    startBox.onChange = [this] { updateSourceUi(); };
+    for (auto* c : { &channelsBox, &startBox, &lengthBox, &throughBox })
+    {
+        c->setWantsKeyboardFocus (false);
+        addAndMakeVisible (*c);
+    }
+
+    threshold.setSliderStyle (juce::Slider::LinearBar);
+    threshold.setRange (-60.0, -6.0, 1.0);
+    threshold.textFromValueFunction = [] (double v) { return "Threshold " + juce::String ((int) v) + " dB"; };
+    threshold.setValue (st.getDoubleValue ("recThreshold", -34.0), juce::dontSendNotification);
+    threshold.updateText();
+    threshold.setTooltip ("How loud the sound must be to start the take (the line on the meter)");
+    threshold.setColour (juce::Slider::trackColourId, colours::accent.withAlpha (0.45f));
+    threshold.onValueChange = [this] { processor.getRecorder().setThresholdDb ((float) threshold.getValue()); repaint(); };
+    threshold.setWantsKeyboardFocus (false);
+    addAndMakeVisible (threshold);
+
+    for (auto* t : { &monitorButton, &patternButton, &pickPadButton, &trimButton })
     {
         t->setWantsKeyboardFocus (false);
         t->setColour (juce::ToggleButton::textColourId, colours::text);
         t->setColour (juce::ToggleButton::tickColourId, colours::accent);
         addAndMakeVisible (*t);
     }
-    waitButton.setToggleState (true, juce::dontSendNotification);
+    monitorButton.setTooltip ("Hear the input while sampling (use headphones with a microphone)");
+    monitorButton.onClick = [this] { processor.monitorInput = monitorButton.getToggleState(); };
     patternButton.setToggleState (true, juce::dontSendNotification);
-    waitButton.setTooltip ("REC waits and starts at the first sound, so the sample starts right on the hit");
-    patternButton.setTooltip ("Starts the selected pattern from its first step and records exactly one loop of it");
+    pickPadButton.setToggleState (st.getBoolValue ("recPickPad", false), juce::dontSendNotification);
+    pickPadButton.setTooltip ("Like an SP: press REC, the empty pads blink, hit the pad that should get the sample");
+    trimButton.setToggleState (st.getBoolValue ("recTrim", true), juce::dontSendNotification);
 
     recButton.setWantsKeyboardFocus (false);
     recButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffa32a26));
-    recButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffe0413a));
     recButton.onClick = [this]
     {
         auto& r = processor.getRecorder();
+        if (processor.padChoiceArmed.load()) { processor.padChoiceArmed = false; statusLabel.setText ("Cancelled.", juce::dontSendNotification); return; }
         if (r.isBusy())
         {
             r.stop();
-            if (resampleButton.getToggleState() && patternButton.getToggleState())
-                processor.getSequencer().stopPlayback();
+            if (resamplingPattern) processor.getSequencer().stopPlayback();
             return;
         }
-        const auto src = currentSource();
-        if (src == AudioRecorder::input && ! processor.hasAudioInput())
+        if (pickPadButton.getToggleState() && currentSource() != AudioRecorder::output)
         {
-            statusLabel.setText ("No audio input. Choose an input device in Audio Settings.", juce::dontSendNotification);
+            // SP style: the pads blink, the hit pad gets the take (the editor starts it)
+            processor.armedRecordOptions = options();
+            processor.padChoiceArmed = true;
+            statusLabel.setText ("Hit the pad that should get the sample...", juce::dontSendNotification);
             return;
         }
-        if (! processor.startRecording (src, src == AudioRecorder::output && patternButton.getToggleState(),
-                                        src != AudioRecorder::output && waitButton.getToggleState()))
-            statusLabel.setText (src == AudioRecorder::computer ? "Computer sound: " + processor.getComputerAudioError()
-                                                                : juce::String ("Could not start recording."), juce::dontSendNotification);
+        startTake();
     };
     addAndMakeVisible (recButton);
-
     cancelButton.setWantsKeyboardFocus (false);
     cancelButton.onClick = [this]
     {
+        processor.padChoiceArmed = false;
         processor.getRecorder().cancel();
+        if (resamplingPattern) processor.getSequencer().stopPlayback();
         statusLabel.setText ("Cancelled.", juce::dontSendNotification);
     };
     addAndMakeVisible (cancelButton);
 
-    settingsButton.setWantsKeyboardFocus (false);
-    settingsButton.onClick = [this] { if (onAudioSettings) onAudioSettings(); };
-    addAndMakeVisible (settingsButton);
+    // KEEP / RETRY after a take
+    takeTitle.setText ("TAKE", juce::dontSendNotification);
+    takeTitle.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    takeTitle.setColour (juce::Label::textColourId, colours::accent2);
+    addChildComponent (takeTitle);
+    nameL.setText ("Name", juce::dontSendNotification);
+    nameL.setColour (juce::Label::textColourId, colours::text);
+    addChildComponent (nameL);
+    addChildComponent (nameEditor);
+    chopL.setText ("Then chop", juce::dontSendNotification);
+    chopL.setColour (juce::Label::textColourId, colours::text);
+    addChildComponent (chopL);
+    chopBox.addItem ("No", 1);
+    chopBox.addItem ("2 slices", 2);
+    chopBox.addItem ("4 slices", 3);
+    chopBox.addItem ("8 slices", 4);
+    chopBox.addItem ("16 slices", 5);
+    chopBox.addItem ("By transients", 6);
+    chopBox.setSelectedId (st.getIntValue ("recChop", 1), juce::dontSendNotification);
+    addChildComponent (chopBox);
+    addChildComponent (trimButton);
+    playTakeButton.onClick = [this] { processor.previewTake(); };
+    keepButton.setColour (juce::TextButton::buttonColourId, colours::accent);
+    keepButton.onClick = [this]
+    {
+        const int chopIds[] { RezalicaProcessor::chopOff, RezalicaProcessor::chop2, RezalicaProcessor::chop4, RezalicaProcessor::chop8,
+                              RezalicaProcessor::chop16, RezalicaProcessor::chopTransients };
+        const int pad = processor.selectedPad.load();
+        const auto f = processor.keepTake (pad, nameEditor.getText(), trimButton.getToggleState(), chopIds[juce::jlimit (0, 5, chopBox.getSelectedId() - 1)]);
+        auto& set = AppSettings::get();
+        set.setValue ("recTrim", trimButton.getToggleState());
+        set.setValue ("recChop", chopBox.getSelectedId());
+        set.saveIfNeeded();
+        statusLabel.setText (f.existsAsFile() ? "Kept \"" + f.getFileName() + "\" on " + padLabel (pad) : juce::String ("Could not save the take."), juce::dontSendNotification);
+        if (f.existsAsFile() && onRecorded) onRecorded();
+    };
+    retryButton.onClick = [this] { processor.discardTake(); startTake(); };
+    discardButton.onClick = [this] { processor.discardTake(); statusLabel.setText ("Take thrown away.", juce::dontSendNotification); };
+    for (auto* b : { &playTakeButton, &keepButton, &retryButton, &discardButton })
+    {
+        b->setWantsKeyboardFocus (false);
+        addChildComponent (*b);
+    }
 
-    for (auto* l : { &targetLabel, &statusLabel, &timeLabel, &helpLabel })
+    for (auto* l : { &targetLabel, &statusLabel, &timeLabel, &clipLabel })
         addAndMakeVisible (*l);
     targetLabel.setFont (juce::FontOptions (14.0f, juce::Font::bold));
     targetLabel.setColour (juce::Label::textColourId, colours::text);
     timeLabel.setFont (juce::FontOptions (28.0f, juce::Font::bold));
     timeLabel.setJustificationType (juce::Justification::centred);
     statusLabel.setColour (juce::Label::textColourId, colours::accent2);
-    helpLabel.setColour (juce::Label::textColourId, colours::dim);
-    helpLabel.setFont (juce::FontOptions (11.0f));
-    helpLabel.setJustificationType (juce::Justification::topLeft);
-    helpLabel.setText ("The take is saved as a WAV in Documents/Rezalica/Recordings and loaded onto the selected pad "
-                       "(ready to chop: pick a chop mode or use LAZY CHOP). UNDO brings the old sample back.",
-                       juce::dontSendNotification);
+    clipLabel.setText ("CLIP", juce::dontSendNotification);
+    clipLabel.setJustificationType (juce::Justification::centred);
+    clipLabel.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    clipLabel.setTooltip ("Lights when the input was too loud (click to reset)");
+    clipLabel.addMouseListener (this, false);
     addAndMakeVisible (meter);
 
     updateSourceUi();
-    setSize (520, 380);
+    setSize (560, 600);
     startTimerHz (20);
+}
+
+RecorderPanel::~RecorderPanel()
+{
+    stopTimer();
+    processor.padChoiceArmed = false;
+    processor.monitorInput = false;    // no hidden input routing once the window is gone
+    processor.inputThroughBus = -1;
+    if (! processor.getRecorder().isBusy()) processor.stopComputerAudio();
+}
+
+RezalicaProcessor::RecordOptions RecorderPanel::options() const
+{
+    RezalicaProcessor::RecordOptions o;
+    o.source = currentSource();
+    o.waitForSignal = startBox.getSelectedId() == 2;
+    o.thresholdDb = (float) threshold.getValue();
+    o.inputMode = channelsBox.getSelectedId() - 1;
+    o.patternLength = o.source == AudioRecorder::output && patternButton.getToggleState();
+    const int len = lengthBox.getSelectedId();
+    const double bpm = juce::jmax (20.0f, processor.getSequencer().effectiveBpm.load());
+    const double secs[] { 0.0, 0.0, 1.0, 2.0, 4.0, 8.0 };
+    if (len >= 2 && len <= 5) o.lengthSeconds = secs[len];
+    else if (len >= 6) o.lengthSeconds = (len == 6 ? 1 : len == 7 ? 2 : 4) * 4.0 * 60.0 / bpm; // bars at the sampler tempo
+    return o;
+}
+
+void RecorderPanel::startTake()
+{
+    auto& set = AppSettings::get();
+    set.setValue ("recSource", currentSource() == AudioRecorder::output ? 2 : currentSource() == AudioRecorder::computer ? 1 : 0);
+    set.setValue ("recChannels", channelsBox.getSelectedId());
+    set.setValue ("recStart", startBox.getSelectedId());
+    set.setValue ("recLength", lengthBox.getSelectedId());
+    set.setValue ("recThreshold", threshold.getValue());
+    set.setValue ("recPickPad", pickPadButton.getToggleState());
+    set.saveIfNeeded();
+    const auto o = options();
+    if (o.source == AudioRecorder::input && ! processor.hasAudioInput())
+    {
+        statusLabel.setText ("No audio input. Choose an input device in Audio Settings.", juce::dontSendNotification);
+        return;
+    }
+    resamplingPattern = o.patternLength;
+    if (! processor.startRecording (o))
+        statusLabel.setText (o.source == AudioRecorder::computer ? "Computer sound: " + processor.getComputerAudioError()
+                                                                  : juce::String ("Could not start recording."), juce::dontSendNotification);
 }
 
 AudioRecorder::Source RecorderPanel::currentSource() const
@@ -128,9 +270,16 @@ AudioRecorder::Source RecorderPanel::currentSource() const
 void RecorderPanel::updateSourceUi()
 {
     const auto src = currentSource();
-    waitButton.setVisible (src != AudioRecorder::output);
-    patternButton.setVisible (src == AudioRecorder::output);
+    const bool live = src != AudioRecorder::output;
+    for (auto* c : std::initializer_list<juce::Component*> { &channelsL, &channelsBox, &startL, &startBox, &pickPadButton })
+        c->setVisible (live);
+    threshold.setVisible (live && startBox.getSelectedId() == 2);
+    patternButton.setVisible (! live);
     settingsButton.setVisible (src == AudioRecorder::input);
+    monitorButton.setVisible (src == AudioRecorder::input);
+    throughL.setVisible (src == AudioRecorder::input);
+    throughBox.setVisible (src == AudioRecorder::input);
+    if (src != AudioRecorder::input) { processor.monitorInput = false; processor.inputThroughBus = -1; monitorButton.setToggleState (false, juce::dontSendNotification); throughBox.setSelectedId (1, juce::dontSendNotification); }
     // the computer's sound is listened to while COMPUTER is chosen (for the meter)
     if (src == AudioRecorder::computer)
     {
@@ -142,26 +291,30 @@ void RecorderPanel::updateSourceUi()
     }
     else if (! processor.getRecorder().isBusy())
         processor.stopComputerAudio();
+    resized();
 }
 
 void RecorderPanel::timerCallback()
 {
     auto& r = processor.getRecorder();
     const int pad = processor.selectedPad.load();
-    targetLabel.setText ("Records onto pad " + padLabel (pad) + "  (" + processor.getPadName (pad) + ")", juce::dontSendNotification);
+    const auto padName = processor.getPadName (pad);
+    targetLabel.setText ("Records onto pad " + padLabel (pad) + (padName.isNotEmpty() ? "  (" + padName + ")" : juce::String ("  (empty)")), juce::dontSendNotification);
 
-    const bool input = currentSource() != AudioRecorder::output;
+    const bool live = currentSource() != AudioRecorder::output;
     meter.level = (r.isBusy() && r.getState() == AudioRecorder::recording) ? r.level.load()
-                : input ? r.inputLevel.load() : processor.getMasterFx().outputPeak.load();
+                : live ? r.inputLevel.load() : processor.getMasterFx().outputPeak.load();
+    meter.threshold = (live && startBox.getSelectedId() == 2) ? (float) threshold.getValue() : -100.0f;
     r.inputLevel = r.inputLevel.load() * 0.85f;
     meter.repaint();
+    clipLabel.setColour (juce::Label::textColourId, r.clipped.load() ? juce::Colours::white : colours::dim);
+    clipLabel.setColour (juce::Label::backgroundColourId, r.clipped.load() ? juce::Colour (0xffe0413a) : juce::Colours::transparentBlack);
 
-    const bool busy = r.isBusy();
+    const bool busy = r.isBusy() || processor.padChoiceArmed.load();
     recButton.setToggleState (busy, juce::dontSendNotification);
-    recButton.setButtonText (busy ? "STOP" : "REC");
-    inputButton.setEnabled (! busy);
-    resampleButton.setEnabled (! busy);
-    computerButton.setEnabled (! busy);
+    recButton.setButtonText (processor.padChoiceArmed.load() ? "HIT A PAD" : r.isBusy() ? "STOP" : "REC");
+    for (auto* b : { &inputButton, &computerButton, &resampleButton })
+        b->setEnabled (! busy);
     cancelButton.setEnabled (busy);
 
     const double secs = r.getSecondsRecorded();
@@ -169,18 +322,27 @@ void RecorderPanel::timerCallback()
     timeLabel.setColour (juce::Label::textColourId, r.getState() == AudioRecorder::recording ? juce::Colour (0xffe0413a) : colours::text);
 
     if (r.getState() == AudioRecorder::waiting)
-        statusLabel.setText (r.getSource() != AudioRecorder::output ? "Waiting for sound..." : "Starting with the pattern...", juce::dontSendNotification);
+        statusLabel.setText (r.getSource() != AudioRecorder::output ? "Waiting for sound above the threshold..." : "Starting with the pattern...", juce::dontSendNotification);
     else if (r.getState() == AudioRecorder::recording)
         statusLabel.setText ("Recording...", juce::dontSendNotification);
     else if (r.getState() == AudioRecorder::finished)
     {
-        const auto file = processor.collectRecording (pad);
-        if (r.getSource() == AudioRecorder::output && patternButton.getToggleState())
-            processor.getSequencer().stopPlayback();
-        statusLabel.setText (file.existsAsFile() ? "Saved \"" + file.getFileName() + "\" onto " + padLabel (pad)
-                                                 : juce::String ("Nothing recorded."), juce::dontSendNotification);
-        if (file.existsAsFile() && onRecorded) onRecorded();
+        if (resamplingPattern) { processor.getSequencer().stopPlayback(); resamplingPattern = false; }
+        if (processor.fetchTake())
+        {
+            statusLabel.setText ("Take: " + juce::String (processor.getTakeSeconds(), 1) + " s.  PLAY to listen, KEEP to put it on " + padLabel (pad) + ", RETRY to record again.",
+                                 juce::dontSendNotification);
+            nameEditor.setText (juce::String());
+        }
+        else
+            statusLabel.setText ("Nothing recorded.", juce::dontSendNotification);
     }
+
+    const bool take = processor.hasTake();
+    for (auto* c : std::initializer_list<juce::Component*> { &takeTitle, &nameL, &nameEditor, &chopL, &chopBox, &trimButton,
+                                                              &playTakeButton, &keepButton, &retryButton, &discardButton })
+        if (c->isVisible() != take) c->setVisible (take);
+    if (take != ! takeArea.isEmpty()) { resized(); repaint(); }
 
     if (currentSource() == AudioRecorder::input && ! processor.hasAudioInput())
         statusLabel.setText ("No audio input. Choose an input device in Audio Settings.", juce::dontSendNotification);
@@ -189,35 +351,100 @@ void RecorderPanel::timerCallback()
 void RecorderPanel::paint (juce::Graphics& g)
 {
     g.fillAll (colours::background);
+    if (! takeArea.isEmpty())
+    {
+        g.setColour (colours::panel);
+        g.fillRoundedRectangle (takeArea.toFloat(), 6.0f);
+        g.setColour (colours::accent2.withAlpha (0.6f));
+        g.drawRoundedRectangle (takeArea.toFloat().reduced (0.5f), 6.0f, 1.0f);
+    }
 }
 
 void RecorderPanel::resized()
 {
     auto b = getLocalBounds().reduced (14);
-    title.setBounds (b.removeFromTop (28));
-    b.removeFromTop (6);
+    title.setBounds (b.removeFromTop (26));
+    b.removeFromTop (4);
     auto row = b.removeFromTop (30);
-    inputButton.setBounds (row.removeFromLeft (90)); row.removeFromLeft (6);
-    if (computerButton.isVisible()) { computerButton.setBounds (row.removeFromLeft (110)); row.removeFromLeft (6); }
-    resampleButton.setBounds (row.removeFromLeft (110)); row.removeFromLeft (12);
+    inputButton.setBounds (row.removeFromLeft (84)); row.removeFromLeft (4);
+    if (computerButton.isVisible()) { computerButton.setBounds (row.removeFromLeft (100)); row.removeFromLeft (4); }
+    resampleButton.setBounds (row.removeFromLeft (100));
     settingsButton.setBounds (row.removeFromRight (130));
     b.removeFromTop (8);
-    auto opt = b.removeFromTop (26);
-    waitButton.setBounds (opt);
-    patternButton.setBounds (opt);
+
+    auto line = [&b] (juce::Label& l, juce::Component& c)
+    {
+        auto r = b.removeFromTop (26);
+        l.setBounds (r.removeFromLeft (80));
+        r.removeFromLeft (8);
+        c.setBounds (r);
+        b.removeFromTop (5);
+    };
+    if (channelsBox.isVisible()) line (channelsL, channelsBox);
+    if (startBox.isVisible())
+    {
+        auto r = b.removeFromTop (26);
+        startL.setBounds (r.removeFromLeft (80));
+        r.removeFromLeft (8);
+        startBox.setBounds (r.removeFromLeft (r.getWidth() / 2 + 20));
+        r.removeFromLeft (6);
+        threshold.setBounds (r);
+        b.removeFromTop (5);
+    }
+    line (lengthL, lengthBox);
+    if (throughBox.isVisible()) line (throughL, throughBox);
+    {
+        auto r = b.removeFromTop (22);
+        r.removeFromLeft (88);
+        if (monitorButton.isVisible()) monitorButton.setBounds (r);
+        else if (patternButton.isVisible()) patternButton.setBounds (r);
+        b.removeFromTop (2);
+    }
+    if (pickPadButton.isVisible())
+    {
+        auto r = b.removeFromTop (22);
+        r.removeFromLeft (88);
+        pickPadButton.setBounds (r);
+    }
     b.removeFromTop (6);
     targetLabel.setBounds (b.removeFromTop (22));
-    b.removeFromTop (8);
-    auto recRow = b.removeFromTop (54);
+    b.removeFromTop (6);
+    auto recRow = b.removeFromTop (50);
     recButton.setBounds (recRow.removeFromLeft (150)); recRow.removeFromLeft (8);
     cancelButton.setBounds (recRow.removeFromLeft (90).withSizeKeepingCentre (90, 32)); recRow.removeFromLeft (8);
     timeLabel.setBounds (recRow);
     b.removeFromTop (8);
-    meter.setBounds (b.removeFromTop (14));
+    auto meterRow = b.removeFromTop (16);
+    clipLabel.setBounds (meterRow.removeFromRight (44));
+    meterRow.removeFromRight (6);
+    meter.setBounds (meterRow);
     b.removeFromTop (6);
-    statusLabel.setBounds (b.removeFromTop (22));
-    b.removeFromTop (4);
-    helpLabel.setBounds (b);
+    statusLabel.setBounds (b.removeFromTop (36));
+    b.removeFromTop (6);
+
+    takeArea = {};
+    if (processor.hasTake())
+    {
+        takeArea = b.removeFromTop (juce::jmin (b.getHeight(), 128));
+        auto t = takeArea.reduced (10, 6);
+        takeTitle.setBounds (t.removeFromTop (18));
+        auto r1 = t.removeFromTop (26);
+        nameL.setBounds (r1.removeFromLeft (50));
+        nameEditor.setBounds (r1);
+        t.removeFromTop (4);
+        auto r2 = t.removeFromTop (24);
+        trimButton.setBounds (r2.removeFromLeft (r2.getWidth() / 2));
+        chopL.setBounds (r2.removeFromLeft (76));
+        chopBox.setBounds (r2);
+        t.removeFromTop (6);
+        auto r3 = t.removeFromTop (30);
+        const int w = (r3.getWidth() - 18) / 4;
+        for (auto* bt : { &playTakeButton, &keepButton, &retryButton, &discardButton })
+        {
+            bt->setBounds (r3.removeFromLeft (w));
+            r3.removeFromLeft (6);
+        }
+    }
 }
 
 //==============================================================================

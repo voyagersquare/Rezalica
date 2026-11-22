@@ -1609,6 +1609,101 @@ int main (int argc, char** argv)
         check (! e.hasUnsavedChanges(), "after saving there is nothing to save");
     }
 
+    // ---- sampling like a hardware sampler: threshold, fixed length, mono L, through a bus, monitor, keep / retry ----
+    {
+        struct Half : public juce::AudioProcessor
+        {
+            Half() : juce::AudioProcessor (BusesProperties().withInput ("In", juce::AudioChannelSet::stereo()).withOutput ("Out", juce::AudioChannelSet::stereo())) {}
+            const juce::String getName() const override { return "Half"; }
+            void prepareToPlay (double, int) override {}
+            void releaseResources() override {}
+            void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer&) override { b.applyGain (0.5f); }
+            double getTailLengthSeconds() const override { return 0.0; }
+            bool acceptsMidi() const override { return false; }
+            bool producesMidi() const override { return false; }
+            juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+            bool hasEditor() const override { return false; }
+            int getNumPrograms() override { return 1; }
+            int getCurrentProgram() override { return 0; }
+            void setCurrentProgram (int) override {}
+            const juce::String getProgramName (int) override { return {}; }
+            void changeProgramName (int, const juce::String&) override {}
+            void getStateInformation (juce::MemoryBlock&) override {}
+            void setStateInformation (const void*, int) override {}
+        };
+        auto sp2 = std::make_unique<RezalicaProcessor> (true);
+        auto& r = *sp2;
+        r.setRateAndBufferSizeDetails (48000.0, 256);
+        r.prepareToPlay (48000.0, 256);
+        juce::AudioBuffer<float> blk (2, 256);
+        juce::MidiBuffer none;
+        auto feed = [&] (int blocks, float left, float right, int quietBlocks)
+        {
+            for (int i = 0; i < blocks; ++i)
+            {
+                for (int n = 0; n < 256; ++n)
+                {
+                    const float sw = std::sin ((float) (i * 256 + n) * 0.05f);
+                    blk.setSample (0, n, i < quietBlocks ? 0.001f * sw : left * sw);
+                    blk.setSample (1, n, i < quietBlocks ? 0.001f * sw : right * sw);
+                }
+                r.processBlock (blk, none);
+            }
+        };
+
+        // threshold -20 dB: a -40 dB signal does not start it, a loud one does; fixed 1 s; mono from the RIGHT input
+        RezalicaProcessor::RecordOptions o;
+        o.source = rz::AudioRecorder::input;
+        o.waitForSignal = true; o.thresholdDb = -20.0f; o.lengthSeconds = 1.0; o.inputMode = 2;
+        check (r.startRecording (o), "REC with threshold / length / mono R");
+        feed (20, 0.01f, 0.01f, 0);                                       // -40 dB: still waiting
+        const bool stillWaiting = r.getRecorder().getState() == rz::AudioRecorder::waiting;
+        feed (250, 0.1f, 0.8f, 0);                                        // loud: records 1 s, then stops by itself
+        r.processBlock (blk, none);
+        check (stillWaiting && r.getRecorder().getState() == rz::AudioRecorder::finished && r.fetchTake() && std::abs (r.getTakeSeconds() - 1.0) < 0.01,
+               "threshold waits for the sound; a fixed length stops by itself");
+        // the take is mono from the right input: both channels the same, at the right input's level
+        // (keep it: name, trim, chop 4)
+        const auto kept = r.keepTake (3, "My Take", true, RezalicaProcessor::chop4);
+        auto s3 = r.getEngine().getPadSample (3);
+        check (kept.getFileName().startsWith ("My Take") && s3 != nullptr && s3->buffer.getMagnitude (0, 0, s3->buffer.getNumSamples()) > 0.7f
+                   && std::abs (s3->buffer.getSample (0, 1000) - s3->buffer.getSample (1, 1000)) < 1.0e-6f,
+               "KEEP: named WAV, mono from the right input on both channels");
+        check (r.getEngine().getPadSample (0) != nullptr && r.getNumSlices() == 4, "KEEP can chop the take onto the pads right away");
+        kept.deleteFile();
+
+        // through a bus: the input goes through BUS A's effect (half level) and is recorded with it; RETRY / DISCARD
+        r.setSlotProcessor (1, 0, std::make_unique<Half>(), nullptr);
+        r.inputThroughBus = 1;
+        o.waitForSignal = false; o.inputMode = 0; o.lengthSeconds = 0.5;
+        r.startRecording (o);
+        feed (100, 0.8f, 0.8f, 0);
+        r.processBlock (blk, none);
+        check (r.fetchTake(), "a take through BUS A");
+        r.previewTake();
+        const juce::File none2 = r.keepTake (8, "", false, RezalicaProcessor::chopOff);
+        auto s8 = r.getEngine().getPadSample (8);
+        const float lvl = s8 != nullptr ? s8->buffer.getMagnitude (0, 0, s8->buffer.getNumSamples()) : 0.0f;
+        std::cout << "       through BUS A: take level " << lvl << "\n";
+        check (std::abs (lvl - 0.4f) < 0.02f, "sampling through a bus records the input with that bus's effects");
+        none2.deleteFile();
+        r.inputThroughBus = -1;
+        r.startRecording (o);
+        feed (100, 0.5f, 0.5f, 0);
+        r.processBlock (blk, none);
+        r.fetchTake();
+        r.discardTake();
+        check (! r.hasTake(), "DISCARD / RETRY throw the take away");
+
+        // monitor: the input is heard on the output
+        r.monitorInput = true;
+        feed (4, 0.5f, 0.5f, 0);
+        const float heard = blk.getMagnitude (0, 0, 256);
+        r.monitorInput = false;
+        feed (4, 0.5f, 0.5f, 0);
+        check (heard > 0.3f && blk.getMagnitude (0, 0, 256) < 1.0e-6f, "MONITOR: the input is heard only when it is on");
+    }
+
     // Copy / paste pad
     {
         auto& src = p.getEngine().getPad (2);

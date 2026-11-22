@@ -203,6 +203,34 @@ public:
     /** Starts a take. source: input or Rezalica's output; patternLength: resample exactly one loop
         of the selected pattern (starts it from the top); waitForSignal: start at the first sound. */
     bool startRecording (rz::AudioRecorder::Source source, bool patternLength, bool waitForSignal);
+    /** Sampling like a hardware sampler (MPC / SP). */
+    struct RecordOptions
+    {
+        rz::AudioRecorder::Source source = rz::AudioRecorder::input;
+        bool waitForSignal = true;     // threshold: starts at the first sound above it
+        float thresholdDb = -34.0f;
+        double lengthSeconds = 0.0;    // 0 = until STOP (max. 10 minutes); else it stops by itself
+        bool patternLength = false;    // RESAMPLE: exactly one loop of the selected pattern
+        int inputMode = 0;             // 0 stereo, 1 mono L, 2 mono R
+    };
+    bool startRecording (const RecordOptions&);
+    /** Monitor: the input is heard while sampling. Through a bus: the input goes through that bus's
+        effects (and is recorded with them). -1 = straight. */
+    std::atomic<bool> monitorInput { false };
+    /** SP style: REC pressed, the pads blink, the next pad hit gets the take (started by the editor). */
+    std::atomic<bool> padChoiceArmed { false };
+    RecordOptions armedRecordOptions;
+    std::atomic<int> inputThroughBus { -1 };
+
+    // ---- KEEP / RETRY: a finished take waits here until it is kept or thrown away ----
+    bool fetchTake();                       // moves a finished take out of the recorder (message thread)
+    bool hasTake() const noexcept { return pendingTake.getNumSamples() > 0; }
+    double getTakeSeconds() const noexcept { return pendingTake.getNumSamples() / juce::jmax (1.0, pendingTakeRate); }
+    void previewTake();
+    void discardTake();
+    /** Saves the take as a WAV (name), optionally without the silence at its ends, loads it onto the pad
+        and optionally chops it (chop mode, or chopOff). Returns the file. */
+    juce::File keepTake (int pad, const juce::String& name, bool trimSilence, int chopModeAfter);
     /** Message thread: when a take is finished, writes it to a WAV (Documents/Rezalica/Recordings)
         and loads it to the pad (the selected pad becomes the chop source). Returns the file, or {}. */
     juce::File collectRecording (int pad);
@@ -300,6 +328,11 @@ private:
     int clickSamplesLeft = 0, clickLength = 1;
     double clickPhase = 0.0, clickFreq = 1000.0;
     rz::SampleData::Ptr previewData;
+    juce::AudioBuffer<float> pendingTake;
+    double pendingTakeRate = 44100.0;
+    rz::AudioRecorder::Source pendingTakeSource = rz::AudioRecorder::input;
+    juce::AudioBuffer<float> inputCopy;   // the input of this block (monitor / through a bus)
+    int inputCopyChannels = 0;
     juce::int64 savedFingerprint = 0;
     juce::int64 projectFingerprint();
     static constexpr int playSampleTag = (1 << 28) + 7; // PLAY of an empty pattern plays the selected pad
