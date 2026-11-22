@@ -76,7 +76,7 @@ public:
 
         // raised moulded rubber key: shadow under it, bright top, dark bottom, highlight on the top edge
         const float lift = down ? 0.5f : 3.0f;
-        g.setColour (juce::Colours::black.withAlpha (0.6f));
+        g.setColour (juce::Colours::black.withAlpha (0.75f));
         g.fillRoundedRectangle (r.translated (0.0f, lift), 4.0f);
         if (down) r = r.translated (0.0f, 1.0f);
         g.setGradientFill (juce::ColourGradient (face.brighter (down ? 0.05f : 0.25f), r.getX(), r.getY(),
@@ -145,6 +145,18 @@ public:
         const float angle = startAngle + pos * (endAngle - startAngle);
         const float arcR = radius - 2.0f;
 
+        // the knob casts a soft shadow down and to the right (light from the upper left)
+        {
+            const float kr = radius * 0.66f;
+            for (int i = 7; i >= 0; --i)
+            {
+                const float spread = (float) i * 1.5f;
+                g.setColour (juce::Colours::black.withAlpha (i == 0 ? 0.6f : 0.13f));
+                g.fillEllipse (c.x - kr - spread + 3.0f + (float) i * 0.9f, c.y - kr - spread + 5.0f + (float) i * 1.3f,
+                               (kr + spread) * 2.0f, (kr + spread) * 2.0f);
+            }
+        }
+
         juce::Path track;
         track.addCentredArc (c.x, c.y, arcR, arcR, 0.0f, startAngle, endAngle, true);
         g.setColour (juce::Colours::black.withAlpha (0.5f));
@@ -168,8 +180,8 @@ public:
             g.setColour (accent.withAlpha (slider.isEnabled() ? 0.9f : 0.35f));
             g.fillEllipse (p.x - 1.4f, p.y - 1.4f, 2.8f, 2.8f);
         }
-        g.setColour (juce::Colours::black.withAlpha (0.55f));
-        g.fillEllipse (c.x - knobR, c.y - knobR + 2.0f, knobR * 2.0f, knobR * 2.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.7f));
+        g.fillEllipse (c.x - knobR + 0.5f, c.y - knobR + 2.5f, knobR * 2.0f, knobR * 2.0f);
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3a3a3d), c.x - knobR * 0.4f, c.y - knobR,
                                                  juce::Colour (0xff0b0b0c), c.x + knobR * 0.3f, c.y + knobR, false));
         g.fillEllipse (c.x - knobR, c.y - knobR, knobR * 2.0f, knobR * 2.0f);
@@ -182,6 +194,15 @@ public:
         }
         g.setColour (juce::Colours::black);
         g.drawEllipse (c.x - knobR, c.y - knobR, knobR * 2.0f, knobR * 2.0f, 1.0f);
+        // the light catches the upper-left edge of the cap, so the knob stands out from the dark panel
+        {
+            juce::Path rim;
+            rim.addCentredArc (c.x, c.y, knobR - 0.8f, knobR - 0.8f, 0.0f,
+                               -juce::MathConstants<float>::pi * 0.85f, juce::MathConstants<float>::pi * 0.15f, true);
+            g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.38f), c.x - knobR * 0.7f, c.y - knobR * 0.7f,
+                                                     juce::Colours::white.withAlpha (0.0f), c.x + knobR * 0.4f, c.y + knobR * 0.4f, false));
+            g.strokePath (rim, juce::PathStrokeType (1.4f));
+        }
         // light from the top left on the knob cap
         g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.22f), c.x - knobR * 0.5f, c.y - knobR * 0.7f,
                                                  juce::Colours::transparentWhite, c.x, c.y, true));

@@ -1622,8 +1622,8 @@ void RezalicaEditor::renderFaceplate()
         };
         addChildren (*this, {}, 0);
     }
-    juce::DropShadow (juce::Colours::black.withAlpha (0.62f), 18, { 5, 11 }).drawForImage (g, shapes);  // the soft room shadow
-    juce::DropShadow (juce::Colours::black.withAlpha (0.55f), 4, { 1, 3 }).drawForImage (g, shapes);   // contact shadow right under it
+    juce::DropShadow (juce::Colours::black.withAlpha (0.82f), 22, { 7, 14 }).drawForImage (g, shapes);  // the soft room shadow
+    juce::DropShadow (juce::Colours::black.withAlpha (0.7f), 5, { 2, 3 }).drawForImage (g, shapes);   // contact shadow right under it
 }
 
 void RezalicaEditor::paint (juce::Graphics& g)
@@ -1652,7 +1652,7 @@ void RezalicaEditor::paint (juce::Graphics& g)
         // raised black panel: soft drop shadow, light top edge, dark bottom edge
         for (int i = 4; i > 0; --i)
         {
-            g.setColour (juce::Colours::black.withAlpha (0.06f * (float) i));
+            g.setColour (juce::Colours::black.withAlpha (0.09f * (float) i));
             g.fillRoundedRectangle (f.translated (0.0f, (float) (5 - i)).expanded ((float) (5 - i) * 0.6f), 8.0f);
         }
         g.setGradientFill (juce::ColourGradient (panel.brighter (0.18f), f.getX(), f.getY(), panel.darker (0.35f), f.getX(), f.getBottom(), false));
@@ -1712,8 +1712,8 @@ void RezalicaEditor::paint (juce::Graphics& g)
         const float rFrame = rScreen + (float) tvBezel * 0.8f;
         for (int i = 5; i > 0; --i)
         {
-            g.setColour (juce::Colours::black.withAlpha (0.10f * (float) i));
-            g.fillRoundedRectangle (frame.translated (0.0f, (float) (7 - i)).expanded ((float) (5 - i) * 0.8f), rFrame);
+            g.setColour (juce::Colours::black.withAlpha (0.13f * (float) i));
+            g.fillRoundedRectangle (frame.translated ((float) (6 - i) * 0.5f, (float) (8 - i)).expanded ((float) (5 - i) * 0.9f), rFrame);
         }
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff1ecdf), frame.getX(), frame.getY(),
                                                  juce::Colour (0xffb9b19c), frame.getX(), frame.getBottom(), false));
