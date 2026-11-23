@@ -2235,6 +2235,44 @@ int main (int argc, char** argv)
         }
     }
 
+    {
+        // NORMALIZE (peak): the loudest peak between the markers goes to the target, one gain for everything
+        auto nf = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_norm.wav");
+        {
+            juce::AudioBuffer<float> b (1, 48000);
+            for (int i = 0; i < 48000; ++i) b.setSample (0, i, (i < 24000 ? 0.25f : 0.1f) * std::sin ((float) i * 0.05f));
+            juce::WavAudioFormat wav;
+            nf.deleteFile();
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (nf), 48000, 1, 24, {}, 0));
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+        }
+        auto np = std::make_unique<RezalicaProcessor> (false);
+        auto& n = *np;
+        n.prepareToPlay (48000.0, 512);
+        n.loadFileToPad (0, nf);
+        n.getEngine().setPadSample (1, n.getEngine().getPadSample (0)); // a second pad on the same sample
+        const auto before = n.getEngine().getPadSample (0);
+        const double change = n.normalizePad (0, -1.0f);
+        const auto after = n.getEngine().getPadSample (0);
+        const float newPeak = after->buffer.getMagnitude (0, 0, after->buffer.getNumSamples());
+        const float quietBefore = before->buffer.getMagnitude (0, 30000, 10000), quietAfter = after->buffer.getMagnitude (0, 30000, 10000);
+        std::cout << "       normalize: " << change << " dB, peak " << juce::Decibels::gainToDecibels (newPeak) << " dBFS\n";
+        check (std::abs (juce::Decibels::gainToDecibels (newPeak) + 1.0f) < 0.05f, "NORMALIZE: the loudest peak lands on -1 dBFS");
+        check (std::abs (quietAfter / newPeak - quietBefore / before->buffer.getMagnitude (0, 0, 48000)) < 0.01f,
+               "NORMALIZE keeps the dynamics (one gain for the whole sample)");
+        check (n.getEngine().getPadSample (1) == before && after->file.existsAsFile(), "only this pad changes; the result is saved");
+        // only the part between the markers counts: the second half (peak 0.1) goes to -3 dBFS
+        n.getEngine().getPad (1).start = 0.5f;
+        n.normalizePad (1, -3.0f);
+        auto half = n.getEngine().getPadSample (1);
+        check (std::abs (juce::Decibels::gainToDecibels (half->buffer.getMagnitude (0, 24000, 24000)) + 3.0f) < 0.05f,
+               "NORMALIZE measures the part between the markers");
+        after->file.deleteFile();
+        half->file.deleteFile();
+        n.clearPad (2);
+        check (std::isnan (n.normalizePad (2, -1.0f)), "an empty pad is not normalized");
+    }
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

@@ -192,6 +192,16 @@ Tipkovnica računala svira trenutno odabranu banku:
   - izlazni i ulazni uređaj, aktivni kanali, sample rate, buffer size (latencija), probni ton i MIDI ulazi (kontroleri)
 - ASIO podrška ugrađuje se pri automatskoj izradi pomoću službenog Steinberg ASIO SDK-a (ASIO je zaštitni znak tvrtke Steinberg Media Technologies GmbH).
 
+## NORMALIZE (peak)
+
+Gumb **NORMALIZE** (u redu s LOOP / REVERSE / GATE / MUTE) radi klasičnu peak normalizaciju, kao Audacity,
+FL Studio, Ableton ili MPC: pronađe najglasniji vrh samplea između markera i pojača (ili stiša) cijeli
+sample za isti iznos, tako da taj vrh dođe na odabranu razinu. Dinamika se ne mijenja.
+
+- Razine: 0 dBFS, -0.1 dBFS, **-1 dBFS (preporučeno)**, -2, -3 dBFS (mjesto za miks), -6 dBFS.
+- Rezultat je novi sample samo na tom padu (drugi padovi iz istog samplea ostaju kakvi jesu), spremljen u
+  `Documents/Rezalica/Normalized` (32-bit float WAV). UNDO ga vraća.
+
 ## DECK (gramofon za scratch)
 
 Gumb **DECK** (uz SONG) otvara gramofon u donjem dijelu prozora.

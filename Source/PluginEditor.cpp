@@ -324,6 +324,13 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     };
     addAndMakeVisible (chokeBox);
 
+    normalizeButton.setWantsKeyboardFocus (false);
+    normalizeButton.setTooltip ("NORMALIZE (peak): turns the pad's sample up or down so its loudest peak (between the markers) "
+                                "reaches the chosen level, without changing the dynamics. -1 dBFS is a good default; "
+                                "-3 dBFS or lower leaves room for mixing.");
+    normalizeButton.onClick = [this] { showNormalizeMenu(); };
+    addAndMakeVisible (normalizeButton);
+
     trimButton.setTooltip ("Trim / truncate: keep only the orange part between the markers as a new sample on this pad "
                            "(saved in Documents/Rezalica/Trimmed)");
     trimButton.onClick = [this]
@@ -1407,8 +1414,37 @@ std::vector<juce::Component*> RezalicaEditor::stripAndFxComponents()
 {
     // (the pad title row with WARP / STRETCH / TRIM / RENDER / CLEAR stays)
     return { &gainKnob, &panKnob, &pitchKnob, &attackKnob, &releaseKnob, &startKnob, &endKnob,
-             &loopButton, &reverseButton, &gateButton, &muteButton, &chokeBox,
+             &loopButton, &reverseButton, &gateButton, &muteButton, &chokeBox, &normalizeButton,
              &fxTitle, mixer.get() };
+}
+
+void RezalicaEditor::showNormalizeMenu()
+{
+    const int pad = processor.selectedPad.load();
+    if (processor.getEngine().getPadSample (pad) == nullptr)
+        return;
+    // peak normalization: the loudest peak goes to this level (dBFS)
+    static const std::array<std::pair<float, const char*>, 6> targets {{
+        { 0.0f, "0 dBFS  (full scale)" }, { -0.1f, "-0.1 dBFS" }, { -1.0f, "-1 dBFS  (recommended)" },
+        { -2.0f, "-2 dBFS" }, { -3.0f, "-3 dBFS  (room for mixing)" }, { -6.0f, "-6 dBFS  (more room for mixing)" } }};
+    juce::PopupMenu m;
+    m.addSectionHeader ("Normalize " + rz::padLabel (pad) + ": loudest peak to");
+    for (int i = 0; i < (int) targets.size(); ++i)
+        m.addItem (i + 1, targets[(size_t) i].second, true, std::abs (targets[(size_t) i].first - normalizeTargetDb) < 0.01f);
+    juce::Component::SafePointer<RezalicaEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&normalizeButton), [safe, pad] (int r)
+    {
+        if (safe == nullptr || r <= 0) return;
+        auto& ed = *safe;
+        ed.normalizeTargetDb = targets[(size_t) (r - 1)].first;
+        ed.processor.pushUndo ("Normalize");
+        const double change = ed.processor.normalizePad (pad, ed.normalizeTargetDb);
+        if (std::isnan (change)) return;
+        ed.selectPad (pad);
+        // a moment of feedback on the key: how much it was turned up / down
+        ed.normalizeButton.setButtonText ((change >= 0.0 ? "+" : "") + juce::String (change, 1) + " dB");
+        juce::Timer::callAfterDelay (1800, [safe] { if (safe != nullptr) safe->normalizeButton.setButtonText ("NORMALIZE"); });
+    });
 }
 
 void RezalicaEditor::showDock (int view)
@@ -1946,11 +1982,13 @@ void RezalicaEditor::layoutComponents()
             k->setBounds (knobs.removeFromLeft (kw).reduced (2, 0));
 
         s.removeFromTop (8);
+        // half-width keys in one row, NORMALIZE next to them
         auto toggles = s.removeFromTop (30);
-        const int tw = toggles.getWidth() / 5;
+        const int tw = toggles.getWidth() / 10;
         for (auto* t : { &loopButton, &reverseButton, &gateButton, &muteButton })
             t->setBounds (toggles.removeFromLeft (tw).reduced (3, 0));
-        chokeBox.setBounds (toggles.reduced (3, 0));
+        chokeBox.setBounds (toggles.removeFromLeft (juce::jmax (tw, 92)).reduced (3, 0));
+        normalizeButton.setBounds (toggles.removeFromLeft (juce::jmax (tw, 96)).reduced (3, 0));
     }
 
     layoutPads();

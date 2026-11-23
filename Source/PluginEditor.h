@@ -130,6 +130,9 @@ private:
     juce::Label padTitle;
     rz::Knob gainKnob { "GAIN" }, panKnob { "PAN" }, pitchKnob { "PITCH" }, attackKnob { "ATTACK" },
              releaseKnob { "RELEASE" }, startKnob { "START" }, endKnob { "END" };
+    juce::TextButton normalizeButton { "NORMALIZE" };
+    float normalizeTargetDb = -1.0f;                   // the last NORMALIZE target (dBFS)
+    void showNormalizeMenu();
     juce::TextButton loopButton { "LOOP" }, reverseButton { "REVERSE" }, gateButton { "GATE" },
                      muteButton { "MUTE" }, renderButton { "RENDER" }, clearPadButton { "CLEAR" }, trimButton { "TRIM" },
                      warpButton { "WARP" }, stretchButton { "STRETCH..." };

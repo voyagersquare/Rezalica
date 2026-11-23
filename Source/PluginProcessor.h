@@ -63,6 +63,11 @@ public:
     void setTransientSensitivity (float sensitivity01);       // re-chops when in transient mode
     void clearPad (int pad);
     bool trimPad (int pad); // keeps only start..end of the pad's sample (new sample, saved as WAV)
+    /** NORMALIZE (peak): finds the loudest peak between the pad's markers and turns the whole sample up or down
+        by one amount, so that peak lands on targetDb (dBFS). The dynamics stay the same. The result is a new sample
+        on this pad only (other pads chopped from the same sample keep theirs), saved in Documents/Rezalica/Normalized.
+        Returns the change in dB, or NaN when the pad is empty / silent. */
+    double normalizePad (int pad, float targetDb);
     static juce::File getTrimFolder();
 
     // Time stretch / warp (applied to the selected pad's sample, or only its region)

@@ -1238,6 +1238,60 @@ bool RezalicaProcessor::trimPad (int pad)
     return true;
 }
 
+double RezalicaProcessor::normalizePad (int pad, float targetDb)
+{
+    auto src = engine.getPadSample (pad);
+    if (src == nullptr)
+        return std::numeric_limits<double>::quiet_NaN();
+
+    // the loudest single peak in the part that plays (between the markers), both channels
+    auto& ps = engine.getPad (pad);
+    const int len = src->buffer.getNumSamples();
+    float st = ps.start.load(), en = ps.end.load();
+    if (en < st) std::swap (st, en);
+    const int a = juce::jlimit (0, len - 1, (int) (st * (float) len));
+    const int b = juce::jlimit (a + 1, len, (int) (en * (float) len));
+    float peak = 0.0f;
+    for (int ch = 0; ch < src->buffer.getNumChannels(); ++ch)
+        peak = juce::jmax (peak, src->buffer.getMagnitude (ch, a, b - a));
+    if (peak < 1.0e-6f)
+        return std::numeric_limits<double>::quiet_NaN(); // silence: nothing to normalize
+
+    // one gain for the whole sample: the peak lands on the target, the dynamics do not change
+    const float gain = juce::Decibels::decibelsToGain (targetDb) / peak;
+    rz::SampleData::Ptr s = new rz::SampleData();
+    s->buffer.makeCopyOf (src->buffer);
+    s->buffer.applyGain (gain);
+    s->sampleRate = src->sampleRate;
+    s->name = src->name.endsWith (" norm") ? src->name : src->name + " norm";
+
+    // on disk, so the project finds it again (32-bit float: parts outside the markers may go over 0 dB)
+    auto folder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Normalized");
+    folder.createDirectory();
+    auto file = folder.getNonexistentChildFile (juce::File::createLegalFileName (s->name), ".wav", false);
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> out (file.createOutputStream());
+        if (out != nullptr)
+            if (std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (out.get(), s->sampleRate, 2, 32, {}, 0)); w != nullptr)
+            {
+                out.release();
+                w->writeFromAudioSampleBuffer (s->buffer, 0, s->buffer.getNumSamples());
+            }
+    }
+    if (file.existsAsFile())
+        s->file = file;
+
+    samplePool.add (s);
+    engine.setPadSample (pad, s); // the markers (start / end) stay where they were
+    {
+        const juce::ScopedLock sl (missingPathLock);
+        missingPaths[(size_t) pad] = {};
+    }
+    padsChanged.sendChangeMessage();
+    return juce::Decibels::gainToDecibels (gain);
+}
+
 void RezalicaProcessor::clearPad (int pad)
 {
     const bool wasChopSource = chopSource != nullptr && engine.getPadSample (pad) == chopSource;
