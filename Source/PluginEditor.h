@@ -134,7 +134,7 @@ private:
     float normalizeTargetDb = -1.0f;                   // the last NORMALIZE target (dBFS)
     void showNormalizeMenu();
     juce::TextButton loopButton { "LOOP" }, reverseButton { "REVERSE" }, gateButton { "GATE" },
-                     muteButton { "MUTE" }, renderButton { "RENDER" }, clearPadButton { "CLEAR" }, trimButton { "TRIM" },
+                     muteButton { "MUTE" }, renderButton { "BOUNCE" }, clearPadButton { "CLEAR" }, trimButton { "TRIM" },
                      warpButton { "WARP" }, stretchButton { "STRETCH..." };
     juce::ComboBox chokeBox;
     std::unique_ptr<rz::MixerPanel> mixer;            // BUS A-D + MASTER with third-party effects (replaces the built-in effects)

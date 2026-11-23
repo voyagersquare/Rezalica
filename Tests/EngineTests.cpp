@@ -2260,13 +2260,16 @@ int main (int argc, char** argv)
         check (std::abs (juce::Decibels::gainToDecibels (newPeak) + 1.0f) < 0.05f, "NORMALIZE: the loudest peak lands on -1 dBFS");
         check (std::abs (quietAfter / newPeak - quietBefore / before->buffer.getMagnitude (0, 0, 48000)) < 0.01f,
                "NORMALIZE keeps the dynamics (one gain for the whole sample)");
-        check (n.getEngine().getPadSample (1) == before && after->file.existsAsFile(), "only this pad changes; the result is saved");
-        // only the part between the markers counts: the second half (peak 0.1) goes to -3 dBFS
+        check (n.getEngine().getPadSample (1) == before && after->file.existsAsFile()
+               && after->file.getParentDirectory().getFileName() == "Bounced" && n.getChopSource() == after,
+               "NORMALIZE bounces: a new WAV on this pad only, loaded into the sample view");
+        // only the part between the markers counts (and is bounced): the second half (peak 0.1) goes to -3 dBFS
         n.getEngine().getPad (1).start = 0.5f;
         n.normalizePad (1, -3.0f);
         auto half = n.getEngine().getPadSample (1);
-        check (std::abs (juce::Decibels::gainToDecibels (half->buffer.getMagnitude (0, 24000, 24000)) + 3.0f) < 0.05f,
-               "NORMALIZE measures the part between the markers");
+        check (std::abs (juce::Decibels::gainToDecibels (half->buffer.getMagnitude (0, 0, half->buffer.getNumSamples())) + 3.0f) < 0.05f
+               && std::abs (half->buffer.getNumSamples() - 24000) < 4 && n.getEngine().getPad (1).start.load() == 0.0f,
+               "NORMALIZE measures and bounces the part between the markers");
         after->file.deleteFile();
         half->file.deleteFile();
         n.clearPad (2);

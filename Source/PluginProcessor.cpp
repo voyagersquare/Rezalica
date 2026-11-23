@@ -1244,51 +1244,46 @@ double RezalicaProcessor::normalizePad (int pad, float targetDb)
     if (src == nullptr)
         return std::numeric_limits<double>::quiet_NaN();
 
-    // the loudest single peak in the part that plays (between the markers), both channels
+    // the part that plays (between the markers; for a warped pad the stretched audio)
     auto& ps = engine.getPad (pad);
     const int len = src->buffer.getNumSamples();
     float st = ps.start.load(), en = ps.end.load();
     if (en < st) std::swap (st, en);
     const int a = juce::jlimit (0, len - 1, (int) (st * (float) len));
     const int b = juce::jlimit (a + 1, len, (int) (en * (float) len));
+
+    // peak normalization: the loudest single peak, one gain for everything (the dynamics stay the same)
     float peak = 0.0f;
     for (int ch = 0; ch < src->buffer.getNumChannels(); ++ch)
         peak = juce::jmax (peak, src->buffer.getMagnitude (ch, a, b - a));
     if (peak < 1.0e-6f)
         return std::numeric_limits<double>::quiet_NaN(); // silence: nothing to normalize
-
-    // one gain for the whole sample: the peak lands on the target, the dynamics do not change
     const float gain = juce::Decibels::decibelsToGain (targetDb) / peak;
-    rz::SampleData::Ptr s = new rz::SampleData();
-    s->buffer.makeCopyOf (src->buffer);
-    s->buffer.applyGain (gain);
-    s->sampleRate = src->sampleRate;
-    s->name = src->name.endsWith (" norm") ? src->name : src->name + " norm";
 
-    // on disk, so the project finds it again (32-bit float: parts outside the markers may go over 0 dB)
-    auto folder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Normalized");
+    // then BOUNCE: the result becomes a new WAV of just that part ...
+    juce::AudioBuffer<float> out (2, b - a);
+    for (int ch = 0; ch < 2; ++ch)
+        out.copyFrom (ch, 0, src->buffer, juce::jmin (ch, src->buffer.getNumChannels() - 1), a, b - a);
+    out.applyGain (gain);
+    auto base = src->name.replace ("[", "").replace ("]", "").trim();
+    if (! base.endsWith (" norm")) base += " norm";
+    auto folder = getRenderFolder();
     folder.createDirectory();
-    auto file = folder.getNonexistentChildFile (juce::File::createLegalFileName (s->name), ".wav", false);
+    auto file = folder.getNonexistentChildFile (juce::File::createLegalFileName (base), ".wav", false);
     {
         juce::WavAudioFormat wav;
-        std::unique_ptr<juce::OutputStream> out (file.createOutputStream());
-        if (out != nullptr)
-            if (std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (out.get(), s->sampleRate, 2, 32, {}, 0)); w != nullptr)
-            {
-                out.release();
-                w->writeFromAudioSampleBuffer (s->buffer, 0, s->buffer.getNumSamples());
-            }
+        std::unique_ptr<juce::OutputStream> os (file.createOutputStream());
+        if (os == nullptr) return std::numeric_limits<double>::quiet_NaN();
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), src->sampleRate, 2, 24, {}, 0));
+        if (w == nullptr) return std::numeric_limits<double>::quiet_NaN();
+        os.release();
+        if (! w->writeFromAudioSampleBuffer (out, 0, out.getNumSamples())) return std::numeric_limits<double>::quiet_NaN();
     }
-    if (file.existsAsFile())
-        s->file = file;
 
-    samplePool.add (s);
-    engine.setPadSample (pad, s); // the markers (start / end) stay where they were
-    {
-        const juce::ScopedLock sl (missingPathLock);
-        missingPaths[(size_t) pad] = {};
-    }
-    padsChanged.sendChangeMessage();
+    // ... loaded back onto the pad and into the sample view, ready for more work (chop, warp, trim ...), like Ableton
+    selectedPad = juce::jlimit (0, rz::numPads - 1, pad);
+    if (! loadFileForChopping (file))
+        return std::numeric_limits<double>::quiet_NaN();
     return juce::Decibels::gainToDecibels (gain);
 }
 
@@ -1682,7 +1677,7 @@ bool RezalicaProcessor::exportSong (const juce::File& file, const ExportSettings
 
 juce::File RezalicaProcessor::getRenderFolder()
 {
-    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Rendered");
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rezalica").getChildFile ("Bounced");
 }
 
 bool RezalicaProcessor::consolidatePad (int pad)
@@ -1695,7 +1690,7 @@ bool RezalicaProcessor::consolidatePad (int pad)
     rz::SampleData::Ptr s = new rz::SampleData();
     s->buffer = warped->buffer;
     s->sampleRate = warped->sampleRate;
-    s->name = warped->name.replace ("[", "").replace ("]", "") + " render";
+    s->name = warped->name.replace ("[", "").replace ("]", "") + " bounce";
 
     auto folder = getRenderFolder();
     folder.createDirectory();

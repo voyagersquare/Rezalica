@@ -25,7 +25,7 @@
     - **Tempo**: prati tempo DAW-a (ako se tempo promijeni, sample se sam ponovno rastegne) ili ručni BPM.
     - **Apply to**: cijeli sample (svi njegovi isječci i padovi ga prate) ili samo odabrani pad.
     - **Beats opcije**: Preserve (Transients, 1/8, 1/16), Transient loop (Off, Loop Forward, Loop Back-and-Forth), Transient envelope.
-  - **RENDER** (consolidate): kad završiš s Time Stretchom i Warpom, RENDER zapisuje obrađeni sample kao novi WAV u `Dokumenti/Rezalica/Rendered` i automatski ga stavlja umjesto starog na sve padove koji ga koriste. Rezovi ostaju na istom mjestu.
+  - **RENDER** (consolidate): kad završiš s Time Stretchom i Warpom, RENDER zapisuje obrađeni sample kao novi WAV u `Dokumenti/Rezalica/Bounced` i automatski ga stavlja umjesto starog na sve padove koji ga koriste. Rezovi ostaju na istom mjestu.
   - Rastezanje se računa u pozadini, pa plugin ne zastaje (dok traje, gumb pokazuje `WARP...`).
   - Visina tona se ne mijenja. Original ostaje netaknut, a `WARP OFF` ga vraća.
   - Rastegnuti sample sprema se u pozadini kao WAV u `Dokumenti/Rezalica/Warped`, a projekt ga pri otvaranju učita izravno.
@@ -199,8 +199,10 @@ FL Studio, Ableton ili MPC: pronađe najglasniji vrh samplea između markera i p
 sample za isti iznos, tako da taj vrh dođe na odabranu razinu. Dinamika se ne mijenja.
 
 - Razine: 0 dBFS, -0.1 dBFS, **-1 dBFS (preporučeno)**, -2, -3 dBFS (mjesto za miks), -6 dBFS.
-- Rezultat je novi sample samo na tom padu (drugi padovi iz istog samplea ostaju kakvi jesu), spremljen u
-  `Documents/Rezalica/Normalized` (32-bit float WAV). UNDO ga vraća.
+- Nakon normalizacije se automatski radi **bounce** (kao u Abletonu): dio koji pad svira (između markera) postaje
+  novi WAV u `Documents/Rezalica/Bounced` i odmah se učitava natrag na pad i u prozor s valnim oblikom za daljnju
+  obradu (chop, warp, trim ...). Drugi padovi iz istog samplea ostaju kakvi jesu. UNDO ga vraća.
+- Gumb **BOUNCE** (prije RENDER) i dalje sprema warpani (time-stretch) sample kao novi WAV, kao i dosad.
 
 ## DECK (gramofon za scratch)
 

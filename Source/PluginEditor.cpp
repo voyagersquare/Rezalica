@@ -325,9 +325,9 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     addAndMakeVisible (chokeBox);
 
     normalizeButton.setWantsKeyboardFocus (false);
-    normalizeButton.setTooltip ("NORMALIZE (peak): turns the pad's sample up or down so its loudest peak (between the markers) "
-                                "reaches the chosen level, without changing the dynamics. -1 dBFS is a good default; "
-                                "-3 dBFS or lower leaves room for mixing.");
+    normalizeButton.setTooltip ("NORMALIZE (peak): turns what the pad plays up or down so its loudest peak reaches the chosen level, "
+                                "without changing the dynamics, then BOUNCES it to a new WAV that is loaded back here for more work. "
+                                "-1 dBFS is a good default; -3 dBFS or lower leaves room for mixing.");
     normalizeButton.onClick = [this] { showNormalizeMenu(); };
     addAndMakeVisible (normalizeButton);
 
@@ -363,12 +363,13 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (*b);
     }
-    renderButton.setTooltip ("Render / consolidate: saves the warped (time-stretched) sample as a new WAV "
-                             "(Documents/Rezalica/Rendered) and uses it instead of the original");
+    renderButton.setButtonText ("BOUNCE");
+    renderButton.setTooltip ("Bounce: saves the warped (time-stretched) sample as a new WAV "
+                             "(Documents/Rezalica/Bounced) and uses it instead of the original. NORMALIZE bounces its result too.");
     renderButton.onClick = [this]
     {
         const int pad = processor.selectedPad.load();
-        processor.pushUndo ("Render");
+        processor.pushUndo ("Bounce");
         if (processor.consolidatePad (pad))
             selectPad (pad);
     };
@@ -1412,7 +1413,7 @@ std::vector<juce::Component*> RezalicaEditor::builtInFxComponents()
 
 std::vector<juce::Component*> RezalicaEditor::stripAndFxComponents()
 {
-    // (the pad title row with WARP / STRETCH / TRIM / RENDER / CLEAR stays)
+    // (the pad title row with WARP / STRETCH / TRIM / BOUNCE / CLEAR stays)
     return { &gainKnob, &panKnob, &pitchKnob, &attackKnob, &releaseKnob, &startKnob, &endKnob,
              &loopButton, &reverseButton, &gateButton, &muteButton, &chokeBox, &normalizeButton,
              &fxTitle, mixer.get() };
