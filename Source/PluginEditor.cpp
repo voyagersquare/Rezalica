@@ -1380,8 +1380,40 @@ void RezalicaEditor::confirmDiscardChanges (const juce::String& what, std::funct
     w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, proceed] (int r)
     {
         if (safe == nullptr || r == 0) return;   // Cancel: stay
-        if (r == 2) { proceed(); return; }        // Don't Save
+        if (r == 2) { safe->askAboutSessionFiles (proceed); return; } // Don't Save: and the audio files made meanwhile?
         safe->saveProject (false, [proceed] (bool ok) { if (ok) proceed(); }); // Save (asks for a file the first time)
+    }), true);
+}
+
+void RezalicaEditor::askAboutSessionFiles (std::function<void()> proceed)
+{
+    // like Ableton: the changes are not saved, so what about the audio files made for them?
+    const auto files = processor.getUnsavedSessionFiles();
+    if (files.isEmpty())
+    {
+        proceed();
+        return;
+    }
+    juce::String list;
+    for (int i = 0; i < juce::jmin (8, files.size()); ++i)
+        list << "   " << files[i].getFileName() << "\n";
+    if (files.size() > 8)
+        list << "   ... and " << (files.size() - 8) << " more\n";
+    auto* w = new juce::AlertWindow ("Audio files from this session",
+                                     "In this session Rezalica made " + juce::String (files.size()) + " audio file" + (files.size() == 1 ? "" : "s")
+                                     + " (bounce, normalize, trim, warp, recordings) that no saved project uses:\n\n" + list
+                                     + "\nDELETE moves them to the Recycle Bin. KEEP leaves them in Documents/Rezalica.\n"
+                                       "(Your own samples are never touched.)",
+                                     juce::MessageBoxIconType::QuestionIcon, this);
+    w->addButton ("DELETE", 1);
+    w->addButton ("KEEP", 2, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<RezalicaEditor> safe (this);
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, proceed] (int r)
+    {
+        if (safe == nullptr) return;
+        if (r == 1) safe->processor.trashSessionFiles();
+        else safe->processor.forgetSessionFiles();
+        proceed();
     }), true);
 }
 

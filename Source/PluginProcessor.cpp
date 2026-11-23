@@ -685,6 +685,7 @@ juce::File RezalicaProcessor::keepTake (int pad, const juce::String& name, bool 
         os.release();
         if (! w->writeFromAudioSampleBuffer (take, 0, take.getNumSamples())) return {};
     }
+    noteSessionFile (file);
     pad = juce::jlimit (0, rz::numPads - 1, pad);
     pushUndo ("Record to " + rz::padLabel (pad));
     selectedPad = pad;
@@ -749,6 +750,7 @@ juce::File RezalicaProcessor::collectRecording (int pad)
         if (! w->writeFromAudioSampleBuffer (take, 0, take.getNumSamples()))
             return {};
     }
+    noteSessionFile (file);
 
     pad = juce::jlimit (0, rz::numPads - 1, pad);
     pushUndo ("Record to " + rz::padLabel (pad));
@@ -1224,7 +1226,10 @@ bool RezalicaProcessor::trimPad (int pad)
             }
     }
     if (file.existsAsFile())
+    {
         s->file = file;
+        noteSessionFile (file);
+    }
 
     samplePool.add (s);
     ps.start = 0.0f;
@@ -1279,6 +1284,7 @@ double RezalicaProcessor::normalizePad (int pad, float targetDb)
         os.release();
         if (! w->writeFromAudioSampleBuffer (out, 0, out.getNumSamples())) return std::numeric_limits<double>::quiet_NaN();
     }
+    noteSessionFile (file);
 
     // ... loaded back onto the pad and into the sample view, ready for more work (chop, warp, trim ...), like Ableton
     selectedPad = juce::jlimit (0, rz::numPads - 1, pad);
@@ -1337,7 +1343,63 @@ bool RezalicaProcessor::saveProjectToFile (const juce::File& file)
         return false;
     currentProjectFile = file;
     markProjectSaved();
+    forgetSessionFilesUsedBy (*xml); // a saved project uses them: never offered for deleting
     return true;
+}
+
+//==============================================================================
+void RezalicaProcessor::noteSessionFile (const juce::File& f)
+{
+    const juce::ScopedLock sl (sessionFilesLock);
+    sessionFiles.addIfNotAlreadyThere (f);
+}
+
+void RezalicaProcessor::forgetSessionFilesUsedBy (const juce::XmlElement& project)
+{
+    juce::StringArray used;
+    std::function<void (const juce::XmlElement&)> walk = [&] (const juce::XmlElement& e)
+    {
+        for (int i = 0; i < e.getNumAttributes(); ++i)
+            used.add (e.getAttributeValue (i));
+        for (auto* c : e.getChildIterator())
+            walk (*c);
+    };
+    walk (project);
+    const juce::ScopedLock sl (sessionFilesLock);
+    for (int i = sessionFiles.size(); --i >= 0;)
+        if (used.contains (sessionFiles.getReference (i).getFullPathName()))
+            sessionFiles.remove (i);
+}
+
+juce::Array<juce::File> RezalicaProcessor::getUnsavedSessionFiles() const
+{
+    const juce::ScopedLock sl (sessionFilesLock);
+    juce::Array<juce::File> r;
+    for (auto& f : sessionFiles)
+        if (f.existsAsFile())
+            r.add (f);
+    return r;
+}
+
+int RezalicaProcessor::trashSessionFiles()
+{
+    juce::Array<juce::File> files;
+    {
+        const juce::ScopedLock sl (sessionFilesLock);
+        files = sessionFiles;
+        sessionFiles.clear();
+    }
+    int n = 0;
+    for (auto& f : files)
+        if (f.existsAsFile() && (f.moveToTrash() || f.deleteFile()))
+            ++n;
+    return n;
+}
+
+void RezalicaProcessor::forgetSessionFiles()
+{
+    const juce::ScopedLock sl (sessionFilesLock);
+    sessionFiles.clear();
 }
 
 juce::int64 RezalicaProcessor::projectFingerprint()
@@ -1709,6 +1771,7 @@ bool RezalicaProcessor::consolidatePad (int pad)
     if (! file.existsAsFile())
         return false;
     s->file = file;
+    noteSessionFile (file);
     samplePool.add (s);
 
     ++warpGeneration;                // a pending re-stretch must not bring the old version back
@@ -1750,6 +1813,7 @@ void RezalicaProcessor::saveInBackground (const rz::SampleData::Ptr& s)
     auto file = folder.getNonexistentChildFile (juce::File::createLegalFileName (s->name), ".wav", false);
     file.create(); // reserve the name
     s->renderedFile = file;
+    noteSessionFile (file);
 
     rz::SampleData::Ptr keep = s;
     fileWriter.addJob ([keep, file]

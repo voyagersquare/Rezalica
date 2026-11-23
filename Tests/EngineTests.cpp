@@ -2274,6 +2274,25 @@ int main (int argc, char** argv)
         half->file.deleteFile();
         n.clearPad (2);
         check (std::isnan (n.normalizePad (2, -1.0f)), "an empty pad is not normalized");
+
+        // files made in this session: the ones a saved project uses are never offered for deleting
+        {
+            n.forgetSessionFiles();
+            n.normalizePad (0, -1.0f);
+            const auto first = n.getEngine().getPadSample (0)->file;
+            check (n.getUnsavedSessionFiles().contains (first), "a bounced file is remembered as made in this session");
+            auto proj = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_session_test.rzp");
+            n.saveProjectToFile (proj);
+            check (n.getUnsavedSessionFiles().isEmpty(), "after saving, the project's files are not offered for deleting");
+            n.normalizePad (0, -3.0f);
+            const auto second = n.getEngine().getPadSample (0)->file;
+            const auto offered = n.getUnsavedSessionFiles();
+            check (offered.size() == 1 && offered[0] == second, "a file made after the save (not saved) is offered");
+            check (n.trashSessionFiles() == 1 && ! second.existsAsFile() && first.existsAsFile(),
+                   "DELETE removes only that file, the saved project's file stays");
+            proj.deleteFile();
+            first.deleteFile();
+        }
     }
 
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");

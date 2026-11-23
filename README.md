@@ -204,6 +204,17 @@ sample za isti iznos, tako da taj vrh dođe na odabranu razinu. Dinamika se ne m
   obradu (chop, warp, trim ...). Drugi padovi iz istog samplea ostaju kakvi jesu. UNDO ga vraća.
 - Gumb **BOUNCE** (prije RENDER) i dalje sprema warpani (time-stretch) sample kao novi WAV, kao i dosad.
 
+## Audio datoteke iz sesije (kao u Abletonu)
+
+Rezalica pamti svaki audio koji sama napravi u sesiji: BOUNCE, NORMALIZE, TRIM, warp, snimke sa SAMPLING-a i scratcheve s DECK-a.
+Kad pri izlasku (ili novom / drugom projektu) na pitanje o spremanju kažeš **NO**, program pokaže te datoteke koje nijedan
+spremljeni projekt ne koristi i pita:
+
+- **DELETE** – premjesti ih u koš za smeće (Recycle Bin), pa se mogu vratiti.
+- **KEEP** – ostavi ih u `Documents/Rezalica`.
+
+Datoteke koje koristi spremljeni projekt nikad se ne nude za brisanje, a tvoji originalni sampleovi se nikad ne diraju.
+
 ## DECK (gramofon za scratch)
 
 Gumb **DECK** (uz SONG) otvara gramofon u donjem dijelu prozora.

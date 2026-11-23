@@ -133,6 +133,8 @@ private:
     juce::TextButton normalizeButton { "NORMALIZE" };
     float normalizeTargetDb = -1.0f;                   // the last NORMALIZE target (dBFS)
     void showNormalizeMenu();
+    /** After "don't save": delete or keep the audio files this session made. */
+    void askAboutSessionFiles (std::function<void()> proceed);
     juce::TextButton loopButton { "LOOP" }, reverseButton { "REVERSE" }, gateButton { "GATE" },
                      muteButton { "MUTE" }, renderButton { "BOUNCE" }, clearPadButton { "CLEAR" }, trimButton { "TRIM" },
                      warpButton { "WARP" }, stretchButton { "STRETCH..." };

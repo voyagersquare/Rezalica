@@ -117,6 +117,16 @@ public:
     juce::File currentProjectFile;
     /** Unsaved changes since the last New / Open / Save (pad selection and similar don't count). */
     bool hasUnsavedChanges();
+
+    // ---- audio files Rezalica made in this session (bounce, normalize, trim, warp, recordings) ----
+    /** Remembers a WAV the program wrote itself (never the user's own samples). Any thread. */
+    void noteSessionFile (const juce::File&);
+    /** The session's files that no saved project uses (offered for deleting when changes are not saved). */
+    juce::Array<juce::File> getUnsavedSessionFiles() const;
+    /** Moves those files to the Recycle Bin. Returns how many. */
+    int trashSessionFiles();
+    /** Keeps them (they stay in Documents/Rezalica) and stops tracking them. */
+    void forgetSessionFiles();
     void markProjectSaved();
 
     // ---- export a pattern for dragging into the DAW ----
@@ -351,6 +361,9 @@ private:
     rz::MasterFx masterFx;
     rz::AudioRecorder recorder;
     rz::Turntable deck;
+    juce::Array<juce::File> sessionFiles;
+    juce::CriticalSection sessionFilesLock;
+    void forgetSessionFilesUsedBy (const juce::XmlElement& project);
     rz::LoopbackCapture loopback;
     int clickSamplesLeft = 0, clickLength = 1;
     juce::AudioBuffer<float> clickBuffer;          // the metronome, delayed like the mixer's plug-ins
