@@ -2170,6 +2170,37 @@ int main (int argc, char** argv)
         check (file.existsAsFile() && t.getEngine().getPadSample (3) != nullptr, "the DECK's REC puts the scratch on a pad");
         file.deleteFile();
 
+        {
+            // an effect in a DECK slot processes the deck (not the pads); the volume knob is the deck's own
+            struct HalfFx : public juce::AudioProcessor
+            {
+                HalfFx() : juce::AudioProcessor (BusesProperties().withInput ("In", juce::AudioChannelSet::stereo()).withOutput ("Out", juce::AudioChannelSet::stereo())) {}
+                const juce::String getName() const override { return "Half"; }
+                void prepareToPlay (double, int) override {}
+                void releaseResources() override {}
+                void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer&) override { b.applyGain (0.5f); }
+                double getTailLengthSeconds() const override { return 0.0; }
+                bool acceptsMidi() const override { return false; }
+                bool producesMidi() const override { return false; }
+                juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+                bool hasEditor() const override { return false; }
+                int getNumPrograms() override { return 1; }
+                int getCurrentProgram() override { return 0; }
+                void setCurrentProgram (int) override {}
+                const juce::String getProgramName (int) override { return {}; }
+                void changeProgramName (int, const juce::String&) override {}
+                void getStateInformation (juce::MemoryBlock&) override {}
+                void setStateInformation (const void*, int) override {}
+            };
+            const float dryDeck = run (0.3);
+            t.setSlotProcessor (rz::deckChain, 0, std::make_unique<HalfFx>(), nullptr);
+            const float wetDeck = run (0.3);
+            std::cout << "       deck: dry " << dryDeck << ", through a DECK effect " << wetDeck << "\n";
+            check (std::abs (wetDeck - dryDeck * 0.5f) < dryDeck * 0.05f && rz::busName (rz::deckChain) == "DECK",
+                   "an effect in a DECK slot processes the deck");
+            t.clearSlot (rz::deckChain, 0);
+        }
+
         deck.motorOn = false;
         run (1.5);
         check (std::abs (deck.speed.load()) < 0.01f, "STOP: the brake stops the platter");

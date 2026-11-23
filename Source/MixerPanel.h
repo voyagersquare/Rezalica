@@ -56,7 +56,8 @@ class MixerPanel : public juce::Component,
                    private juce::ChangeListener
 {
 public:
-    explicit MixerPanel (RezalicaProcessor& p);
+    /** onlyChain >= 0: just that effect chain (the DECK's effects: no fader, no mute / solo). */
+    explicit MixerPanel (RezalicaProcessor& p, int onlyChain = -1);
     ~MixerPanel() override;
     void paint (juce::Graphics&) override;
     void resized() override;

@@ -196,17 +196,18 @@ Tipkovnica računala svira trenutno odabranu banku:
 
 Gumb **DECK** (uz SONG) otvara gramofon u donjem dijelu prozora.
 
-- **Učitavanje:** povuci sample iz BROWSER-a (ili datoteku) na ploču, ili klikni **LOAD PAD** za sample odabranog pada. Ploča se odmah počne vrtjeti.
+- **Učitavanje:** povuci sample iz BROWSER-a (ili datoteku) na ploču. Ploča se odmah počne vrtjeti.
 - **Scratch:** uhvati ploču mišem i pomiči je naprijed-nazad. Kad je držiš mirno, zvuk staje; kad je pustiš, motor je vraća na brzinu.
 - **Cut (fader):** drži **SHIFT** (ili gumb CUT). **HAMSTER** okreće fader naopako.
 - **START / STOP:** motor se zaleti i koči kao direct-drive gramofon. **33 / 45** okretaja.
 - **PITCH:** fader ±8 % ili ±16 % (dolje = brže, kao na Technicsu; dvoklik = 0).
 - **SYNC:** ploča se vrti u tempu sekvencera. SAMPLE BPM se čita iz imena datoteke (npr. „85-bpm"),
   inače se pogađa iz duljine; klikni na broj da ga upišeš. Sa SYNC-om START, dok sekvencer svira, kreće točno na sljedećem udarcu.
-- **CUE 1-4:** prazan gumb postavi točku gdje je igla, postavljen skače na nju, desni klik je briše.
-  Klik u gornju traku cijelog samplea pomiče iglu.
-- **REC:** snima ono što deck svira (nakon fadera); kad ga zaustaviš, scratch ide na odabrani pad (tišina se odreže).
-- Deck svira kroz MASTER (njegove pluginove i fader); postavke i cue točke spremaju se s projektom.
+- **EFFECTS:** 4 slota za efekte, isto kao u mikseru (povuci plugin iz BROWSER > PLUGINS; klik = otvori, desni klik = bypass / ukloni).
+  Glasnoću decka podešava VOLUME na decku.
+- Klik u gornju traku cijelog samplea (ispod ploče) pomiče iglu.
+- **REC:** snima ono što deck svira (nakon fadera i DECK efekata); kad ga zaustaviš, scratch ide na odabrani pad (tišina se odreže).
+- Deck svira kroz svoje efekte pa kroz MASTER; postavke i efekti spremaju se s projektom.
 
 ## Instalacija (Windows)
 

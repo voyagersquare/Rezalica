@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <limits>
+#include <map>
 #include "SamplerEngine.h"
 #include "Sequencer.h"
 #include "FxChain.h"
@@ -182,7 +183,8 @@ public:
     juce::ChangeBroadcaster padsChanged; // pad samples / settings replaced
 
     // ---- mixer: BUS A-D + MASTER, 4 third-party effect slots each (message thread API) ----
-    rz::MixerBus& getBus (int bus) noexcept { return buses[(size_t) juce::jlimit (0, rz::numBuses - 1, bus)]; }
+    /** 0 = MASTER, 1..4 = BUS A..D, rz::deckChain = the DECK's effects. */
+    rz::MixerBus& getBus (int bus) noexcept { return buses[(size_t) juce::jlimit (0, rz::numEffectChains - 1, bus)]; }
     /** Loads a plug-in (from the scanned list) into a slot; returns false with an error message. */
     bool loadPluginIntoSlot (int bus, int slot, const juce::PluginDescription&, juce::String& error);
     /** Puts any processor into a slot (prepared here); desc may be null. */
@@ -190,8 +192,9 @@ public:
     void clearSlot (int bus, int slot);
     juce::AudioProcessor* getSlotProcessor (int bus, int slot) const;
     juce::String getSlotName (int bus, int slot) const;
-    /** Called before plug-ins are replaced or removed (close their editor windows). */
-    std::function<void()> onPluginsAboutToChange;
+    /** Called before plug-ins are replaced or removed (close their editor windows). One per mixer view
+        (the mixer and the DECK's effects), keyed by its owner. Message thread. */
+    std::map<const void*, std::function<void()>> pluginsAboutToChange;
     juce::ChangeBroadcaster mixerChanged;
     juce::SharedResourcePointer<rz::PluginHost> pluginHost;
 
@@ -332,7 +335,9 @@ private:
     std::array<double, rz::numPads> pendingSeqOff {};
 
     std::array<juce::AudioBuffer<float>, rz::numBuses> busBuffers;   // what each mixer bus collects this block
-    std::array<rz::MixerBus, rz::numBuses> buses;
+    std::array<rz::MixerBus, rz::numEffectChains> buses; // the mixer buses + the DECK's effect slots
+    juce::AudioBuffer<float> deckBuffer;                 // the DECK this block, through its effects
+    void processEffectChain (rz::MixerBus& bus, juce::AudioBuffer<float>& data, int numSamples);
     int preparedBlockSize = 512;
     void prepareSlot (rz::MixerSlot&);
     void processBusChain (int bus, int numSamples);

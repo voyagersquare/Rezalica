@@ -16,7 +16,6 @@ class Turntable
 {
 public:
     static constexpr double secondsPerTurn = 60.0 / (100.0 / 3.0); // 1.8 s: the groove of a 33 1/3 record
-    static constexpr int numCues = 4;
 
     // ---- message thread ----
     void setRecord (SampleData::Ptr s)
@@ -27,7 +26,6 @@ public:
             recordChanged = true;
         }
         record = s;
-        for (auto& c : cues) c = -1.0;
     }
     SampleData::Ptr getRecord() const { return record; }
 
@@ -55,8 +53,7 @@ public:
     std::atomic<bool> touched { false };
     std::atomic<double> handOffset { 0.0 };   // record samples moved since the platter was grabbed
 
-    std::atomic<double> jumpRequest { -1.0 }; // CUE: jump there (record samples, 0 .. length)
-    std::array<std::atomic<double>, numCues> cues { -1.0, -1.0, -1.0, -1.0 };
+    std::atomic<double> jumpRequest { -1.0 }; // move the needle there (record samples, 0 .. length)
 
     // ---- read by the UI ----
     std::atomic<double> position { 0.0 };     // unwrapped: keeps counting turns (for the drawing)
@@ -222,23 +219,26 @@ public:
         for (int ch = 0; ch < juce::jmin (2, out.getNumChannels()); ++ch)
             out.addFrom (ch, 0, temp, ch, 0, numSamples);
 
-        // REC: what the deck plays, after the fader
+        position = pos;
+        speed = (float) (rate / base);
+        level = juce::jmax (pk, level.load() * 0.85f);
+    }
+
+    /** REC: the processor hands over what the deck played this block (after the fader and the DECK effects). */
+    void recordBlock (const juce::AudioBuffer<float>& played, int numSamples)
+    {
         const int st = recState.load();
         if (st == recRunning)
         {
             const int w0 = recWrite.load();
             const int n = juce::jmin (numSamples, recBuffer.getNumSamples() - w0);
             for (int ch = 0; ch < 2; ++ch)
-                recBuffer.copyFrom (ch, w0, temp, ch, 0, n);
+                recBuffer.copyFrom (ch, w0, played, juce::jmin (ch, played.getNumChannels() - 1), 0, n);
             recWrite = w0 + n;
-            if (recWrite >= recBuffer.getNumSamples()) recState = recDone;
+            if (recWrite.load() >= recBuffer.getNumSamples()) recState = recDone;
         }
         else if (st == recStopping)
             recState = recDone;
-
-        position = pos;
-        speed = (float) (rate / base);
-        level = juce::jmax (pk, level.load() * 0.85f);
     }
 
     /** A guess of the sample's tempo: a whole number of bars (1, 2, 4, 8, 16) between 70 and 140 BPM. */

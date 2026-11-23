@@ -63,5 +63,10 @@ struct MixerBus
     LatencyDelay compensation; // audio thread: lines this bus up with the slowest one
 };
 
-inline juce::String busName (int bus) { return bus == 0 ? juce::String ("MASTER") : "BUS " + juce::String::charToString ((juce::juce_wchar) ('A' + bus - 1)); }
+inline juce::String busName (int bus)
+{
+    if (bus == 0) return "MASTER";
+    if (bus == deckChain) return "DECK";
+    return "BUS " + juce::String::charToString ((juce::juce_wchar) ('A' + bus - 1));
+}
 } // namespace rz

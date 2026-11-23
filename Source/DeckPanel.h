@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "LookAndFeel.h"
+#include "MixerPanel.h"
 
 namespace rz
 {
@@ -82,7 +83,6 @@ private:
     void timerCallback() override;
     void syncControls();
     void startStop();
-    void cueClicked (int i, const juce::MouseEvent* e);
 
     RezalicaProcessor& processor;
     PlatterView platter;
@@ -91,20 +91,12 @@ private:
 
     juce::TextButton startButton { "START / STOP" }, rpm33 { "33" }, rpm45 { "45" };
     juce::TextButton syncButton { "SYNC" }, loopButton { "LOOP" }, hamsterButton { "HAMSTER" };
-    juce::TextButton cutButton { "CUT" }, loadPadButton { "LOAD PAD" }, recButton { "REC" };
+    juce::TextButton cutButton { "CUT" }, recButton { "REC" };
     juce::TextButton range8 { "8 %" }, range16 { "16 %" };
-    std::array<juce::TextButton, Turntable::numCues> cueButtons;
     juce::Slider pitchSlider { juce::Slider::LinearVertical, juce::Slider::NoTextBox };
     Knob volumeKnob { "VOLUME" };
-    juce::Label title, bpmCaption, bpmLabel, pitchLabel, recLabel, hint, cueCaption;
-
-    struct CueMouse : public juce::MouseListener
-    {
-        DeckPanel& owner; int index;
-        CueMouse (DeckPanel& o, int i) : owner (o), index (i) {}
-        void mouseUp (const juce::MouseEvent& e) override { if (e.mods.isPopupMenu()) owner.cueClicked (index, &e); }
-    };
-    std::vector<std::unique_ptr<CueMouse>> cueMice;
+    juce::Label title, bpmCaption, bpmLabel, pitchLabel, recLabel, hint;
+    MixerPanel effects; // the DECK's 4 effect slots, like the mixer's (no fader)
     juce::String lastInfo;
     int infoTicks = 0;
 };

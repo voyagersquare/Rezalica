@@ -12,6 +12,8 @@ constexpr int numBanks = 4;                       // banks A-D
 constexpr int numPads = padsPerBank * numBanks;   // 64 pads in total
 constexpr int maxVoices = 32;
 constexpr int numBuses = 5;                       // mixer: 0 = MASTER, 1..4 = BUS A..D
+constexpr int deckChain = numBuses;               // the DECK's own 4 effect slots (after the buses in the processor)
+constexpr int numEffectChains = numBuses + 1;
 
 /** "A1" ... "D16" */
 inline juce::String padLabel (int pad)

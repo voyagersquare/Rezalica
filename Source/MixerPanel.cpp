@@ -80,7 +80,7 @@ void MixerSlotView::itemDropped (const SourceDetails& d)
 //==============================================================================
 MixerStrip::MixerStrip (MixerPanel& o, RezalicaProcessor& p, int busIndex) : processor (p), bus (busIndex)
 {
-    title.setText (busName (bus), juce::dontSendNotification);
+    title.setText (bus == deckChain ? juce::String ("EFFECTS") : busName (bus), juce::dontSendNotification);
     title.setFont (juce::FontOptions (13.0f, juce::Font::bold));
     title.setColour (juce::Label::textColourId, bus == 0 ? colours::accent : colours::text);
     addAndMakeVisible (title);
@@ -128,11 +128,19 @@ MixerStrip::MixerStrip (MixerPanel& o, RezalicaProcessor& p, int busIndex) : pro
         addAndMakeVisible (*slots.back());
     }
     addAndMakeVisible (meter);
+
+    if (bus == deckChain)
+    {
+        // the DECK's effects: only the 4 slots (its volume is on the deck)
+        for (auto* c : std::initializer_list<juce::Component*> { &muteButton, &soloButton, &fader, &meter })
+            c->setVisible (false);
+    }
 }
 
 void MixerStrip::refresh()
 {
     auto& b = processor.getBus (bus);
+    if (bus == deckChain) { for (auto& s : slots) s->repaint(); return; }
     muteButton.setToggleState (b.mute.load(), juce::dontSendNotification);
     soloButton.setToggleState (b.solo.load(), juce::dontSendNotification);
     if (bus != 0 && ! fader.isMouseButtonDown())
@@ -151,7 +159,7 @@ void MixerStrip::paint (juce::Graphics& g)
     g.fillRoundedRectangle (r, 6.0f);
     g.setColour (juce::Colours::white.withAlpha (0.15f));
     g.drawHorizontalLine ((int) r.getY() + 1, r.getX() + 6.0f, r.getRight() - 6.0f);
-    g.setColour ((bus == 0 ? colours::accent : colours::accent.withAlpha (0.5f)));
+    g.setColour ((bus == 0 || bus == deckChain ? colours::accent : colours::accent.withAlpha (0.5f)));
     g.drawRoundedRectangle (r.reduced (2.5f), 4.0f, 1.0f);
 }
 
@@ -164,12 +172,14 @@ void MixerStrip::resized()
     title.setBounds (top);
     b.removeFromTop (4);
 
-    auto right = b.removeFromRight (juce::jmax (56, b.getWidth() * 30 / 100));
-    meter.setBounds (right.removeFromRight (8));
-    right.removeFromRight (2);
-    fader.setBounds (right);
-
-    b.removeFromRight (6);
+    if (fader.isVisible())
+    {
+        auto right = b.removeFromRight (juce::jmax (56, b.getWidth() * 30 / 100));
+        meter.setBounds (right.removeFromRight (8));
+        right.removeFromRight (2);
+        fader.setBounds (right);
+        b.removeFromRight (6);
+    }
     const int sh = juce::jmin (30, (b.getHeight() - 3 * 4) / MixerBus::numSlots);
     for (auto& s : slots)
     {
@@ -179,13 +189,18 @@ void MixerStrip::resized()
 }
 
 //==============================================================================
-MixerPanel::MixerPanel (RezalicaProcessor& p) : processor (p)
+MixerPanel::MixerPanel (RezalicaProcessor& p, int onlyChain) : processor (p)
 {
-    for (int bi = 1; bi < numBuses; ++bi)
-        strips.push_back (std::make_unique<MixerStrip> (*this, p, bi));
-    strips.push_back (std::make_unique<MixerStrip> (*this, p, 0)); // MASTER on the right
+    if (onlyChain >= 0)
+        strips.push_back (std::make_unique<MixerStrip> (*this, p, onlyChain));
+    else
+    {
+        for (int bi = 1; bi < numBuses; ++bi)
+            strips.push_back (std::make_unique<MixerStrip> (*this, p, bi));
+        strips.push_back (std::make_unique<MixerStrip> (*this, p, 0)); // MASTER on the right
+    }
     for (auto& s : strips) addAndMakeVisible (*s);
-    processor.onPluginsAboutToChange = [this] { closeAllEditors(); };
+    processor.pluginsAboutToChange[this] = [this] { closeAllEditors(); };
     processor.mixerChanged.addChangeListener (this);
     startTimerHz (20);
 }
@@ -194,7 +209,7 @@ MixerPanel::~MixerPanel()
 {
     stopTimer();
     processor.mixerChanged.removeChangeListener (this);
-    processor.onPluginsAboutToChange = nullptr;
+    processor.pluginsAboutToChange.erase (this);
     closeAllEditors();
 }
 

@@ -36,7 +36,7 @@ RezalicaProcessor::RezalicaProcessor (bool withInput)
 RezalicaProcessor::~RezalicaProcessor()
 {
     stopTimer();
-    onPluginsAboutToChange = nullptr;
+    pluginsAboutToChange.clear();
     for (auto& bus : buses)
     {
         { const juce::SpinLock::ScopedLockType sl (bus.lock); for (auto& s : bus.slots) s.live = nullptr; }
@@ -89,6 +89,7 @@ void RezalicaProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     clickSamplesLeft = 0;
     clickBuffer.setSize (1, juce::jmax (1, samplesPerBlock));
     deck.prepare (sampleRate, juce::jmax (1, samplesPerBlock));
+    deckBuffer.setSize (2, juce::jmax (1, samplesPerBlock));
     clickDelay.prepare (maxCompensation);
     for (auto& bus : buses)
         bus.compensation.prepare (maxCompensation);
@@ -428,8 +429,11 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     engine.render (busBuffers, cursor, numSamples - cursor);
     engine.updatePlayPositions();
 
-    // DECK: into MASTER (its plug-ins and fader), synced to the sequencer when asked
-    deck.render (busBuffers[0], numSamples, sequencer.effectiveBpm.load(), sequencer.nextBeatOffset (numSamples));
+    // DECK: its own buffer, then its effects, then MASTER (below, with the plug-in delay compensation)
+    if (deckBuffer.getNumSamples() < numSamples)
+        deckBuffer.setSize (2, numSamples, false, false, true);
+    deckBuffer.clear (0, numSamples);
+    deck.render (deckBuffer, numSamples, sequencer.effectiveBpm.load(), sequencer.nextBeatOffset (numSamples));
 
     if (lazyActive.load() && ! engine.isPreviewBusy())
         lazyActive = false; // preview reached the end of the sample
@@ -442,7 +446,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
     // plug-in delay compensation: every bus (and the pads that go straight to MASTER) is delayed
     // to the slowest bus, and the metronome by that plus the MASTER plug-ins, so everything stays in time
-    for (int bi = 0; bi < rz::numBuses; ++bi)
+    for (int bi = 0; bi < rz::numEffectChains; ++bi)
     {
         auto& bus = buses[(size_t) bi];
         const juce::SpinLock::ScopedTryLockType tl (bus.lock);
@@ -454,7 +458,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         bus.latency = lat;
     }
     int busLatency = 0;
-    for (int bi = 1; bi < rz::numBuses; ++bi)
+    for (int bi = 1; bi < rz::numEffectChains; ++bi) // (the DECK's effects count like a bus)
         busLatency = juce::jmax (busLatency, buses[(size_t) bi].latency);
     busLatency = juce::jmin (busLatency, maxCompensation - 1);
     const int totalLatency = juce::jmin (maxCompensation - 1, busLatency + buses[0].latency);
@@ -476,6 +480,15 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             masterBus.addFromWithRamp (ch, 0, data.getReadPointer (ch), numSamples, bus.lastGain, g);
         bus.lastGain = g;
         bus.peak = juce::jmax (bus.peak.load() * 0.85f, juce::jmax (data.getMagnitude (0, 0, numSamples), data.getMagnitude (1, 0, numSamples)) * g);
+    }
+    {
+        // the DECK through its own effects, lined up like a bus, into MASTER
+        auto& db = buses[(size_t) rz::deckChain];
+        processEffectChain (db, deckBuffer, numSamples);
+        deck.recordBlock (deckBuffer, numSamples); // REC takes the scratch with its effects
+        db.compensation.process (deckBuffer.getArrayOfWritePointers(), 2, numSamples, busLatency - db.latency);
+        for (int ch = 0; ch < 2; ++ch)
+            masterBus.addFrom (ch, 0, deckBuffer, ch, 0, numSamples);
     }
     processBusChain (0, numSamples);
     if (throughBus == 0 && inputCopyChannels > 0)
@@ -2239,8 +2252,11 @@ void RezalicaProcessor::prepareSlot (rz::MixerSlot& slot)
 
 void RezalicaProcessor::processBusChain (int busIndex, int numSamples)
 {
-    auto& bus = buses[(size_t) busIndex];
-    auto& data = busBuffers[(size_t) busIndex];
+    processEffectChain (buses[(size_t) busIndex], busBuffers[(size_t) busIndex], numSamples);
+}
+
+void RezalicaProcessor::processEffectChain (rz::MixerBus& bus, juce::AudioBuffer<float>& data, int numSamples)
+{
     const juce::SpinLock::ScopedTryLockType tl (bus.lock);
     if (! tl.isLocked()) return; // the slots are being changed right now
     for (auto& slot : bus.slots)
@@ -2268,7 +2284,7 @@ void RezalicaProcessor::setSlotProcessor (int busIndex, int slotIndex, std::uniq
 {
     auto& bus = getBus (busIndex);
     auto& slot = bus.slots[(size_t) juce::jlimit (0, rz::MixerBus::numSlots - 1, slotIndex)];
-    if (onPluginsAboutToChange) onPluginsAboutToChange();
+    for (auto& [owner, closeEditors] : pluginsAboutToChange) if (closeEditors) closeEditors();
     std::unique_ptr<juce::AudioProcessor> old;
     {
         // prepare the new one first, then swap it in while the audio thread is not using the slots
@@ -2312,7 +2328,7 @@ void RezalicaProcessor::clearSlot (int busIndex, int slotIndex)
 
 juce::AudioProcessor* RezalicaProcessor::getSlotProcessor (int busIndex, int slotIndex) const
 {
-    return buses[(size_t) juce::jlimit (0, rz::numBuses - 1, busIndex)].slots[(size_t) juce::jlimit (0, rz::MixerBus::numSlots - 1, slotIndex)].owned.get();
+    return buses[(size_t) juce::jlimit (0, rz::numEffectChains - 1, busIndex)].slots[(size_t) juce::jlimit (0, rz::MixerBus::numSlots - 1, slotIndex)].owned.get();
 }
 
 juce::String RezalicaProcessor::getSlotName (int busIndex, int slotIndex) const
@@ -2326,7 +2342,7 @@ juce::ValueTree RezalicaProcessor::mixerToValueTree() const
     juce::ValueTree m ("MIXER");
     for (int b = 0; b < rz::numBanks; ++b)
         m.setProperty ("bankBus" + juce::String (b), engine.bankBus[(size_t) b].load(), nullptr);
-    for (int bi = 0; bi < rz::numBuses; ++bi)
+    for (int bi = 0; bi < rz::numEffectChains; ++bi)
     {
         auto& bus = buses[(size_t) bi];
         juce::ValueTree t ("BUS");
@@ -2355,7 +2371,7 @@ juce::ValueTree RezalicaProcessor::mixerToValueTree() const
 
 void RezalicaProcessor::mixerFromValueTree (const juce::ValueTree& m)
 {
-    for (int bi = 0; bi < rz::numBuses; ++bi)
+    for (int bi = 0; bi < rz::numEffectChains; ++bi)
         for (int si = 0; si < rz::MixerBus::numSlots; ++si)
             if (buses[(size_t) bi].slots[(size_t) si].owned != nullptr)
                 clearSlot (bi, si);
@@ -2366,7 +2382,7 @@ void RezalicaProcessor::mixerFromValueTree (const juce::ValueTree& m)
     for (auto t : m)
     {
         const int bi = t.getProperty ("index", -1);
-        if (bi < 0 || bi >= rz::numBuses) continue;
+        if (bi < 0 || bi >= rz::numEffectChains) continue;
         auto& bus = buses[(size_t) bi];
         bus.gainDb = (float) t.getProperty ("gain", 0.0f);
         bus.mute = (bool) t.getProperty ("mute", false);
@@ -2490,9 +2506,6 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         d.setProperty ("loop", deck.loop.load(), nullptr);
         d.setProperty ("volume", deck.volume.load(), nullptr);
         d.setProperty ("hamster", deck.reverseFader.load(), nullptr);
-        juce::StringArray cs;
-        for (auto& c : deck.cues) cs.add (juce::String (c.load(), 1));
-        d.setProperty ("cues", cs.joinIntoString (","), nullptr);
         root.appendChild (d, nullptr);
     }
 
@@ -2709,9 +2722,6 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         deck.loop = (bool) d.getProperty ("loop", true);
         deck.volume = (float) d.getProperty ("volume", 1.0f);
         deck.reverseFader = (bool) d.getProperty ("hamster", false);
-        auto cs = juce::StringArray::fromTokens (d.getProperty ("cues", juce::String()).toString(), ",", {});
-        for (int i = 0; i < rz::Turntable::numCues; ++i)
-            deck.cues[(size_t) i] = i < cs.size() ? cs[i].getDoubleValue() : -1.0;
     }
 
     auto chop = root.getChildWithName ("CHOP");

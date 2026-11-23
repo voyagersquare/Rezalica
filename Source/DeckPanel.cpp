@@ -212,7 +212,7 @@ void DeckWaveView::paint (juce::Graphics& g)
     const double wrapped = pos - std::floor (pos / len) * len;
     const bool looping = deck.loop.load();
 
-    // the whole sample on top, with the needle and the cue points
+    // the whole sample on top, with the needle
     auto top = b.removeFromTop ((float) overviewHeight).reduced (4.0f, 2.0f);
     {
         const float mid = top.getCentreY();
@@ -222,13 +222,6 @@ void DeckWaveView::paint (juce::Graphics& g)
             const float v = overview[(size_t) x * overview.size() / (size_t) juce::jmax (1, (int) top.getWidth())] * top.getHeight() * 0.5f;
             g.drawVerticalLine ((int) top.getX() + x, mid - v, mid + v);
         }
-        for (int i = 0; i < Turntable::numCues; ++i)
-            if (const double cp = deck.cues[(size_t) i].load(); cp >= 0.0)
-            {
-                const float x = top.getX() + (float) (cp / len) * top.getWidth();
-                g.setColour (colours::accent2);
-                g.fillRect (x - 1.0f, top.getY(), 2.0f, top.getHeight());
-            }
         g.setColour (juce::Colours::white);
         g.fillRect (top.getX() + (float) (wrapped / len) * top.getWidth() - 1.0f, top.getY() - 2.0f, 2.0f, top.getHeight() + 4.0f);
     }
@@ -247,18 +240,6 @@ void DeckWaveView::paint (juce::Graphics& g)
         const float v = fine[(size_t) juce::jlimit (0, (int) fine.size() - 1, (int) (sp / fineBin))] * z.getHeight() * 0.48f;
         g.drawVerticalLine ((int) z.getX() + x, mid - v, mid + v);
     }
-    for (int i = 0; i < Turntable::numCues; ++i)
-        if (const double cp = deck.cues[(size_t) i].load(); cp >= 0.0)
-        {
-            double d = cp - wrapped;
-            if (looping) { if (d > len * 0.5) d -= len; if (d < -len * 0.5) d += len; }
-            const float x = z.getX() + (float) (d / span + 0.5) * z.getWidth();
-            if (x < z.getX() || x > z.getRight()) continue;
-            g.setColour (colours::accent2);
-            g.drawVerticalLine ((int) x, z.getY(), z.getBottom());
-            g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
-            g.drawText (juce::String (i + 1), juce::Rectangle<float> (x + 2.0f, z.getY(), 14.0f, 12.0f), juce::Justification::centredLeft);
-        }
     g.setColour (colours::accent);
     g.fillRect (z.getCentreX() - 1.0f, z.getY(), 2.0f, z.getHeight()); // the needle
 }
@@ -275,8 +256,9 @@ void DeckWaveView::mouseDown (const juce::MouseEvent& e)
 //==============================================================================
 // the panel
 
-DeckPanel::DeckPanel (RezalicaProcessor& p) : processor (p), platter (p), wave (p)
+DeckPanel::DeckPanel (RezalicaProcessor& p) : processor (p), platter (p), wave (p), effects (p, deckChain)
 {
+    addAndMakeVisible (effects);
     setWantsKeyboardFocus (true);
     auto& deck = processor.getDeck();
     addAndMakeVisible (platter);
@@ -310,12 +292,6 @@ DeckPanel::DeckPanel (RezalicaProcessor& p) : processor (p), platter (p), wave (
     cutButton.setTooltip ("Closes the fader while pressed. With the mouse on the record, hold SHIFT instead.");
     cutButton.onStateChange = [this] { processor.getDeck().cut = cutButton.isDown(); };
 
-    loadPadButton.setTooltip ("Puts the selected pad's whole sample on the record");
-    loadPadButton.onClick = [this]
-    {
-        if (processor.loadPadToDeck (processor.selectedPad.load())) syncControls();
-    };
-
     recButton.setClickingTogglesState (true);
     recButton.setColour (juce::TextButton::buttonOnColourId, colours::ledRed);
     recButton.setTooltip ("Records what the deck plays (after the fader); stop it to put the scratch on the selected pad");
@@ -324,19 +300,6 @@ DeckPanel::DeckPanel (RezalicaProcessor& p) : processor (p), platter (p), wave (
         auto& d = processor.getDeck();
         if (recButton.getToggleState()) d.startRecording(); else d.stopRecording();
     };
-
-    for (int i = 0; i < Turntable::numCues; ++i)
-    {
-        auto& b = cueButtons[(size_t) i];
-        b.setButtonText (juce::String (i + 1));
-        b.setColour (juce::TextButton::buttonOnColourId, colours::accent2);
-        b.setTooltip ("Empty: sets a cue point where the needle is. Set: jumps there. Right-click: delete.");
-        b.onClick = [this, i] { cueClicked (i, nullptr); };
-        cueMice.push_back (std::make_unique<CueMouse> (*this, i));
-        b.addMouseListener (cueMice.back().get(), false);
-        addAndMakeVisible (b);
-    }
-    cueCaption.setText ("CUE", juce::dontSendNotification);
 
     pitchSlider.setRange (-1.0, 1.0, 0.0);
     pitchSlider.setDoubleClickReturnValue (true, 0.0);
@@ -376,16 +339,16 @@ DeckPanel::DeckPanel (RezalicaProcessor& p) : processor (p), platter (p), wave (
     hint.setFont (juce::FontOptions (11.0f));
 
     for (auto* c : std::initializer_list<juce::Component*> { &startButton, &rpm33, &rpm45, &syncButton, &loopButton, &hamsterButton, &cutButton,
-                                                             &loadPadButton, &recButton, &range8, &range16, &pitchSlider, &volumeKnob,
-                                                             &bpmCaption, &bpmLabel, &pitchLabel, &recLabel, &hint, &cueCaption })
+                                                             &recButton, &range8, &range16, &pitchSlider, &volumeKnob,
+                                                             &bpmCaption, &bpmLabel, &pitchLabel, &recLabel, &hint })
         addAndMakeVisible (*c);
-    for (auto* l : { &bpmCaption, &pitchLabel, &recLabel, &cueCaption })
+    for (auto* l : { &bpmCaption, &pitchLabel, &recLabel })
     {
         l->setFont (juce::FontOptions (11.0f, juce::Font::bold));
         l->setColour (juce::Label::textColourId, colours::text);
     }
     for (auto* b : std::initializer_list<juce::Component*> { &startButton, &rpm33, &rpm45, &syncButton, &loopButton, &hamsterButton, &cutButton,
-                                                             &loadPadButton, &recButton, &range8, &range16 })
+                                                             &recButton, &range8, &range16 })
         b->setWantsKeyboardFocus (false);
 
     syncControls();
@@ -411,25 +374,6 @@ void DeckPanel::startStop()
         d.motorOn = true;
 }
 
-void DeckPanel::cueClicked (int i, const juce::MouseEvent* e)
-{
-    auto& d = processor.getDeck();
-    auto rec = d.getRecord();
-    if (rec == nullptr) return;
-    auto& cue = d.cues[(size_t) i];
-    if (e != nullptr && e->mods.isPopupMenu())
-        cue = -1.0;                                   // right-click: delete
-    else if (cue.load() < 0.0)
-    {
-        const int len = rec->buffer.getNumSamples();
-        const double pos = d.position.load();
-        cue = pos - std::floor (pos / len) * len;     // set it where the needle is
-    }
-    else
-        d.jumpRequest = cue.load();                   // jump
-    syncControls();
-}
-
 void DeckPanel::syncControls()
 {
     auto& d = processor.getDeck();
@@ -446,8 +390,6 @@ void DeckPanel::syncControls()
     const float bpm = d.recordBpm.load();
     if (! bpmLabel.isBeingEdited())
         bpmLabel.setText (bpm > 0.0f ? juce::String (bpm, 1) : juce::String ("?"), juce::dontSendNotification);
-    for (int i = 0; i < Turntable::numCues; ++i)
-        cueButtons[(size_t) i].setToggleState (d.cues[(size_t) i].load() >= 0.0, juce::dontSendNotification);
     const bool syncing = d.sync.load() && bpm > 1.0f;
     pitchSlider.setEnabled (! syncing);
     const double seqBpm = processor.getSequencer().effectiveBpm.load();
@@ -536,14 +478,20 @@ void DeckPanel::resized()
     wave.setBounds (b.removeFromBottom (juce::jlimit (60, 110, b.getHeight() / 4)));
     b.removeFromBottom (8);
 
-    // DECK in the top left corner
+    // "Deck" in the top left corner
     title.setBounds (b.getX() + 4, b.getY() - 8, 170, 60);
 
-    // the platter in the middle, the controls around it: left = motor / tempo, right = pitch fader, cues, fader, REC
-    const int colW = 210, pitchW = 70, gap = 18;
-    const int side = juce::jmax (120, juce::jmin (b.getHeight(), b.getWidth() - 2 * colW - pitchW - 4 * gap));
+    // EFFECTS on the far right (4 slots, like the mixer's)
+    auto fx = b.removeFromRight (juce::jlimit (220, 300, b.getWidth() / 5));
+    effects.setBounds (fx.withHeight (juce::jmin (fx.getHeight(), 4 * 34 + 44)));
+    b.removeFromRight (14);
+
+    // the platter in the middle, the controls around it: left = motor / tempo, right = pitch fader, fader, REC, volume
+    auto area = b.withTrimmedLeft (140); // (the title's corner)
+    const int colW = 170, pitchW = 64, gap = 16;
+    const int side = juce::jmax (120, juce::jmin (area.getHeight(), area.getWidth() - 2 * colW - pitchW - 4 * gap));
     const int groupW = colW + gap + side + gap + pitchW + gap + colW;
-    auto group = b.withSizeKeepingCentre (juce::jmin (groupW, b.getWidth()), b.getHeight());
+    auto group = area.withSizeKeepingCentre (juce::jmin (groupW, area.getWidth()), area.getHeight());
 
     auto left = group.removeFromLeft (colW);
     group.removeFromLeft (gap);
@@ -555,31 +503,27 @@ void DeckPanel::resized()
 
     const int rowH = 30, rowGap = 8;
     auto row = [rowH, rowGap] (juce::Rectangle<int>& col) { auto r = col.removeFromTop (rowH); col.removeFromTop (rowGap); return r; };
+    auto pair = [] (juce::Rectangle<int> r, juce::Component& a, juce::Component& c)
+    {
+        const int w = r.getWidth() / 2 - 3;
+        a.setBounds (r.removeFromLeft (w));
+        r.removeFromLeft (6);
+        c.setBounds (r);
+    };
 
     // left of the platter: START / STOP, speed, tempo
-    left.removeFromTop (28); // (room for the DECK title)
+    left.removeFromTop (20);
     startButton.setBounds (row (left).withHeight (rowH + 10));
     left.removeFromTop (10);
-    {
-        auto r = row (left);
-        rpm33.setBounds (r.removeFromLeft (r.getWidth() / 2 - 3));
-        r.removeFromLeft (6);
-        rpm45.setBounds (r);
-    }
-    {
-        auto r = row (left);
-        syncButton.setBounds (r.removeFromLeft (r.getWidth() / 2 - 3));
-        r.removeFromLeft (6);
-        loopButton.setBounds (r);
-    }
+    pair (row (left), rpm33, rpm45);
+    pair (row (left), syncButton, loopButton);
     {
         auto r = row (left);
         bpmCaption.setBounds (r.removeFromLeft (90));
         bpmLabel.setBounds (r);
     }
-    loadPadButton.setBounds (row (left));
 
-    // right of the platter: the pitch fader (like on the deck), then cues, fader and REC
+    // right of the platter: the pitch fader (like on the deck), then the fader, REC and the volume
     pitchLabel.setBounds (pitchCol.removeFromTop (18).expanded (12, 0));
     auto ranges = pitchCol.removeFromBottom (54);
     range8.setBounds (ranges.removeFromTop (24));
@@ -587,28 +531,12 @@ void DeckPanel::resized()
     range16.setBounds (ranges.removeFromTop (24));
     pitchSlider.setBounds (pitchCol.reduced (18, 4));
 
-    cueCaption.setBounds (right.removeFromTop (16));
-    for (int rr = 0; rr < 2; ++rr)
+    right.removeFromTop (20);
+    pair (right.removeFromTop (rowH), cutButton, hamsterButton);
+    right.removeFromTop (rowGap + 10); // (the open / closed lamp under CUT)
     {
-        auto r = row (right);
-        for (int k = 0; k < 2; ++k)
-        {
-            cueButtons[(size_t) (rr * 2 + k)].setBounds (r.removeFromLeft (r.getWidth() / (2 - k) - (k == 0 ? 3 : 0)));
-            if (k == 0) r.removeFromLeft (6);
-        }
-    }
-    right.removeFromTop (6);
-    {
-        auto r = right.removeFromTop (rowH);
-        cutButton.setBounds (r.removeFromLeft (r.getWidth() / 2 - 3));
-        r.removeFromLeft (6);
-        hamsterButton.setBounds (r);
-        right.removeFromTop (rowGap + 8); // (the open / closed lamp under CUT)
-    }
-    {
-        // REC and the deck's volume side by side, what REC does under them
         recLabel.setBounds (right.removeFromBottom (18));
-        auto r = right.removeFromTop (juce::jmin (right.getHeight(), 84));
+        auto r = right.removeFromTop (juce::jmin (right.getHeight(), 90));
         const int w = r.getWidth() / 2 - 3;
         recButton.setBounds (r.removeFromLeft (w).withSizeKeepingCentre (w, rowH));
         r.removeFromLeft (6);
