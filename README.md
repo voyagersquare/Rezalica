@@ -25,7 +25,7 @@
     - **Tempo**: prati tempo DAW-a (ako se tempo promijeni, sample se sam ponovno rastegne) ili ručni BPM.
     - **Apply to**: cijeli sample (svi njegovi isječci i padovi ga prate) ili samo odabrani pad.
     - **Beats opcije**: Preserve (Transients, 1/8, 1/16), Transient loop (Off, Loop Forward, Loop Back-and-Forth), Transient envelope.
-  - **RENDER** (consolidate): kad završiš s Time Stretchom i Warpom, RENDER zapisuje obrađeni sample kao novi WAV u `Dokumenti/Rezalica/Bounced` i automatski ga stavlja umjesto starog na sve padove koji ga koriste. Rezovi ostaju na istom mjestu.
+  - **BOUNCE** (consolidate, prije RENDER): kad završiš s Time Stretchom i Warpom, BOUNCE zapisuje obrađeni sample kao novi WAV u `Dokumenti/Rezalica/Bounced` i automatski ga stavlja umjesto starog na sve padove koji ga koriste. Rezovi ostaju na istom mjestu.
   - Rastezanje se računa u pozadini, pa plugin ne zastaje (dok traje, gumb pokazuje `WARP...`).
   - Visina tona se ne mijenja. Original ostaje netaknut, a `WARP OFF` ga vraća.
   - Rastegnuti sample sprema se u pozadini kao WAV u `Dokumenti/Rezalica/Warped`, a projekt ga pri otvaranju učita izravno.
