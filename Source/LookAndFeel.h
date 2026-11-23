@@ -16,6 +16,8 @@ inline const juce::Colour dim { 0xff9b9a96 };
 inline const juce::Colour silver { 0xffc9cacb };   // faceplate
 inline const juce::Colour silverDark { 0xffa9abae };
 inline const juce::Colour ink { 0xff1b1b1d };      // print on the faceplate
+inline const juce::Colour screen { 0xff0b0f10 };   // the dark edge of the TV screen (menus, DECK)
+inline const juce::Colour screenLight { 0xff141b1e }; // the same glass a little further in
 inline const juce::Colour padCream { 0xffe6e2d6 }; // rubber pads
 inline const juce::Colour ledRed { 0xffff2d2d };
 inline const juce::Colour buttonFace { 0xffcfcfcb }; // grey rubber buttons
@@ -35,14 +37,16 @@ public:
         setColour (juce::TextButton::buttonOnColourId, accent);
         setColour (juce::TextButton::textColourOffId, ink);
         setColour (juce::TextButton::textColourOnId, ink);
-        setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff0d0d0e));
+        setColour (juce::ComboBox::backgroundColourId, screen);
         setColour (juce::ComboBox::outlineColourId, outline);
         setColour (juce::ComboBox::textColourId, text);
         setColour (juce::ComboBox::arrowColourId, accent);
-        setColour (juce::PopupMenu::backgroundColourId, panel);
+        // drop-down menus: the colour of the TV screen, the row under the mouse in the red of the knobs
+        setColour (juce::PopupMenu::backgroundColourId, screen);
         setColour (juce::PopupMenu::textColourId, text);
+        setColour (juce::PopupMenu::headerTextColourId, accent2);
         setColour (juce::PopupMenu::highlightedBackgroundColourId, accent);
-        setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::black);
+        setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
         setColour (juce::Label::textColourId, text);
         setColour (juce::Slider::textBoxTextColourId, text);
         setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);

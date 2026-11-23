@@ -2617,6 +2617,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         d.setProperty ("range", deck.pitchRange.load(), nullptr);
         d.setProperty ("rpm45", deck.rpm45.load(), nullptr);
         d.setProperty ("loop", deck.loop.load(), nullptr);
+        d.setProperty ("reverse", deck.reverse.load(), nullptr);
         d.setProperty ("volume", deck.volume.load(), nullptr);
         d.setProperty ("hamster", deck.reverseFader.load(), nullptr);
         root.appendChild (d, nullptr);
@@ -2833,6 +2834,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         deck.pitchRange = (float) d.getProperty ("range", 0.08f);
         deck.rpm45 = (bool) d.getProperty ("rpm45", false);
         deck.loop = (bool) d.getProperty ("loop", true);
+        deck.reverse = (bool) d.getProperty ("reverse", false);
         deck.volume = (float) d.getProperty ("volume", 1.0f);
         deck.reverseFader = (bool) d.getProperty ("hamster", false);
     }

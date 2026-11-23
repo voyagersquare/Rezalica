@@ -198,6 +198,8 @@ void DeckWaveView::paint (juce::Graphics& g)
     auto b = getLocalBounds().toFloat();
     g.setColour (juce::Colour (0xff0d0d0e));
     g.fillRoundedRectangle (b, 5.0f);
+    g.setColour (colours::outline);
+    g.drawRoundedRectangle (b.reduced (0.5f), 5.0f, 1.0f);
     auto& deck = processor.getDeck();
     auto rec = deck.getRecord();
     if (rec == nullptr || fine.empty())
@@ -287,6 +289,9 @@ DeckPanel::DeckPanel (RezalicaProcessor& p) : processor (p), platter (p), wave (
     loopButton.onClick = [this] { processor.getDeck().loop = loopButton.getToggleState(); };
     loopButton.setTooltip ("The end of the sample joins its start (an endless groove)");
     deck.reverseFader = false; // (no hamster switch any more: SHIFT closes the fader)
+    reverseButton.setClickingTogglesState (true);
+    reverseButton.onClick = [this] { processor.getDeck().reverse = reverseButton.getToggleState(); };
+    reverseButton.setTooltip ("The motor turns the record backwards (the sample plays in reverse)");
 
     recButton.setClickingTogglesState (true);
     recButton.setColour (juce::TextButton::buttonOnColourId, colours::ledRed);
@@ -331,12 +336,12 @@ DeckPanel::DeckPanel (RezalicaProcessor& p) : processor (p), platter (p), wave (
     hint.setColour (juce::Label::textColourId, colours::dim);
     hint.setFont (juce::FontOptions (11.0f));
 
-    for (auto* c : std::initializer_list<juce::Component*> { &startButton, &rpm33, &rpm45, &syncButton, &loopButton,
+    for (auto* c : std::initializer_list<juce::Component*> { &startButton, &rpm33, &rpm45, &syncButton, &loopButton, &reverseButton,
                                                              &recButton, &range8, &range16, &pitchKnob, &volumeKnob, &recLabel, &hint })
         addAndMakeVisible (*c);
     recLabel.setFont (juce::FontOptions (11.0f, juce::Font::bold));
     recLabel.setColour (juce::Label::textColourId, colours::text);
-    for (auto* b : std::initializer_list<juce::Component*> { &startButton, &rpm33, &rpm45, &syncButton, &loopButton, &recButton, &range8, &range16 })
+    for (auto* b : std::initializer_list<juce::Component*> { &startButton, &rpm33, &rpm45, &syncButton, &loopButton, &reverseButton, &recButton, &range8, &range16 })
         b->setWantsKeyboardFocus (false);
 
     syncControls();
@@ -369,6 +374,7 @@ void DeckPanel::syncControls()
     rpm45.setToggleState (d.rpm45.load(), juce::dontSendNotification);
     syncButton.setToggleState (d.sync.load(), juce::dontSendNotification);
     loopButton.setToggleState (d.loop.load(), juce::dontSendNotification);
+    reverseButton.setToggleState (d.reverse.load(), juce::dontSendNotification);
     range8.setToggleState (d.pitchRange.load() < 0.12f, juce::dontSendNotification);
     range16.setToggleState (d.pitchRange.load() >= 0.12f, juce::dontSendNotification);
     if (! pitchKnob.slider.isMouseButtonDown())
@@ -415,16 +421,10 @@ void DeckPanel::timerCallback()
 
 void DeckPanel::paint (juce::Graphics& g)
 {
-    // dark brushed plinth
     auto b = getLocalBounds().toFloat();
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2b2c2f), 0.0f, 0.0f, juce::Colour (0xff141416), 0.0f, b.getBottom(), false));
+    // the colour of the TV screen's glass (a touch lighter at the top, like the screen)
+    g.setGradientFill (juce::ColourGradient (colours::screenLight, 0.0f, 0.0f, colours::screen, 0.0f, b.getBottom() * 0.6f, false));
     g.fillRoundedRectangle (b, 6.0f);
-    juce::Random rnd (45);
-    for (int y = 0; y < getHeight(); y += 2)
-    {
-        g.setColour (juce::Colours::white.withAlpha (rnd.nextFloat() * 0.025f));
-        g.drawHorizontalLine (y, 0.0f, b.getRight());
-    }
     g.setColour (juce::Colours::black.withAlpha (0.6f));
     g.drawRoundedRectangle (b.reduced (0.5f), 6.0f, 1.0f);
     {
@@ -488,12 +488,14 @@ void DeckPanel::resized()
 
     // left column, centred vertically: START / STOP, 33 / 45, SYNC / LOOP
     {
-        auto l = left.withSizeKeepingCentre (colW, (rowH + 10) + 2 * rowH + 3 * rowGap + 10);
+        auto l = left.withSizeKeepingCentre (colW, (rowH + 10) + 3 * rowH + 4 * rowGap + 10);
         startButton.setBounds (l.removeFromTop (rowH + 10));
         l.removeFromTop (rowGap + 10);
         pair (l.removeFromTop (rowH), rpm33, rpm45);
         l.removeFromTop (rowGap);
         pair (l.removeFromTop (rowH), syncButton, loopButton);
+        l.removeFromTop (rowGap);
+        reverseButton.setBounds (l.removeFromTop (rowH));
     }
 
     // right column, centred vertically: PITCH and VOLUME side by side, 8 % / 16 % under them, then REC

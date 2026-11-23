@@ -2150,6 +2150,12 @@ int main (int argc, char** argv)
         deck.touched = false;
         run (0.4);
         check (std::abs (deck.speed.load() - 1.0f) < 0.02f, "let go: the motor takes it back to speed");
+        deck.reverse = true;
+        const float backwards = run (0.9);
+        std::cout << "       reverse: level " << backwards << ", speed " << deck.speed.load() << "\n";
+        check (backwards > 0.05f && std::abs (deck.speed.load() + 1.0f) < 0.02f, "REVERSE: the motor turns the record backwards");
+        deck.reverse = false;
+        run (0.4);
 
         deck.cut = true;
         check (run (0.05) < 1.0e-4f, "SHIFT / CUT closes the fader");

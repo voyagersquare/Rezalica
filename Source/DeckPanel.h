@@ -90,7 +90,7 @@ private:
     juce::VBlankAttachment vblank { this, [this] { platter.repaint(); wave.repaint(); } };
 
     juce::TextButton startButton { "START / STOP" }, rpm33 { "33" }, rpm45 { "45" };
-    juce::TextButton syncButton { "SYNC" }, loopButton { "LOOP" };
+    juce::TextButton syncButton { "SYNC" }, loopButton { "LOOP" }, reverseButton { "REVERSE" };
     juce::TextButton recButton { "REC" };
     juce::TextButton range8 { "8 %" }, range16 { "16 %" };
     Knob pitchKnob { "PITCH" }, volumeKnob { "VOLUME" };

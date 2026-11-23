@@ -220,6 +220,7 @@ Datoteke koje koristi spremljeni projekt nikad se ne nude za brisanje, a tvoji o
 Gumb **DECK** (uz SONG) otvara gramofon u donjem dijelu prozora.
 
 - **Učitavanje:** povuci sample iz BROWSER-a (ili datoteku) na ploču. Ploča se odmah počne vrtjeti.
+- **REVERSE:** motor vrti ploču unatrag (sample svira obrnuto).
 - **Scratch:** uhvati ploču mišem i pomiči je naprijed-nazad. Kad je držiš mirno, zvuk staje; kad je pustiš, motor je vraća na brzinu.
 - **Cut (fader):** drži **SHIFT** dok scratchaš mišem.
 - **START / STOP:** motor se zaleti i koči kao direct-drive gramofon. **33 / 45** okretaja.

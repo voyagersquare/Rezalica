@@ -41,6 +41,7 @@ public:
     std::atomic<bool> rpm45 { false };        // 45 rpm: 1.35 x faster (a 33 record on 45)
     std::atomic<bool> sync { false };         // speed = sequencer tempo / record tempo
     std::atomic<bool> loop { true };          // the end of the sample joins its start (an endless groove)
+    std::atomic<bool> reverse { false };      // the motor turns the record backwards
     std::atomic<bool> cut { false };          // the fader is closed (SHIFT held / CUT key)
     std::atomic<bool> reverseFader { false }; // "hamster": closed and open swap
     std::atomic<float> pitch { 0.0f };        // -1 .. 1 of the pitch range
@@ -121,8 +122,9 @@ public:
 
         const double base = rec->sampleRate / hostRate;               // record samples per host sample at speed 1
         const double bpmFactor = sync.load() && recordBpm.load() > 1.0f && seqBpm > 1.0 ? seqBpm / recordBpm.load() : -1.0;
-        const double motorSpeed = bpmFactor > 0.0 ? bpmFactor
-                                                  : (1.0 + (double) pitch.load() * pitchRange.load()) * (rpm45.load() ? 1.35 : 1.0);
+        const double motorSpeed = (bpmFactor > 0.0 ? bpmFactor
+                                                   : (1.0 + (double) pitch.load() * pitchRange.load()) * (rpm45.load() ? 1.35 : 1.0))
+                                * (reverse.load() ? -1.0 : 1.0);
         const bool motor = motorOn.load();
         // direct drive: quick start, a brake that stops in about half a second, the hand gives it back fast
         const double tau = motor ? (justReleased ? 0.035 : 0.14) : (justReleased ? 0.06 : 0.22);
