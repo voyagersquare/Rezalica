@@ -833,17 +833,9 @@ void RezalicaEditor::timerCallback()
         lastPlayedCounter = processor.getEngine().playedCounter.load(); // pads hits are markers now, don't follow them
     }
 
-    // follow pads the step sequencer / piano roll play: show that chop in the sample view
-    if (const int sequenced = processor.getEngine().sequencedCounter.load(); sequenced != lastSequencedCounter)
-    {
-        lastSequencedCounter = sequenced;
-        const int pad = processor.getEngine().lastSequencedPad.load();
-        // only the sample view shows that chop: the selected pad and the bank stay where you work
-        if (pad >= 0 && pad < rz::numPads && pad != waveform.getShownPad() && ! processor.isLazyChopActive())
-            waveform.setPad (pad);
-    }
-    if (! processor.getSequencer().isRunning() && waveform.getShownPad() != processor.selectedPad.load() && ! processor.isLazyChopActive())
-        waveform.setPad (processor.selectedPad.load()); // stopped: back to the selected pad
+    // the sample view shows the selected pad only (it does not jump to the pads the sequencer or MIDI play)
+    if (waveform.getShownPad() != processor.selectedPad.load() && ! processor.isLazyChopActive())
+        waveform.setPad (processor.selectedPad.load());
 
     // sampling, SP style: while REC waits for a pad, the empty pads blink; the next pad hit gets the take
     {
@@ -868,8 +860,7 @@ void RezalicaEditor::timerCallback()
             if (! processor.getRecorder().isBusy() && ! processor.hasTake())
                 processor.startRecording (processor.armedRecordOptions);
         }
-        if (pad >= 0 && pad < rz::numPads && pad != processor.selectedPad.load())
-            selectPad (pad, false);
+        // (a pad played from MIDI / the computer keyboard does not take the selection: click a pad to select it)
     }
 
     waveform.updatePlayhead();
