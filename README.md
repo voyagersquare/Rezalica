@@ -215,6 +215,15 @@ spremljeni projekt ne koristi i pita:
 
 Datoteke koje koristi spremljeni projekt nikad se ne nude za brisanje, a tvoji originalni sampleovi se nikad ne diraju.
 
+## Skeniranje pluginova i mapa sa samplovima
+
+- **Pri svakom pokretanju** Rezalica nakon par sekundi sama brzo pogleda VST3 mape i učita samo **nove ili promijenjene**
+  pluginove (poznati se ne učitavaju ponovno), pa se novo instalirani efekti pojave sami. SCAN u PLUGINS radi isto, ručno.
+- Svaki plugin se skenira u zasebnom procesu. Ako ne uspije, pokuša se **još jednom, sam**, na kraju skena; tek ako
+  ni tada ne uspije, ide u SKIPPED. Plugin koji je već bio ispravan ne baca se u SKIPPED zbog jednog neuspjelog ponovnog skena.
+- **Mape sa samplovima** se ne skeniraju unaprijed (ni cijeli disk): browser čita mapu kad je otvoriš. Novi zvukovi u
+  otvorenoj mapi pojave se sami za par sekundi, a gumb **REFRESH** odmah ponovno pročita mapu.
+
 ## DECK (gramofon za scratch)
 
 Gumb **DECK** (uz SONG) otvara gramofon u donjem dijelu prozora.

@@ -24,8 +24,9 @@ public:
     juce::FileSearchPath getSearchPath() const;
     void setSearchPath (const juce::FileSearchPath&);
 
-    /** Scans the folders one file per timer tick (plug-ins that crash the scan are skipped next time). */
-    void startScan();
+    /** Scans the plug-in folders for new / changed plug-ins (the ones already known are not loaded again).
+        quiet: the automatic scan when Rezalica starts (only says something when it finds new effects). */
+    void startScan (bool quiet = false);
     bool isScanning() const noexcept { return scanner != nullptr || outOfProcess; }
     /** Plug-ins that crashed while being scanned are skipped; this lets them be tried again. */
     void clearFailed() { known.clearBlacklistedFiles(); save(); sendChangeMessage(); }
@@ -49,10 +50,12 @@ private:
 
     // standalone app: every plug-in file is scanned by a separate copy of Rezalica, so a crash
     // only loses that one plug-in (it is marked as failed) and the scan goes on
-    struct Job { juce::String file; int format = 0; std::unique_ptr<juce::ChildProcess> process; juce::File result; double started = 0.0; };
+    struct Job { juce::String file; int format = 0; bool retry = false; std::unique_ptr<juce::ChildProcess> process; juce::File result; double started = 0.0; };
     bool outOfProcess = false;
-    juce::StringArray pendingFiles;
-    juce::Array<int> pendingFormats;
+    juce::StringArray pendingFiles, retryFiles;   // retryFiles: failed once, tried again alone at the end
+    juce::Array<int> pendingFormats, retryFormats;
+    bool quietScan = false;
+    int effectsBefore = 0;
     std::vector<Job> running;
     int total = 0, done = 0, failed = 0;
     void startNextJobs();

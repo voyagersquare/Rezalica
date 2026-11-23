@@ -452,6 +452,10 @@ void RecorderPanel::resized()
 BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
 {
     thread.startThread (juce::Thread::Priority::low);
+    refreshButton.setTooltip ("Read this folder again (new samples appear by themselves after a moment too)");
+    refreshButton.setWantsKeyboardFocus (false);
+    refreshButton.onClick = [this] { contents.refresh(); folderStamp = contents.getDirectory().getLastModificationTime(); };
+    addAndMakeVisible (refreshButton);
     list.addListener (this);
     list.setColour (juce::ListBox::backgroundColourId, colours::panel);
     list.setColour (juce::DirectoryContentsDisplayComponent::textColourId, colours::text);
@@ -628,7 +632,7 @@ void BrowserPanel::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void BrowserPanel::showPlugins (bool plugins)
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &list, &places, &upButton, &folderButton, &favoritesButton, &pathLabel,
+    for (auto* c : std::initializer_list<juce::Component*> { &list, &places, &upButton, &folderButton, &favoritesButton, &refreshButton, &pathLabel,
                                                               &loadButton, &loadNextButton, &stopButton, &autoPreview, &targetLabel })
         c->setVisible (! plugins);
     for (auto* c : std::initializer_list<juce::Component*> { &pluginList, &scanButton, &vstFoldersButton, &skippedButton, &scanStatus })
@@ -673,6 +677,7 @@ void BrowserPanel::setFolder (const juce::File& f)
 {
     if (! f.isDirectory()) return;
     contents.setDirectory (f, true, true);
+    folderStamp = f.getLastModificationTime();
     pathLabel.setText (f.getFullPathName(), juce::dontSendNotification);
     AppSettings::get().setValue ("browserFolder", f.getFullPathName());
     AppSettings::get().saveIfNeeded();
@@ -812,6 +817,18 @@ void BrowserPanel::mouseDrag (const juce::MouseEvent& e)
 
 void BrowserPanel::timerCallback()
 {
+    // files added to (or removed from) the shown folder appear without reopening it
+    if (++folderCheck % 10 == 0)
+    {
+        const auto dir = contents.getDirectory();
+        const auto stamp = dir.getLastModificationTime();
+        if (dir.isDirectory() && stamp != folderStamp)
+        {
+            if (folderStamp != juce::Time()) contents.refresh();
+            folderStamp = stamp;
+        }
+    }
+
     const int pad = processor.selectedPad.load();
     const auto name = processor.getPadName (pad);
     targetLabel.setText ("Selected pad: " + padLabel (pad) + "  " + (name.isNotEmpty() ? "(" + name + ")" : juce::String ("(empty)")), juce::dontSendNotification);
@@ -852,6 +869,7 @@ void BrowserPanel::resized()
     b.removeFromTop (4);
     auto favRow = b.removeFromTop (26);
     favoritesButton.setBounds (favRow.removeFromLeft (120)); favRow.removeFromLeft (8);
+    refreshButton.setBounds (favRow.removeFromRight (76)); favRow.removeFromRight (6);
     pathLabel.setBounds (favRow);
     b.removeFromTop (4);
 

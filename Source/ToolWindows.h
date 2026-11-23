@@ -194,8 +194,10 @@ private:
     juce::WildcardFileFilter filter { "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg", "*", "Audio files" };
     juce::DirectoryContentsList contents { &filter, thread };
     juce::FileListComponent list { contents };
+    juce::Time folderStamp;      // when the shown folder last changed (new / deleted files): then it is read again
+    int folderCheck = 0;
     juce::ComboBox places;
-    juce::TextButton favoritesButton { "FAVORITES" };
+    juce::TextButton favoritesButton { "FAVORITES" }, refreshButton { "REFRESH" };
     juce::TextButton upButton { "UP" }, folderButton { "FOLDER..." }, loadButton { "LOAD TO PAD" }, loadNextButton { "LOAD + NEXT PAD" },
                      stopButton { "STOP" };
     juce::ToggleButton autoPreview { "Preview on click" };

@@ -188,6 +188,16 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
             if (! anyOn)
                 for (auto& d : inputs) dm.setMidiInputDeviceEnabled (d.identifier, true);
         }
+    if (isStandalone)
+    {
+        // a quick look for newly installed plug-ins a few seconds after the start (only new / changed files are loaded)
+        juce::Component::SafePointer<RezalicaEditor> safeScan (this);
+        juce::Timer::callAfterDelay (4000, [safeScan]
+        {
+            if (safeScan != nullptr && ! safeScan->processor.pluginHost->isScanning())
+                safeScan->processor.pluginHost->startScan (true);
+        });
+    }
     fileButton.setTooltip ("New / Open / Save / Save As project, Export Song, Audio Settings");
     sceneButton.setTooltip ("Scenes and song: chain patterns into scenes, scenes into a song");
     styleToggle (sceneButton, juce::Colour (0xffffc94a));

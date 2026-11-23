@@ -75,7 +75,7 @@ void PluginHost::setSearchPath (const juce::FileSearchPath& p)
     AppSettings::get().saveIfNeeded();
 }
 
-void PluginHost::startScan()
+void PluginHost::startScan (bool quiet)
 {
     if (isScanning() || outOfProcess || formats.getNumFormats() == 0)
     {
@@ -84,18 +84,24 @@ void PluginHost::startScan()
     }
 
     // the first scanner threw away plug-ins that only crash when they are unloaded: give those one more try
-    if (AppSettings::get().getIntValue ("pluginScanVersion", 1) < 2)
+    // (version 3: earlier scans could mark good plug-ins as failed - three scans at once shared one result
+    //  file - so everything that was skipped gets one more try)
+    if (AppSettings::get().getIntValue ("pluginScanVersion", 1) < 3)
     {
         known.clearBlacklistedFiles();
-        AppSettings::get().setValue ("pluginScanVersion", 2);
+        AppSettings::get().setValue ("pluginScanVersion", 3);
         AppSettings::get().saveIfNeeded();
     }
+    quietScan = quiet;
+    effectsBefore = getEffects().size();
 
     if (juce::JUCEApplicationBase::isStandaloneApp())
     {
         // list the plug-in files first (fast, nothing is loaded), then scan each one in its own process
         pendingFiles.clear();
         pendingFormats.clear();
+        retryFiles.clear();
+        retryFormats.clear();
         for (int fi = 0; fi < formats.getNumFormats(); ++fi)
         {
             auto* f = formats.getFormat (fi);
@@ -109,7 +115,8 @@ void PluginHost::startScan()
         total = pendingFiles.size();
         done = failed = 0;
         outOfProcess = true;
-        status = total == 0 ? "Nothing new to scan" : "Scanning 0 / " + juce::String (total);
+        status = total == 0 ? (quiet ? juce::String (getEffects().size()) + " effects" : juce::String ("Nothing new to scan"))
+                            : "Scanning 0 / " + juce::String (total);
         progress = 0.0f;
         sendChangeMessage();
         startTimer (50);
@@ -127,17 +134,26 @@ void PluginHost::startScan()
 void PluginHost::startNextJobs()
 {
     const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-    while ((int) running.size() < 3 && ! pendingFiles.isEmpty())
+    // first everything, three at a time; then the ones that failed once, alone (a plug-in can fail when
+    // it is loaded next to others, or just be slow the first time)
+    const bool retryPass = pendingFiles.isEmpty();
+    auto& files = retryPass ? retryFiles : pendingFiles;
+    auto& fmts = retryPass ? retryFormats : pendingFormats;
+    while ((int) running.size() < (retryPass ? 1 : 3) && ! files.isEmpty())
     {
         Job j;
-        j.file = pendingFiles[0];
-        j.format = pendingFormats[0];
-        pendingFiles.remove (0);
-        pendingFormats.remove (0);
-        j.result = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("rezalica_scan", ".xml", false);
+        j.file = files[0];
+        j.format = fmts[0];
+        j.retry = retryPass;
+        files.remove (0);
+        fmts.remove (0);
+        // every scan gets its own result file (three scans at once used to share one name)
+        j.result = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                       .getChildFile ("rezalica_scan_" + juce::Uuid().toDashedString() + ".xml");
         j.process = std::make_unique<juce::ChildProcess>();
         j.started = juce::Time::getMillisecondCounterHiRes();
-        status = "Scanning " + juce::String (done + 1) + " / " + juce::String (total) + ":  " + juce::File (j.file).getFileNameWithoutExtension();
+        status = (retryPass ? "Trying again: " : "Scanning " + juce::String (done + 1) + " / " + juce::String (total) + ":  ")
+                 + juce::File (j.file).getFileNameWithoutExtension();
         if (! j.process->start (juce::StringArray { exe.getFullPathName(), "--rz-scan-plugin", j.file, j.result.getFullPathName() }, 0))
         {
             finishJob (j, true);
@@ -163,12 +179,22 @@ void PluginHost::finishJob (Job& j, bool crashed)
             }
             ok = ok || xml->getNumChildElements() == 0; // a file without effects is fine too
         }
-    if (! ok)
+    // a plug-in that was found before stays (a failed re-scan is not a reason to throw it away)
+    bool knownBefore = false;
+    for (auto& d : known.getTypes())
+        knownBefore = knownBefore || d.fileOrIdentifier == j.file;
+    j.result.deleteFile();
+    if (! ok && ! knownBefore)
     {
-        known.addToBlacklist (j.file); // crashed or hung while being scanned: skipped from now on
+        if (! j.retry)
+        {
+            retryFiles.add (j.file);   // once more at the end, on its own, before it counts as failed
+            retryFormats.add (j.format);
+            return;
+        }
+        known.addToBlacklist (j.file); // failed twice (crashed / hung / no result): skipped from now on
         ++failed;
     }
-    j.result.deleteFile();
     ++done;
     save(); // keep what is found even if Rezalica itself is closed during the scan
 }
@@ -179,7 +205,7 @@ void PluginHost::timerCallback()
     {
         for (auto it = running.begin(); it != running.end();)
         {
-            const bool timedOut = juce::Time::getMillisecondCounterHiRes() - it->started > 60000.0;
+            const bool timedOut = juce::Time::getMillisecondCounterHiRes() - it->started > (it->retry ? 120000.0 : 60000.0);
             if (it->process->isRunning() && ! timedOut) { ++it; continue; }
             if (timedOut) { it->process->kill(); it->result.deleteFile(); }
             const bool crashed = timedOut || it->process->getExitCode() != 0;
@@ -188,12 +214,15 @@ void PluginHost::timerCallback()
         }
         startNextJobs();
         progress = total > 0 ? (float) done / (float) total : 1.0f;
-        if (running.empty() && pendingFiles.isEmpty())
+        if (running.empty() && pendingFiles.isEmpty() && retryFiles.isEmpty())
         {
             outOfProcess = false;
             stopTimer();
             save();
-            status = juce::String (getEffects().size()) + " effects" + (failed > 0 ? "  (" + juce::String (failed) + " plug-ins could not be loaded and are skipped)" : juce::String());
+            const int added = getEffects().size() - effectsBefore;
+            status = juce::String (getEffects().size()) + " effects"
+                     + (added > 0 ? "  (" + juce::String (added) + " new)" : juce::String())
+                     + (failed > 0 ? "  (" + juce::String (failed) + " plug-ins could not be loaded and are skipped)" : juce::String());
             progress = 1.0f;
         }
         sendChangeMessage();
