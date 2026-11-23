@@ -30,140 +30,8 @@ WaveformView::WaveformView (RezalicaProcessor& p) : processor (p)
     addAndMakeVisible (scrollBar);
 }
 
-void WaveformView::renderCrackedGlass()
-{
-    // a stone hit the screen near the top left corner: cracks run out from the impact, with a few rings
-    // around it, fine scratches and glass dust; it fades out, so it never covers the whole screen
-    const int w = getWidth(), h = getHeight();
-    if (w < 40 || h < 40) { crackedGlass = {}; return; }
-    const float S = 3.0f; // drawn at three times the resolution: razor sharp, also on high-DPI screens
-    crackedGlass = juce::Image (juce::Image::ARGB, (int) (w * S), (int) (h * S), true);
-    juce::Graphics g (crackedGlass);
-    g.addTransform (juce::AffineTransform::scale (S));
-
-    juce::Random rnd (7031);
-    const juce::Point<float> hit ((float) w * 0.11f, (float) h * 0.24f);
-    const float reach = juce::jmin ((float) w * 0.55f, (float) h * 1.4f); // how far the damage goes
-    auto fade = [&] (juce::Point<float> p) { return juce::jlimit (0.0f, 1.0f, 1.0f - p.getDistanceFrom (hit) / reach); };
-
-    // one jagged crack: short straight pieces that turn a little; thick and bright near the impact
-    std::function<void (juce::Point<float>, float, float, float, int)> crack;
-    crack = [&] (juce::Point<float> p, float angle, float length, float width, int depth)
-    {
-        float done = 0.0f;
-        while (done < length)
-        {
-            const float seg = 6.0f + rnd.nextFloat() * 14.0f;
-            angle += (rnd.nextFloat() - 0.5f) * 0.10f;   // glass breaks almost straight
-            const auto q = p + juce::Point<float> (std::cos (angle), std::sin (angle)) * seg;
-            const float k = juce::jmax (fade (q), 0.25f) * (1.0f - 0.55f * done / length);
-            if (k <= 0.01f || q.x < -5.0f || q.y < -5.0f || q.x > (float) w + 5.0f || q.y > (float) h + 5.0f) break;
-            const float lw = juce::jmax (0.35f, width * (1.0f - 0.7f * done / length));
-            // a real crack: a hard bright edge where the light breaks, a dark edge right next to it
-            g.setColour (juce::Colours::white.withAlpha (0.05f * k));
-            g.drawLine (juce::Line<float> (p, q), lw + 1.2f);
-            g.setColour (juce::Colours::black.withAlpha (0.55f * k));
-            g.drawLine (juce::Line<float> (p.translated (0.6f, 0.6f), q.translated (0.6f, 0.6f)), juce::jmax (0.4f, lw * 0.8f));
-            g.setColour (juce::Colours::white.withAlpha (0.92f * k));
-            g.drawLine (juce::Line<float> (p, q), lw * 0.8f);
-            if (depth < 2 && rnd.nextFloat() < 0.07f)                          // a branch
-                crack (q, angle + (rnd.nextBool() ? 1.0f : -1.0f) * (0.25f + rnd.nextFloat() * 0.5f),
-                       (length - done) * (0.3f + rnd.nextFloat() * 0.4f), lw * 0.7f, depth + 1);
-            else if (depth < 3 && rnd.nextFloat() < 0.16f)                     // a tiny splinter off the side
-                crack (q, angle + (rnd.nextBool() ? 1.0f : -1.0f) * (0.6f + rnd.nextFloat() * 0.9f),
-                       5.0f + rnd.nextFloat() * 16.0f, 0.45f, 3);
-            p = q;
-            done += seg;
-        }
-    };
-
-    // the long cracks: more of them to the right and down (the open screen), short ones up / left (the frame)
-    const int n = 22;
-    std::vector<float> angles;
-    for (int i = 0; i < n; ++i)
-    {
-        const float a = -juce::MathConstants<float>::pi + juce::MathConstants<float>::twoPi * ((float) i + rnd.nextFloat() * 0.7f) / (float) n;
-        angles.push_back (a);
-        const float towardScreen = 0.5f + 0.5f * std::cos (a - 0.25f);   // 1 = to the right
-        crack (hit, a, reach * (0.15f + 0.85f * towardScreen * towardScreen) * (0.5f + rnd.nextFloat() * 0.5f), 1.7f, 0);
-    }
-
-    // rings around the impact: short cracks between the long ones
-    for (float ring : { 7.0f, 13.0f, 21.0f, 32.0f, 46.0f })
-        for (size_t i = 0; i < angles.size(); ++i)
-        {
-            if (rnd.nextFloat() < (ring < 20.0f ? 0.1f : 0.35f)) continue;
-            const float a0 = angles[i], a1 = angles[(i + 1) % angles.size()] + (i + 1 == angles.size() ? juce::MathConstants<float>::twoPi : 0.0f);
-            const float r0 = ring * (0.85f + rnd.nextFloat() * 0.3f), r1 = ring * (0.85f + rnd.nextFloat() * 0.3f);
-            juce::Path arc;
-            arc.startNewSubPath (hit.getPointOnCircumference (r0, a0 + juce::MathConstants<float>::halfPi));
-            const auto mid = hit.getPointOnCircumference ((r0 + r1) * 0.5f + (rnd.nextFloat() - 0.5f) * 4.0f, (a0 + a1) * 0.5f + juce::MathConstants<float>::halfPi);
-            arc.lineTo (mid);
-            arc.lineTo (hit.getPointOnCircumference (r1, a1 + juce::MathConstants<float>::halfPi));
-            g.setColour (juce::Colours::white.withAlpha (0.12f));
-            g.strokePath (arc, juce::PathStrokeType (2.4f));
-            g.setColour (juce::Colours::white.withAlpha (0.75f * (1.0f - ring / 80.0f)));
-            g.strokePath (arc, juce::PathStrokeType (ring < 20.0f ? 1.1f : 0.75f));
-        }
-
-    // the impact: crushed glass, a small bright star
-    for (int i = 0; i < 70; ++i)
-    {
-        const float a = rnd.nextFloat() * juce::MathConstants<float>::twoPi, r = rnd.nextFloat() * rnd.nextFloat() * 9.0f;
-        const auto p = hit.getPointOnCircumference (r, a);
-        const auto q = p.getPointOnCircumference (1.0f + rnd.nextFloat() * 3.0f, a + (rnd.nextFloat() - 0.5f) * 2.0f);
-        g.setColour (juce::Colours::white.withAlpha (0.5f + rnd.nextFloat() * 0.45f));
-        g.drawLine (juce::Line<float> (p, q), 0.8f);
-    }
-    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.55f), hit.x, hit.y,
-                                             juce::Colours::white.withAlpha (0.0f), hit.x + 7.0f, hit.y, true));
-    g.fillEllipse (juce::Rectangle<float> (14.0f, 14.0f).withCentre (hit));
-
-    // many small hairline cracks in the broken area
-    for (int i = 0; i < 170; ++i)
-    {
-        const float a = rnd.nextFloat() * juce::MathConstants<float>::twoPi;
-        const float r = std::pow (rnd.nextFloat(), 1.6f) * reach * 0.75f;
-        auto p = hit.getPointOnCircumference (r, a + juce::MathConstants<float>::halfPi);
-        float dir = rnd.nextFloat() * juce::MathConstants<float>::twoPi;
-        const float k = fade (p);
-        if (k <= 0.05f) continue;
-        const int pieces = 1 + rnd.nextInt (4);
-        for (int j = 0; j < pieces; ++j)
-        {
-            dir += (rnd.nextFloat() - 0.5f) * 1.2f;
-            const auto q = p.getPointOnCircumference (2.0f + rnd.nextFloat() * 7.0f, dir + juce::MathConstants<float>::halfPi);
-            g.setColour (juce::Colours::white.withAlpha ((0.25f + rnd.nextFloat() * 0.35f) * k));
-            g.drawLine (juce::Line<float> (p, q), 0.45f);
-            p = q;
-        }
-    }
-
-    // fine scratches and glass dust around it
-    for (int i = 0; i < 70; ++i)
-    {
-        // scratches: long, thin and faint, mostly in one direction (like something wiped over the glass)
-        const auto p = hit + juce::Point<float> ((rnd.nextFloat() - 0.3f) * reach * 1.3f, (rnd.nextFloat() - 0.4f) * reach * 0.9f);
-        const float a = (rnd.nextFloat() < 0.6f ? 0.35f : rnd.nextFloat() * juce::MathConstants<float>::pi) + (rnd.nextFloat() - 0.5f) * 0.3f;
-        const float len = 12.0f + rnd.nextFloat() * rnd.nextFloat() * 120.0f;
-        const float k = juce::jmax (fade (p), 0.2f);
-        g.setColour (juce::Colours::white.withAlpha ((0.06f + rnd.nextFloat() * 0.14f) * k));
-        g.drawLine (juce::Line<float> (p, p.getPointOnCircumference (len, a)), 0.4f);
-    }
-    for (int i = 0; i < 160; ++i)
-    {
-        const auto p = hit + juce::Point<float> ((rnd.nextFloat() - 0.25f) * reach * 1.3f, (rnd.nextFloat() - 0.4f) * reach);
-        const float k = fade (p);
-        if (k <= 0.0f) continue;
-        g.setColour (juce::Colours::white.withAlpha ((0.1f + rnd.nextFloat() * 0.35f) * k));
-        const float d = 0.5f + rnd.nextFloat() * 1.1f;
-        g.fillEllipse (p.x, p.y, d, d);
-    }
-}
-
 void WaveformView::resized()
 {
-    renderCrackedGlass();
     auto b = getLocalBounds();
     zoomSlider.setBounds (b.getRight() - 150, 2, 140, 16);
     auto a = waveArea().toNearestInt();
@@ -567,11 +435,6 @@ void WaveformView::paintOverChildren (juce::Graphics& g)
         g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.0f), b.getCentreX(), b.getBottom() - b.getHeight() * 0.06f,
                                                  juce::Colours::white.withAlpha (0.10f), b.getCentreX(), b.getBottom(), false));
         g.fillRect (b.withTop (b.getBottom() - b.getHeight() * 0.06f));
-    }
-    if (crackedGlass.isValid())
-    {
-        g.setOpacity (1.0f);
-        g.drawImage (crackedGlass, b); // the broken glass, under the rim's shadow
     }
     g.setColour (juce::Colours::black.withAlpha (0.7f));
     g.drawRoundedRectangle (b.reduced (1.0f), r, 3.0f);

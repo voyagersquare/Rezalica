@@ -31,8 +31,6 @@ public:
     void paintOverChildren (juce::Graphics&) override;
     void paintMarkerOverlay (juce::Graphics&);
     float crtRadius() const;
-    juce::Image crackedGlass;          // the broken glass in the top left corner (drawn once per size)
-    void renderCrackedGlass();
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
