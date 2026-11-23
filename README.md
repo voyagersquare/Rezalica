@@ -122,6 +122,12 @@ Tempo (crveni LED BPM zaslon) je zajednički za glavni prozor, STEP SEQ, PIANO R
 
 Veliki prozor za waveform izgleda kao ekran starog televizora (kremasti okvir, zaobljeno staklo s odsjajem i linijama). Sve tipke zaglavlja su u jednom redu s transportom. Prozori REZALICE (SAMPLING, efekti …) stoje iznad drugih samo dok je REZALICA aktivna. Sučelje izgleda kao hardverski sampler: brušena srebrna ploča, crni paneli s crvenim tiskom, sive gumene tipke s LED lampicom kad su uključene, crni knobovi s kremastim pokazivačem i crvenom skalom, kremasti gumeni padovi i crveni LED zaslon za tempo (BPM: povuci gore/dolje, Shift = fino, kotačić, dupli klik = upis). Isto je u standalone verziji i u VST pluginu.
 
+## Choke grupe za više padova
+
+Odaberi više padova (Shift + klik, npr. A1, A2, A3), desni klik na bilo koji od njih → **Choke group (3 selected pads)** →
+*Choke 1 … 8* ili *No choke*: svi odabrani padovi idu u tu grupu odjednom (jedan UNDO sve vraća). Bez višestrukog odabira
+isti izbornik mijenja samo taj pad. Padovi u choke grupi imaju oznaku **CH 1**, **CH 2** … dolje desno.
+
 ## Sviranje
 
 | Banka | MIDI note |

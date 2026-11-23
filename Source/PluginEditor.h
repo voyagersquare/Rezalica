@@ -104,6 +104,7 @@ private:
     int multiSelectedCount() const;
     void refreshMultiSelection();
     void clearSelectedPads();
+    void setChokeGroup (int clickedPad, int group);
     bool isStandalone = false;
     void showFileMenu();
     void showAudioSettings();

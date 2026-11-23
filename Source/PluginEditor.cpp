@@ -361,6 +361,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     {
         processor.pushUndo ("Choke group");
         processor.getEngine().getPad (processor.selectedPad.load()).chokeGroup = chokeBox.getSelectedId() - 1;
+        for (auto& p : pads) p->repaint();
     };
     addAndMakeVisible (chokeBox);
 
@@ -447,6 +448,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         };
         pad->getMultiCount = [this] { return multiSelectedCount(); };
         pad->onClearSelected = [this] { clearSelectedPads(); };
+        pad->onChokeGroup = [this] (int idx, int group) { setChokeGroup (idx, group); };
         pad->onDeselect = [this] { multiSelection.fill (false); refreshMultiSelection(); };
         pad->onLoadRequest = [this] (int idx) { choosePadFile (idx); };
         pad->onClear = [this] (int idx) { processor.pushUndo ("Clear pad"); processor.clearPad (idx); };
@@ -1282,6 +1284,30 @@ void RezalicaEditor::refreshMultiSelection()
 {
     for (auto& p : pads)
         p->setMultiSelected (multiSelection[(size_t) p->getIndex()]);
+}
+
+void RezalicaEditor::setChokeGroup (int clickedPad, int group)
+{
+    // several pads selected (Shift+click): all of them go into the group, else just the clicked pad
+    std::vector<int> targets;
+    if (multiSelectedCount() > 1)
+    {
+        for (int i = 0; i < rz::numPads; ++i)
+            if (multiSelection[(size_t) i]) targets.push_back (i);
+    }
+    else
+        targets.push_back (clickedPad);
+    processor.pushUndo ("Choke group"); // one UNDO for all of them
+    juce::StringArray names;
+    for (int p : targets)
+    {
+        processor.getEngine().getPad (p).chokeGroup = group;
+        names.add (rz::padLabel (p));
+    }
+    if (std::find (targets.begin(), targets.end(), processor.selectedPad.load()) != targets.end())
+        chokeBox.setSelectedId (group + 1, juce::dontSendNotification);
+    for (auto& p : pads) p->repaint();
+    showStatus ((group > 0 ? "Choke " + juce::String (group) + ": " : juce::String ("No choke: ")) + names.joinIntoString (", "));
 }
 
 void RezalicaEditor::clearSelectedPads()

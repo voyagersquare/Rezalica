@@ -27,6 +27,8 @@ public:
     std::function<bool (int, juce::ModifierKeys)> onMultiSelect;
     std::function<int()> getMultiCount;
     std::function<void()> onClearSelected, onDeselect;
+    /** Choke group for this pad, or for all selected pads when several are selected (0 = none). */
+    std::function<void (int pad, int group)> onChokeGroup;
     void setMultiSelected (bool m)           { if (m != multiSelected) { multiSelected = m; repaint(); } }
 
     void setIndex (int i)                    { if (i != index) { index = i; flashLevel = 0.0f; held = false; repaint(); } }
@@ -96,6 +98,17 @@ public:
         g.setColour (ink.withAlpha (0.45f));
         g.drawText (key.toUpperCase(), b.reduced (8.0f, 6.0f), juce::Justification::topRight);
 
+        if (const int choke = processor.getEngine().getPad (index).chokeGroup.load(); choke > 0)
+        {
+            // its choke group
+            auto badge = b.reduced (8.0f, 6.0f).removeFromBottom (14.0f).removeFromRight (busBadge.isNotEmpty() ? 72.0f : 30.0f).removeFromLeft (30.0f);
+            g.setColour (juce::Colour (0xffe0a020));
+            g.fillRoundedRectangle (badge, 3.0f);
+            g.setColour (juce::Colours::black);
+            g.setFont (juce::FontOptions (9.0f, juce::Font::bold));
+            g.drawText ("CH " + juce::String (choke), badge, juce::Justification::centred);
+            if (busBadge.isEmpty()) inner.removeFromRight (32.0f);
+        }
         if (busBadge.isNotEmpty())
         {
             // the mixer bus this pad plays into (nothing shown for MASTER)
@@ -217,6 +230,15 @@ private:
             m.addSubMenu ("Send to", send);
         }
         {
+            // choke group: for this pad, or for all selected pads at once
+            juce::PopupMenu choke;
+            const int current = processor.getEngine().getPad (index).chokeGroup.load();
+            choke.addItem (80, "No choke", true, current == 0);
+            for (int g = 1; g <= 8; ++g)
+                choke.addItem (80 + g, "Choke " + juce::String (g), true, current == g);
+            m.addSubMenu (multi > 1 ? "Choke group (" + juce::String (multi) + " selected pads)" : juce::String ("Choke group"), choke);
+        }
+        {
             // which note of the MIDI controller plays this pad
             m.addSeparator();
             const int note = processor.noteForPad (index);
@@ -229,6 +251,8 @@ private:
 
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this] (int r)
         {
+            if (r >= 80 && r <= 88 && onChokeGroup)
+                onChokeGroup (index, r - 80);
             if (r == 70)
             {
                 // the next note that comes in plays this pad (the pad layout becomes "custom")
