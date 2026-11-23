@@ -503,6 +503,32 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             if (m.isMidiStop())     { sequencer.stopPlayback(); sequencer.stopSound = 1; continue; }
         }
 
+        // MIDI Machine Control: the transport keys of most controllers (Akai MPD / MPK, M-Audio ...) send it
+        // by default, so PLAY / STOP / REC / PAUSE work without any set-up
+        if (m.isSysEx())
+        {
+            const auto* d = m.getSysExData();
+            if (m.getSysExDataSize() >= 4 && d[0] == 0x7f && d[2] == 0x06)
+            {
+                switch (d[3])
+                {
+                    case 0x01: sequencer.stopPlayback(); sequencer.stopSound = 1; break;                     // STOP
+                    case 0x02: case 0x03:                                                                   // PLAY
+                        if (sequencer.isPaused()) sequencer.resumePlayback();
+                        else if (! sequencer.internalPlay.load()) sequencer.playPattern();
+                        break;
+                    case 0x06: sequencer.recording = true;                                                  // RECORD
+                               if (! sequencer.internalPlay.load()) sequencer.playPattern();
+                               break;
+                    case 0x07: sequencer.recording = false; break;                                          // RECORD EXIT
+                    case 0x09: sequencer.pausePlayback(); break;                                            // PAUSE
+                    default: break;
+                }
+                ++mmcCount;
+            }
+            continue;
+        }
+
         // knobs / faders / buttons of the controller: to the editor (MIDI Learn)
         if (m.isController())
         {

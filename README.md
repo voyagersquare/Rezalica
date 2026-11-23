@@ -217,8 +217,14 @@ Gumb **MIDI** (pored BROWSER) treperi zeleno kad stiže MIDI i otvara izbornik:
   Radi za gumbe pada (GAIN … END, LOOP, REVERSE, GATE, MUTE), transport (REC, PLAY, PAUSE, STOP, metronom), banke A–D,
   tempo, fadere i M / S miksera te DECK (START, 33/45, SYNC, LOOP, REVERSE, REC, PITCH, VOLUME; ploča = **jog wheel**
   za scratch ili **cut** fader). Desni klik briše vezu, ESC ili MIDI LEARN završava.
+- **Quick set-up of a controller:** program redom traži: udari 16 padova (A1 … A16), okreni knobove (GAIN … END),
+  pomakni fadere (BUS A–D, MASTER) ili pritisni transport tipke. Klik bilo gdje preskače jednu, ESC prekida.
+  U MIDI Learn i padovi uče notu: klikni pad pa ga udari na kontroleru.
+- **Transport tipke** kontrolera koje šalju **MMC** (tvornički Akai MPD / MPK, M-Audio i većina drugih) rade odmah:
+  PLAY, STOP, REC, PAUSE.
 - **Presets:** postavke (pad note + MIDI Learn) spremaju se za svaki kontroler posebno (*Save for <kontroler>*) i same se
-  učitaju kad taj kontroler spojiš; *Save as…* sprema pod bilo kojim imenom.
+  učitaju kad taj kontroler spojiš; *Save as…* sprema pod bilo kojim imenom; *Export / Import* u datoteku `.rzmidi`
+  (za dijeljenje ili drugo računalo).
 - **Clock in:** Rezalica prati tempo i START / CONTINUE / STOP drugog uređaja.
 - **Clock out:** šalje MIDI clock (24 po udarcu) i START / STOP na odabrani MIDI izlaz.
 

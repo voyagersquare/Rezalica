@@ -1,5 +1,6 @@
 #include "MidiControl.h"
 #include "AppSettings.h"
+#include "PadButton.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 
@@ -42,8 +43,16 @@ public:
         {
             const auto id = c->getComponentID().fromFirstOccurrenceOf (learnPrefix, false, false);
             auto r = getLocalArea (c, c->getLocalBounds()).toFloat().expanded (2.0f);
-            const bool selected = id == owner.selectedId;
-            const auto key = owner.keyFor (id);
+            bool selected = id == owner.selectedId;
+            auto key = owner.keyFor (id);
+            if (auto* pad = dynamic_cast<PadButton*> (c))
+            {
+                // a pad: the note that plays it
+                const int note = owner.processor.noteForPad (pad->getIndex());
+                key = note >= 0 ? "Note " + juce::MidiMessage::getMidiNoteName (note, true, true, 3) : juce::String();
+                selected = owner.processor.learnPadNote.load() == pad->getIndex();
+                if (selected) key = {};
+            }
             const auto col = selected ? juce::Colour (0xffffd23a) : key.isNotEmpty() ? juce::Colour (0xff53d769) : juce::Colour (0xff4fa3ff);
             g.setColour (col.withAlpha (selected ? 0.35f : 0.22f));
             g.fillRoundedRectangle (r, 4.0f);
@@ -51,7 +60,7 @@ public:
             g.drawRoundedRectangle (r, 4.0f, selected ? 2.5f : 1.5f);
             if (key.isNotEmpty() || selected)
             {
-                const auto text = selected && key.isEmpty() ? juce::String ("move a control ...") : key;
+                const auto text = selected && key.isEmpty() ? juce::String (dynamic_cast<PadButton*> (c) != nullptr ? "hit a pad ..." : "move a control ...") : key;
                 g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
                 const float tw = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) + 8.0f;
                 auto tag = juce::Rectangle<float> (r.getX(), r.getY() - 13.0f, tw, 13.0f);
@@ -67,8 +76,10 @@ public:
         g.fillRect (hint);
         g.setColour (juce::Colour (0xffffd23a));
         g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-        g.drawText ("MIDI LEARN:  click a knob, fader or button (blue), then move / press the control on your MIDI controller.   "
-                    "Right-click: remove.   Click MIDI LEARN (or press ESC) when you are done.",
+        g.drawText (owner.getWizard() != MidiControl::wizardNone
+                        ? "SET-UP:  " + owner.wizardText() + "   Click anywhere else to skip it, ESC to stop."
+                        : juce::String ("MIDI LEARN:  click a knob, fader, button or pad (blue), then move / press / hit it on your MIDI controller.   "
+                                        "Right-click: remove.   Click MIDI LEARN (or press ESC) when you are done."),
                     hint.reduced (10.0f, 0.0f), juce::Justification::centredLeft);
     }
 
@@ -88,8 +99,31 @@ public:
             if (getLocalArea (c, c->getLocalBounds()).expanded (2).contains (e.getPosition()))
                 if (hit == nullptr || c->getWidth() * c->getHeight() < hit->getWidth() * hit->getHeight())
                     hit = c;
-        if (hit == nullptr) { owner.selectedId = {}; repaint(); return; }
+        if (owner.getWizard() != MidiControl::wizardNone)
+        {
+            owner.skipWizardStep(); // during the set-up a click skips the current control
+            repaint();
+            return;
+        }
+        if (hit == nullptr) { owner.selectedId = {}; owner.processor.learnPadNote = -1; repaint(); return; }
         const auto id = hit->getComponentID().fromFirstOccurrenceOf (learnPrefix, false, false);
+        if (auto* pad = dynamic_cast<PadButton*> (hit))
+        {
+            // a pad: learn (or with right-click forget) the note that plays it
+            owner.selectedId = {};
+            if (e.mods.isPopupMenu())
+            {
+                auto map = owner.processor.getPadNoteMap();
+                for (int n = 0; n < 128; ++n)
+                    if (owner.processor.padForNote (n) == pad->getIndex()) map[(size_t) n] = -1;
+                owner.processor.setPadNoteMap (map, RezalicaProcessor::layoutCustom);
+                ++owner.processor.padNoteMapChanged;
+            }
+            else
+                owner.learnPadNote (pad->getIndex());
+            repaint();
+            return;
+        }
 
         if (id == "deck.jog" && ! e.mods.isPopupMenu())
         {
@@ -151,19 +185,25 @@ MidiControl::~MidiControl()
 
 juce::Component* MidiControl::findControl (const juce::String& id) const
 {
-    // (only controls that can be seen: a hidden docked panel's knobs do not react)
+    // (also hidden ones: the mixer's faders keep working while STEP SEQ / DECK ... cover them;
+    //  a visible one wins when there are two)
     const auto want = learnPrefix + id;
+    juce::Component* hidden = nullptr;
     std::function<juce::Component* (juce::Component&)> find = [&] (juce::Component& c) -> juce::Component*
     {
         for (auto* ch : c.getChildren())
         {
-            if (! ch->isVisible()) continue;
-            if (ch->getComponentID() == want) return ch;
+            if (ch->getComponentID() == want)
+            {
+                if (ch->isShowing() || ch->isVisible()) return ch;
+                if (hidden == nullptr) hidden = ch;
+            }
             if (auto* f = find (*ch)) return f;
         }
         return nullptr;
     };
-    return find (root);
+    if (auto* f = find (root)) return f;
+    return hidden;
 }
 
 void MidiControl::collectControls (juce::Array<juce::Component*>& out) const
@@ -205,6 +245,7 @@ void MidiControl::setLearnMode (bool on)
 {
     learnMode = on;
     selectedId = {};
+    if (! on) { wizard = wizardNone; processor.learnPadNote = -1; }
     processor.midiLearnListening = false;
     if (on)
     {
@@ -244,6 +285,7 @@ void MidiControl::handle (const RezalicaProcessor::MidiControlEvent& e)
         processor.midiLearnListening = false;
         updateNoteControls();
         saveCurrent();
+        if (wizard != wizardNone) nextWizardStep();
         if (overlay != nullptr) overlay->repaint();
         return;
     }
@@ -311,6 +353,8 @@ void MidiControl::timerCallback()
     if (const int c = processor.padNoteMapChanged.load(); c != lastPadMapChanged)
     {
         lastPadMapChanged = c;
+        if (wizard == wizardPads) nextWizardStep();
+        if (overlay != nullptr) overlay->repaint();
         saveCurrent();
         if (onPadNotesChanged) onPadNotesChanged();
         if (onMessage) onMessage ("MIDI: pad notes changed (custom layout)");
@@ -353,6 +397,100 @@ void MidiControl::checkDevices()
         }
     }
     knownInputs = now;
+}
+
+//==============================================================================
+// quick set-up
+
+void MidiControl::learnPadNote (int pad)
+{
+    processor.learnPadNote = pad;
+    if (overlay != nullptr) overlay->repaint();
+}
+
+void MidiControl::startWizard (int kind)
+{
+    wizardTargets.clear();
+    if (kind == wizardKnobs)
+        wizardTargets = { "pad.gain", "pad.pan", "pad.pitch", "pad.attack", "pad.release", "pad.start", "pad.end" };
+    else if (kind == wizardFaders)
+        wizardTargets = { "busa.fader", "busb.fader", "busc.fader", "busd.fader", "master.fader" };
+    else if (kind == wizardTransport)
+        wizardTargets = { "transport.play", "transport.stop", "transport.rec", "transport.pause", "transport.metronome" };
+    else if (kind == wizardPads)
+        for (int i = 0; i < rz::padsPerBank; ++i) wizardTargets.add ("pad " + juce::String (i));
+    setLearnMode (true);
+    wizard = kind;
+    wizardStep = -1;
+    nextWizardStep();
+}
+
+void MidiControl::skipWizardStep()
+{
+    processor.learnPadNote = -1;
+    nextWizardStep();
+}
+
+void MidiControl::nextWizardStep()
+{
+    if (wizard == wizardNone) return;
+    ++wizardStep;
+    selectedId = {};
+    processor.learnPadNote = -1;
+    if (wizardStep >= wizardTargets.size())
+    {
+        const auto done = wizard;
+        wizard = wizardNone;
+        if (onMessage) onMessage (done == wizardPads ? "MIDI set-up: pads learned" : "MIDI set-up: done");
+        setLearnMode (false);
+        return;
+    }
+    if (wizard == wizardPads)
+        processor.learnPadNote = processor.currentBank.load() * rz::padsPerBank + wizardStep;
+    else
+        selectedId = wizardTargets[wizardStep];
+    if (overlay != nullptr) overlay->repaint();
+}
+
+juce::String MidiControl::wizardText() const
+{
+    if (wizard == wizardNone || wizardStep < 0 || wizardStep >= wizardTargets.size()) return {};
+    const auto step = "(" + juce::String (wizardStep + 1) + " / " + juce::String (wizardTargets.size()) + ")";
+    if (wizard == wizardPads)
+        return "Hit the pad on your controller that should play " + padLabel (processor.currentBank.load() * rz::padsPerBank + wizardStep) + "  " + step;
+    const auto what = wizard == wizardKnobs ? "Turn the knob for " : wizard == wizardFaders ? "Move the fader for " : "Press the button for ";
+    return what + niceName (wizardTargets[wizardStep]) + "  " + step;
+}
+
+void MidiControl::exportPreset()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Export MIDI preset", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                                                       .getChildFile ((currentPreset.isNotEmpty() ? currentPreset : juce::String ("Rezalica MIDI")) + ".rzmidi"),
+                                                   "*.rzmidi");
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this] (const juce::FileChooser& fc)
+    {
+        auto f = fc.getResult();
+        if (f == juce::File()) return;
+        juce::ValueTree p ("PRESET");
+        p.setProperty ("name", f.getFileNameWithoutExtension(), nullptr);
+        p.setProperty ("setup", stateToString(), nullptr);
+        if (f.withFileExtension (".rzmidi").replaceWithText (p.toXmlString()) && onMessage)
+            onMessage ("MIDI preset exported");
+    });
+}
+
+void MidiControl::importPreset()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Import MIDI preset", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.rzmidi");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
+    {
+        auto p = juce::ValueTree::fromXml (fc.getResult().loadFileAsString());
+        if (! p.isValid() || ! p.hasType ("PRESET")) return;
+        stateFromString (p.getProperty ("setup").toString());
+        savePreset (p.getProperty ("name").toString(), {});   // also kept in the preset list
+        if (onPadNotesChanged) onPadNotesChanged();
+        if (onMessage) onMessage ("MIDI preset \"" + p.getProperty ("name").toString() + "\" imported");
+    });
 }
 
 //==============================================================================
@@ -459,7 +597,17 @@ void MidiControl::deletePreset (const juce::String& name)
 void MidiControl::showMenu (juce::Component* target)
 {
     juce::PopupMenu m;
-    m.addItem (1, "MIDI Learn  (knobs, faders, buttons, DECK)", true, learnMode);
+    m.addItem (1, "MIDI Learn  (knobs, faders, buttons, pads, DECK)", true, learnMode);
+    {
+        juce::PopupMenu setup;
+        setup.addItem (20, "Pads: hit the 16 pads one after another (bank " + juce::String::charToString ((juce::juce_wchar) ('A' + processor.currentBank.load())) + ")");
+        setup.addItem (21, "Knobs: turn them one after another (GAIN ... END)");
+        setup.addItem (22, "Faders: move them one after another (BUS A-D, MASTER)");
+        setup.addItem (23, "Transport keys: PLAY, STOP, REC, PAUSE, metronome");
+        setup.addSeparator();
+        setup.addItem (24, "(Transport keys that send MMC work without set-up)", false);
+        m.addSubMenu ("Quick set-up of a controller", setup);
+    }
     m.addItem (2, "Forget all MIDI Learn", ! mappings.empty());
     m.addSeparator();
 
@@ -500,6 +648,9 @@ void MidiControl::showMenu (juce::Component* target)
         if (dm != nullptr && dm->isMidiInputDeviceEnabled (inputs[i].identifier))
             presets.addItem (400 + i, "Save for " + inputs[i].name + "  (loads when it is connected)");
     presets.addItem (500, "Save as ...");
+    presets.addSeparator();
+    presets.addItem (510, "Export to a file ...");
+    presets.addItem (511, "Import from a file ...");
     if (! names.isEmpty())
     {
         juce::PopupMenu del;
@@ -523,6 +674,9 @@ void MidiControl::showMenu (juce::Component* target)
                      [this, inputs, outputs, names, dm] (int r)
     {
         if (r == 1) setLearnMode (! learnMode);
+        else if (r >= 20 && r <= 23) startWizard (r == 20 ? wizardPads : r == 21 ? wizardKnobs : r == 22 ? wizardFaders : wizardTransport);
+        else if (r == 510) exportPreset();
+        else if (r == 511) importPreset();
         else if (r == 2) clearAll();
         else if (r >= 10 && r <= 12)
         {

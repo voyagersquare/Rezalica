@@ -215,6 +215,7 @@ public:
     std::array<std::atomic<bool>, 128> noteIsControl {}; // notes learned for buttons: they do not play pads
     std::atomic<bool> midiLearnListening { false };      // MIDI Learn waits for a control: notes do not play
     std::atomic<int> midiActivity { 0 };                 // counts blocks with incoming MIDI (the MIDI key blinks)
+    std::atomic<int> mmcCount { 0 };                     // MIDI Machine Control commands received (transport keys)
 
     /** MIDI clock in: Rezalica follows an external tempo and its START / CONTINUE / STOP. */
     std::atomic<bool> clockIn { false };

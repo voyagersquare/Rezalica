@@ -30,6 +30,15 @@ public:
     juce::String selectedId;                                // the control waiting for its MIDI control
     juce::Component* exitButton = nullptr;                  // a click on it (the MIDI key) ends MIDI Learn
 
+    /** Quick set-up: learn the controller's pads / knobs / faders / transport keys one after another. */
+    enum Wizard { wizardNone = 0, wizardPads, wizardKnobs, wizardFaders, wizardTransport };
+    void startWizard (int kind);
+    int getWizard() const noexcept { return wizard; }
+    juce::String wizardText() const;      // what to do now ("Turn the knob for GAIN (2 / 7)")
+    void skipWizardStep();
+    /** The pad whose note MIDI Learn waits for (or -1). */
+    void learnPadNote (int pad);
+
     /** The menu of the MIDI key (learn, pad notes, controllers, presets, clock). */
     void showMenu (juce::Component* target);
 
@@ -57,7 +66,14 @@ private:
     juce::String stateToString() const;
     void stateFromString (const juce::String&);
     void checkDevices();
+    void nextWizardStep();
+    void exportPreset();
+    void importPreset();
+    int wizard = wizardNone, wizardStep = 0;
+    juce::StringArray wizardTargets;
+    std::unique_ptr<juce::FileChooser> chooser;
 
+    friend class MidiLearnOverlay;
     RezalicaProcessor& processor;
     juce::Component& root;
     const bool standalone;

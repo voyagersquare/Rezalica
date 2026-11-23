@@ -2361,6 +2361,37 @@ int main (int argc, char** argv)
         check (std::abs (knob.getValue() - 1.0) < 1.0e-6 && clicks == 1, "the learned controls move the knob and press the button");
         mc.clearAll();
 
+        // quick set-up: knobs one after another
+        mc.startWizard (rz::MidiControl::wizardKnobs);
+        juce::Slider gain, pan;
+        rz::setLearnId (gain, "pad.gain"); rz::setLearnId (pan, "pad.pan");
+        root.addAndMakeVisible (gain); root.addAndMakeVisible (pan);
+        mc.pollNow();
+        { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::controllerEvent (1, 30, 5), 0); block (mb); }
+        mc.pollNow();
+        { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::controllerEvent (1, 31, 5), 0); block (mb); }
+        mc.pollNow();
+        check (mc.keyFor ("pad.gain") == "CC 30 ch 1" && mc.keyFor ("pad.pan") == "CC 31 ch 1" && mc.selectedId == "pad.pitch",
+               "set-up wizard: the knobs are learned one after another");
+        mc.setLearnMode (false);
+        check (mc.getWizard() == rz::MidiControl::wizardNone, "ESC / MIDI LEARN ends the set-up");
+        // quick set-up: pads
+        m.currentBank = 0;
+        mc.startWizard (rz::MidiControl::wizardPads);
+        mc.pollNow();
+        { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOn (10, 44, (juce::uint8) 90), 0); block (mb); }
+        mc.pollNow();
+        check (m.padForNote (44) == 0 && m.learnPadNote.load() == 1, "set-up wizard: pad A1 learned, waiting for A2");
+        mc.setLearnMode (false);
+        mc.clearAll();
+
+        // MMC transport keys: PLAY / STOP without any set-up
+        auto mmc = [] (juce::uint8 cmd) { const juce::uint8 d[] = { 0x7f, 0x7f, 0x06, cmd }; return juce::MidiMessage::createSysExMessage (d, 4); };
+        { juce::MidiBuffer mb; mb.addEvent (mmc (0x02), 0); block (mb); }
+        const bool mmcPlay = m.getSequencer().internalPlay.load();
+        { juce::MidiBuffer mb; mb.addEvent (mmc (0x01), 0); block (mb); }
+        check (mmcPlay && ! m.getSequencer().internalPlay.load(), "MMC PLAY / STOP from the controller's transport keys");
+
         // clock in: 24 ticks per beat at 100 BPM, then STOP
         m.clockIn = true;
         {

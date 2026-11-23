@@ -454,6 +454,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         pad->onPaste = [this] (int idx) { processor.pushUndo ("Paste pad"); processor.pastePad (idx); selectPad (idx); };
         pad->onChop = [this] (int idx, int mode) { processor.pushUndo ("Chop"); processor.chopPadSample (idx, mode); selectPad (0); refreshChopControls(); };
         addAndMakeVisible (*pad);
+        rz::setLearnId (*pad, "padnote"); // in MIDI Learn a pad learns the note that plays it
         pads.push_back (std::move (pad));
     }
     for (int i = 0; i < rz::numPads; ++i)
