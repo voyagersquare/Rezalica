@@ -90,12 +90,11 @@ private:
     juce::VBlankAttachment vblank { this, [this] { platter.repaint(); wave.repaint(); } };
 
     juce::TextButton startButton { "START / STOP" }, rpm33 { "33" }, rpm45 { "45" };
-    juce::TextButton syncButton { "SYNC" }, loopButton { "LOOP" }, hamsterButton { "HAMSTER" };
-    juce::TextButton cutButton { "CUT" }, recButton { "REC" };
+    juce::TextButton syncButton { "SYNC" }, loopButton { "LOOP" };
+    juce::TextButton recButton { "REC" };
     juce::TextButton range8 { "8 %" }, range16 { "16 %" };
-    juce::Slider pitchSlider { juce::Slider::LinearVertical, juce::Slider::NoTextBox };
-    Knob volumeKnob { "VOLUME" };
-    juce::Label title, bpmCaption, bpmLabel, pitchLabel, recLabel, hint;
+    Knob pitchKnob { "PITCH" }, volumeKnob { "VOLUME" };
+    juce::Label title, recLabel, hint;
     MixerPanel effects; // the DECK's 4 effect slots, like the mixer's (no fader)
     juce::String lastInfo;
     int infoTicks = 0;

@@ -281,74 +281,62 @@ DeckPanel::DeckPanel (RezalicaProcessor& p) : processor (p), platter (p), wave (
 
     syncButton.setClickingTogglesState (true);
     syncButton.onClick = [this] { processor.getDeck().sync = syncButton.getToggleState(); };
-    syncButton.setTooltip ("The record turns at the sequencer tempo (needs the sample's BPM). START then starts on the next beat while the sequencer plays.");
+    syncButton.setTooltip ("The record turns at the sequencer tempo (the sample's BPM comes from its name, e.g. \"85-bpm\", or its length). "
+                           "START then starts on the next beat while the sequencer plays.");
     loopButton.setClickingTogglesState (true);
     loopButton.onClick = [this] { processor.getDeck().loop = loopButton.getToggleState(); };
     loopButton.setTooltip ("The end of the sample joins its start (an endless groove)");
-    hamsterButton.setClickingTogglesState (true);
-    hamsterButton.onClick = [this] { processor.getDeck().reverseFader = hamsterButton.getToggleState(); };
-    hamsterButton.setTooltip ("Hamster: the fader works the other way round (SHIFT / CUT opens the sound)");
-
-    cutButton.setTooltip ("Closes the fader while pressed. With the mouse on the record, hold SHIFT instead.");
-    cutButton.onStateChange = [this] { processor.getDeck().cut = cutButton.isDown(); };
+    deck.reverseFader = false; // (no hamster switch any more: SHIFT closes the fader)
 
     recButton.setClickingTogglesState (true);
     recButton.setColour (juce::TextButton::buttonOnColourId, colours::ledRed);
-    recButton.setTooltip ("Records what the deck plays (after the fader); stop it to put the scratch on the selected pad");
+    recButton.setTooltip ("Records what the deck plays (with its effects); stop it to put the scratch on the selected pad");
     recButton.onClick = [this]
     {
         auto& d = processor.getDeck();
         if (recButton.getToggleState()) d.startRecording(); else d.stopRecording();
     };
 
-    pitchSlider.setRange (-1.0, 1.0, 0.0);
-    pitchSlider.setDoubleClickReturnValue (true, 0.0);
-    pitchSlider.setSliderSnapsToMousePosition (false);
-    pitchSlider.setValue (-deck.pitch.load(), juce::dontSendNotification);
-    pitchSlider.onValueChange = [this] { processor.getDeck().pitch = (float) -pitchSlider.getValue(); syncControls(); }; // + at the bottom, like a Technics
-    pitchSlider.setTooltip ("PITCH (double-click: 0). Down = faster, like on a Technics.");
+    // PITCH: a round knob like VOLUME; its value in % of the record's speed (SYNC shows the tempo change)
+    pitchKnob.slider.setRange (-1.0, 1.0, 0.0);
+    pitchKnob.slider.getProperties().set ("bipolar", true);
+    pitchKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    pitchKnob.slider.textFromValueFunction = [this] (double v)
+    {
+        auto& d = processor.getDeck();
+        const float bpm = d.recordBpm.load();
+        if (d.sync.load() && bpm > 1.0f)
+            return "SYNC " + juce::String ((processor.getSequencer().effectiveBpm.load() / bpm - 1.0) * 100.0, 1) + " %";
+        return juce::String (v * d.pitchRange.load() * 100.0, 1) + " %";
+    };
+    pitchKnob.slider.setValue (deck.pitch.load(), juce::dontSendNotification);
+    pitchKnob.slider.onValueChange = [this] { processor.getDeck().pitch = (float) pitchKnob.slider.getValue(); };
+    pitchKnob.slider.setTooltip ("PITCH: right = faster (double-click: 0). Range 8 % or 16 %.");
     for (auto* b : { &range8, &range16 })
     {
         b->setClickingTogglesState (true);
         b->setRadioGroupId (4502);
     }
-    range8.onClick = [this] { processor.getDeck().pitchRange = 0.08f; syncControls(); };
-    range16.onClick = [this] { processor.getDeck().pitchRange = 0.16f; syncControls(); };
+    range8.onClick = [this] { processor.getDeck().pitchRange = 0.08f; pitchKnob.slider.updateText(); };
+    range16.onClick = [this] { processor.getDeck().pitchRange = 0.16f; pitchKnob.slider.updateText(); };
 
     volumeKnob.slider.setRange (0.0, 1.0, 0.0);
     volumeKnob.slider.setValue (deck.volume.load(), juce::dontSendNotification);
     volumeKnob.slider.onValueChange = [this] { processor.getDeck().volume = (float) volumeKnob.slider.getValue(); };
-    volumeKnob.slider.setTextValueSuffix ("");
     volumeKnob.slider.setNumDecimalPlacesToDisplay (2);
-
-    bpmCaption.setText ("SAMPLE BPM", juce::dontSendNotification);
-    bpmLabel.setEditable (true);
-    bpmLabel.setJustificationType (juce::Justification::centred);
-    bpmLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff0d0d0e));
-    bpmLabel.setColour (juce::Label::outlineColourId, colours::outline);
-    bpmLabel.setTooltip ("The tempo of the sample (for SYNC). Click to type it.");
-    bpmLabel.onTextChange = [this]
-    {
-        processor.getDeck().recordBpm = (float) juce::jlimit (0.0, 400.0, bpmLabel.getText().getDoubleValue());
-        syncControls();
-    };
+    volumeKnob.slider.setDoubleClickReturnValue (true, 1.0);
 
     hint.setText ("Hold the record with the mouse and move it = scratch.  Hold SHIFT = cut (fader closed).  "
                   "Drag a sample from the BROWSER onto the record.", juce::dontSendNotification);
     hint.setColour (juce::Label::textColourId, colours::dim);
     hint.setFont (juce::FontOptions (11.0f));
 
-    for (auto* c : std::initializer_list<juce::Component*> { &startButton, &rpm33, &rpm45, &syncButton, &loopButton, &hamsterButton, &cutButton,
-                                                             &recButton, &range8, &range16, &pitchSlider, &volumeKnob,
-                                                             &bpmCaption, &bpmLabel, &pitchLabel, &recLabel, &hint })
+    for (auto* c : std::initializer_list<juce::Component*> { &startButton, &rpm33, &rpm45, &syncButton, &loopButton,
+                                                             &recButton, &range8, &range16, &pitchKnob, &volumeKnob, &recLabel, &hint })
         addAndMakeVisible (*c);
-    for (auto* l : { &bpmCaption, &pitchLabel, &recLabel })
-    {
-        l->setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        l->setColour (juce::Label::textColourId, colours::text);
-    }
-    for (auto* b : std::initializer_list<juce::Component*> { &startButton, &rpm33, &rpm45, &syncButton, &loopButton, &hamsterButton, &cutButton,
-                                                             &recButton, &range8, &range16 })
+    recLabel.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    recLabel.setColour (juce::Label::textColourId, colours::text);
+    for (auto* b : std::initializer_list<juce::Component*> { &startButton, &rpm33, &rpm45, &syncButton, &loopButton, &recButton, &range8, &range16 })
         b->setWantsKeyboardFocus (false);
 
     syncControls();
@@ -381,29 +369,24 @@ void DeckPanel::syncControls()
     rpm45.setToggleState (d.rpm45.load(), juce::dontSendNotification);
     syncButton.setToggleState (d.sync.load(), juce::dontSendNotification);
     loopButton.setToggleState (d.loop.load(), juce::dontSendNotification);
-    hamsterButton.setToggleState (d.reverseFader.load(), juce::dontSendNotification);
     range8.setToggleState (d.pitchRange.load() < 0.12f, juce::dontSendNotification);
     range16.setToggleState (d.pitchRange.load() >= 0.12f, juce::dontSendNotification);
-    if (std::abs (pitchSlider.getValue() + d.pitch.load()) > 1.0e-4)
-        pitchSlider.setValue (-d.pitch.load(), juce::dontSendNotification);
-    volumeKnob.slider.setValue (d.volume.load(), juce::dontSendNotification);
-    const float bpm = d.recordBpm.load();
-    if (! bpmLabel.isBeingEdited())
-        bpmLabel.setText (bpm > 0.0f ? juce::String (bpm, 1) : juce::String ("?"), juce::dontSendNotification);
-    const bool syncing = d.sync.load() && bpm > 1.0f;
-    pitchSlider.setEnabled (! syncing);
-    const double seqBpm = processor.getSequencer().effectiveBpm.load();
-    pitchLabel.setText (syncing ? "SYNC " + juce::String ((seqBpm / bpm - 1.0) * 100.0, 1) + " %"
-                                : "PITCH " + juce::String (d.pitch.load() * d.pitchRange.load() * 100.0f, 1) + " %",
-                        juce::dontSendNotification);
+    if (! pitchKnob.slider.isMouseButtonDown())
+        pitchKnob.slider.setValue (d.pitch.load(), juce::dontSendNotification);
+    if (! volumeKnob.slider.isMouseButtonDown())
+        volumeKnob.slider.setValue (d.volume.load(), juce::dontSendNotification);
+    const bool syncing = d.sync.load() && d.recordBpm.load() > 1.0f;
+    pitchKnob.slider.setEnabled (! syncing);
+    range8.setEnabled (! syncing);
+    range16.setEnabled (! syncing);
+    pitchKnob.slider.updateText();
 }
 
 void DeckPanel::timerCallback()
 {
     auto& d = processor.getDeck();
     // SHIFT also when the mouse is not over the deck (the key goes to the focused component)
-    if (! cutButton.isDown())
-        d.cut = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown() && isShowing() && hasKeyboardFocus (true);
+    d.cut = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown() && isShowing() && hasKeyboardFocus (true);
 
     const bool running = d.motorOn.load() || d.startOnBeat.load();
     startButton.setButtonText (d.startOnBeat.load() ? "WAITING FOR BEAT" : running ? "STOP" : "START");
@@ -455,14 +438,9 @@ void DeckPanel::paint (juce::Graphics& g)
         g.setColour (colours::accent);
         g.drawText ("Deck", t, juce::Justification::centredLeft);
     }
-    // the fader: open / closed lamp
+    // the deck's level next to its VOLUME knob
     auto& d = processor.getDeck();
-    const bool closed = d.cut.load() != d.reverseFader.load();
-    auto lamp = cutButton.getBounds().toFloat().translated (0.0f, (float) cutButton.getHeight() + 4.0f).withHeight (6.0f);
-    g.setColour (closed ? colours::ledRed : juce::Colour (0xff6fd36f));
-    g.fillRoundedRectangle (lamp, 3.0f);
-    // level
-    auto meter = volumeKnob.getBounds().toFloat().removeFromRight (6.0f).translated (8.0f, 0.0f);
+    auto meter = volumeKnob.getBounds().toFloat().removeFromRight (6.0f).translated (8.0f, 0.0f).reduced (0.0f, 6.0f);
     g.setColour (juce::Colour (0xff0d0d0e));
     g.fillRect (meter);
     const float lv = juce::jlimit (0.0f, 1.0f, d.level.load());
@@ -481,28 +459,25 @@ void DeckPanel::resized()
     // "Deck" in the top left corner
     title.setBounds (b.getX() + 4, b.getY() - 8, 170, 60);
 
-    // EFFECTS on the far right (4 slots, like the mixer's)
+    // EFFECTS on the far right, centred on the platter's height
     auto fx = b.removeFromRight (juce::jlimit (220, 300, b.getWidth() / 5));
-    effects.setBounds (fx.withHeight (juce::jmin (fx.getHeight(), 4 * 34 + 44)));
+    const int fxH = juce::jmin (fx.getHeight(), 4 * 34 + 44);
+    effects.setBounds (fx.withSizeKeepingCentre (fx.getWidth(), fxH));
     b.removeFromRight (14);
 
-    // the platter in the middle, the controls around it: left = motor / tempo, right = pitch fader, fader, REC, volume
+    // the platter in the middle; left: motor and speed, right: the two knobs, the pitch range and REC
     auto area = b.withTrimmedLeft (140); // (the title's corner)
-    const int colW = 170, pitchW = 64, gap = 16;
-    const int side = juce::jmax (120, juce::jmin (area.getHeight(), area.getWidth() - 2 * colW - pitchW - 4 * gap));
-    const int groupW = colW + gap + side + gap + pitchW + gap + colW;
-    auto group = area.withSizeKeepingCentre (juce::jmin (groupW, area.getWidth()), area.getHeight());
+    const int colW = 180, gap = 24;
+    const int side = juce::jmax (120, juce::jmin (area.getHeight(), area.getWidth() - 2 * colW - 2 * gap));
+    auto group = area.withSizeKeepingCentre (juce::jmin (colW + gap + side + gap + colW, area.getWidth()), area.getHeight());
 
     auto left = group.removeFromLeft (colW);
     group.removeFromLeft (gap);
     platter.setBounds (group.removeFromLeft (side).withSizeKeepingCentre (side, side));
     group.removeFromLeft (gap);
-    auto pitchCol = group.removeFromLeft (pitchW);
-    group.removeFromLeft (gap);
     auto right = group.removeFromLeft (colW);
 
-    const int rowH = 30, rowGap = 8;
-    auto row = [rowH, rowGap] (juce::Rectangle<int>& col) { auto r = col.removeFromTop (rowH); col.removeFromTop (rowGap); return r; };
+    const int rowH = 30, rowGap = 10;
     auto pair = [] (juce::Rectangle<int> r, juce::Component& a, juce::Component& c)
     {
         const int w = r.getWidth() / 2 - 3;
@@ -511,36 +486,32 @@ void DeckPanel::resized()
         c.setBounds (r);
     };
 
-    // left of the platter: START / STOP, speed, tempo
-    left.removeFromTop (20);
-    startButton.setBounds (row (left).withHeight (rowH + 10));
-    left.removeFromTop (10);
-    pair (row (left), rpm33, rpm45);
-    pair (row (left), syncButton, loopButton);
+    // left column, centred vertically: START / STOP, 33 / 45, SYNC / LOOP
     {
-        auto r = row (left);
-        bpmCaption.setBounds (r.removeFromLeft (90));
-        bpmLabel.setBounds (r);
+        auto l = left.withSizeKeepingCentre (colW, (rowH + 10) + 2 * rowH + 3 * rowGap + 10);
+        startButton.setBounds (l.removeFromTop (rowH + 10));
+        l.removeFromTop (rowGap + 10);
+        pair (l.removeFromTop (rowH), rpm33, rpm45);
+        l.removeFromTop (rowGap);
+        pair (l.removeFromTop (rowH), syncButton, loopButton);
     }
 
-    // right of the platter: the pitch fader (like on the deck), then the fader, REC and the volume
-    pitchLabel.setBounds (pitchCol.removeFromTop (18).expanded (12, 0));
-    auto ranges = pitchCol.removeFromBottom (54);
-    range8.setBounds (ranges.removeFromTop (24));
-    ranges.removeFromTop (6);
-    range16.setBounds (ranges.removeFromTop (24));
-    pitchSlider.setBounds (pitchCol.reduced (18, 4));
-
-    right.removeFromTop (20);
-    pair (right.removeFromTop (rowH), cutButton, hamsterButton);
-    right.removeFromTop (rowGap + 10); // (the open / closed lamp under CUT)
+    // right column, centred vertically: PITCH and VOLUME side by side, 8 % / 16 % under them, then REC
     {
-        recLabel.setBounds (right.removeFromBottom (18));
-        auto r = right.removeFromTop (juce::jmin (right.getHeight(), 90));
-        const int w = r.getWidth() / 2 - 3;
-        recButton.setBounds (r.removeFromLeft (w).withSizeKeepingCentre (w, rowH));
-        r.removeFromLeft (6);
-        volumeKnob.setBounds (r.removeFromLeft (80));
+        const int knobH = 96;
+        auto r = right.withSizeKeepingCentre (colW, knobH + rowGap + 24 + rowGap + 10 + rowH + 20);
+        auto knobs = r.removeFromTop (knobH);
+        pitchKnob.setBounds (knobs.removeFromLeft (colW / 2 - 4));
+        knobs.removeFromLeft (8);
+        volumeKnob.setBounds (knobs.withTrimmedRight (10)); // (the level meter on its right)
+        r.removeFromTop (rowGap);
+        auto ranges = r.removeFromTop (24).withWidth (colW / 2 - 4);
+        range8.setBounds (ranges.removeFromLeft (ranges.getWidth() / 2 - 2));
+        ranges.removeFromLeft (4);
+        range16.setBounds (ranges);
+        r.removeFromTop (rowGap + 10);
+        recButton.setBounds (r.removeFromTop (rowH));
+        recLabel.setBounds (r.removeFromTop (20));
     }
 }
 
