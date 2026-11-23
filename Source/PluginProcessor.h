@@ -395,6 +395,8 @@ private:
     rz::MasterFx masterFx;
     rz::AudioRecorder recorder;
     rz::Turntable deck;
+    juce::String savedDeckFile;     // the deck's record as saved with the project (kept after a restart)
+    bool restoringProject = false;  // setStateInformation from Open Project (not the session restored at start)
     std::array<std::atomic<int>, 128> noteMap {};   // note -> pad (-1 none, 0..63, bankRelative + i)
     std::atomic<int> padNoteLayout { layoutRezalica };
     std::array<int, 128> notePlaying {};            // audio thread: the pad each held note started

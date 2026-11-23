@@ -2448,6 +2448,32 @@ int main (int argc, char** argv)
         check (starts == 1 && std::abs (ticks - 48) <= 1, "clock out: START and 24 ticks per beat");
     }
 
+    {
+        // DECK after a restart: empty, unless its record was saved with the project
+        auto longFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_long.wav");
+        auto a = std::make_unique<RezalicaProcessor> (false);
+        a->prepareToPlay (48000.0, 512);
+        a->loadFileToDeck (longFile);
+        juce::MemoryBlock session;
+        a->getStateInformation (session);
+        auto b = std::make_unique<RezalicaProcessor> (false);
+        b->setStateInformation (session.getData(), (int) session.getSize());
+        check (b->getDeck().getRecord() == nullptr, "restart: the deck is empty when the project was not saved");
+
+        auto proj = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_deck_test.rzp");
+        a->saveProjectToFile (proj);
+        a->getStateInformation (session);
+        auto c = std::make_unique<RezalicaProcessor> (false);
+        c->setStateInformation (session.getData(), (int) session.getSize());
+        check (c->getDeck().getRecord() != nullptr, "restart: the record saved with the project stays on the deck");
+
+        auto d = std::make_unique<RezalicaProcessor> (false);
+        check (d->loadProjectFromFile (proj) && d->getDeck().getRecord() != nullptr, "opening the project brings its record");
+        d->newProject();
+        check (d->getDeck().getRecord() == nullptr, "a new project starts with an empty deck");
+        proj.deleteFile();
+    }
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

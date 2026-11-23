@@ -265,6 +265,8 @@ Gumb **DECK** (uz SONG) otvara gramofon u donjem dijelu prozora.
 - Klik u gornju traku cijelog samplea (ispod ploče) pomiče iglu.
 - **REC:** snima ono što deck svira (nakon fadera i DECK efekata); kad ga zaustaviš, scratch ide na odabrani pad (tišina se odreže).
 - Deck svira kroz svoje efekte pa kroz MASTER; postavke i efekti spremaju se s projektom.
+- Pri ponovnom pokretanju programa deck je **prazan**, osim ako je sample na ploči spremljen s projektom
+  (SAVE / SAVE AS) – tada ostaje na ploči. Otvaranje projekta vraća i njegov sample na deck, novi projekt počinje s praznim deckom.
 
 ## Instalacija (Windows)
 

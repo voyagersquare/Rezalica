@@ -1564,6 +1564,9 @@ juce::File RezalicaProcessor::getWarpFolder()
 
 bool RezalicaProcessor::saveProjectToFile (const juce::File& file)
 {
+    // the record on the deck now belongs to the saved project (it stays there after a restart)
+    if (auto r = deck.getRecord(); r != nullptr && r->file.existsAsFile())
+        savedDeckFile = r->file.getFullPathName();
     juce::MemoryBlock state;
     getStateInformation (state);
     auto xml = getXmlFromBinary (state.getData(), (int) state.getSize());
@@ -1656,7 +1659,9 @@ bool RezalicaProcessor::loadProjectFromFile (const juce::File& file)
     juce::MemoryBlock state;
     copyXmlToBinary (*xml, state);
     stopAll();
+    restoringProject = true;
     setStateInformation (state.getData(), (int) state.getSize());
+    restoringProject = false;
     undoStack.clear();
     redoStack.clear();
     currentProjectFile = file;
@@ -2841,7 +2846,11 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
     {
         juce::ValueTree d ("DECK");
         if (auto r = deck.getRecord(); r != nullptr && r->file.existsAsFile())
+        {
             d.setProperty ("file", r->file.getFullPathName(), nullptr);
+            // the record only stays on the deck after a restart when it is the one saved with the project
+            d.setProperty ("savedWithProject", r->file.getFullPathName() == savedDeckFile, nullptr);
+        }
         d.setProperty ("bpm", deck.recordBpm.load(), nullptr);
         d.setProperty ("sync", deck.sync.load(), nullptr);
         d.setProperty ("pitch", deck.pitch.load(), nullptr);
@@ -3054,12 +3063,17 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
     mixerFromValueTree (root.getChildWithName ("MIXER"));
     if (auto d = root.getChildWithName ("DECK"); d.isValid())
     {
+        // a project that is opened brings its record; the session Rezalica restores at start only does
+        // when that record was saved with the project (otherwise the deck starts empty)
         const juce::File f (d.getProperty ("file", juce::String()).toString());
-        if (f.existsAsFile())
-            if (auto s = loadSample (f, true))
-                deck.setRecord (s);
+        const bool keep = restoringProject || (bool) d.getProperty ("savedWithProject", false);
+        rz::SampleData::Ptr rec;
+        if (keep && f.existsAsFile())
+            rec = loadSample (f, true);
+        deck.setRecord (rec);
+        deck.recordBpm = rec != nullptr ? (float) d.getProperty ("bpm", 0.0f) : 0.0f;
+        savedDeckFile = rec != nullptr && keep ? f.getFullPathName() : juce::String();
         deck.motorOn = false; // a project opens with the deck standing still
-        deck.recordBpm = (float) d.getProperty ("bpm", 0.0f);
         deck.sync = (bool) d.getProperty ("sync", false);
         deck.pitch = (float) d.getProperty ("pitch", 0.0f);
         deck.pitchRange = (float) d.getProperty ("range", 0.08f);
@@ -3068,6 +3082,12 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         deck.reverse = (bool) d.getProperty ("reverse", false);
         deck.volume = (float) d.getProperty ("volume", 1.0f);
         deck.reverseFader = (bool) d.getProperty ("hamster", false);
+    }
+    else
+    {
+        deck.setRecord (nullptr); // a new project: an empty deck
+        deck.motorOn = false;
+        savedDeckFile = {};
     }
 
     auto chop = root.getChildWithName ("CHOP");
