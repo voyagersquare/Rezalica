@@ -1716,13 +1716,14 @@ void RezalicaEditor::renderFaceplate()
         {
             for (auto* c : parent.getChildren())
             {
-                if (! c->isVisible() || c == &waveform || dynamic_cast<juce::Label*> (c) != nullptr)
+                // (no shadow from the LED tempo display: it darkened the BPM print above it)
+                if (! c->isVisible() || c == &waveform || dynamic_cast<juce::Label*> (c) != nullptr
+                    || dynamic_cast<rz::LedBpmDisplay*> (c) != nullptr)
                     continue;
                 const auto r = c->getBounds() + origin;
                 if (dynamic_cast<rz::PadButton*> (c) != nullptr)
                     cast (r.reduced (3), 7.0f);
-                else if (dynamic_cast<juce::Button*> (c) != nullptr || dynamic_cast<juce::ComboBox*> (c) != nullptr
-                         || dynamic_cast<rz::LedBpmDisplay*> (c) != nullptr)
+                else if (dynamic_cast<juce::Button*> (c) != nullptr || dynamic_cast<juce::ComboBox*> (c) != nullptr)
                     cast (r.reduced (1), 5.0f);
                 else if (c == browserPanel.get() || c == dockedPanel() || c == mixer.get())
                     cast (r, 8.0f);
