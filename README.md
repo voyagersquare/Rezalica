@@ -11,7 +11,7 @@
   - Isječci 1–16 idu u banku A, 17–32 u banku B, 33–48 u C i 49–64 u D. Banku biraš gumbima **A B C D** iznad padova.
   - **Manual**: chop markere postavljaš sam. **Shift+klik** (ili dvoklik) na valni oblik dodaje marker, povlačenjem ga pomičeš, a **dvoklik na marker** (ili desni klik) ga briše. Markeri se sami poravnaju na najbliži prolaz kroz nulu, da ne bude klikova. Ako je sample prije bio izrezan u drugom modu (npr. Transients), taj se mod poništava, svi njegovi markeri se uklone i prelazi se u Manual. Isto vrijedi kad iz izbornika odabereš Manual.
   - Brisanje dvoklikom radi i na markerima iz moda Transients: ostali markeri ostaju, a mod prelazi u Manual.
-  - **LAZY CHOP**: odabrani sample svira od početka. Svaki udarac pada, tipke ili MIDI note postavlja rez na mjestu playheada (crvena linija), a isječci redom pune A1, A2, A3… Završava sam kad sample dođe do kraja ili kad ponovno klikneš LAZY CHOP.
+  - **LAZY CHOP**: kao na hardverskim samplerima – nakon klika čeka u tišini. Prvi udarac pada, tipke ili MIDI note pokreće odabrani sample od početka i tamo stavlja prvi marker; svaki sljedeći udarac postavlja rez na mjestu playheada (crvena linija), a isječci redom pune A1, A2, A3… Završava sam kad sample dođe do kraja ili kad ponovno klikneš LAZY CHOP.
 - **Horizontalni zoom** valnog oblika, sve do pojedinačnih uzoraka (16 uzoraka preko cijelog prozora):
   - kotačić miša zumira oko pokazivača, a Shift + kotačić ili traka ispod valnog oblika pomiče prikaz
   - kliznik ZOOM gore desno; dvoklik na njega prikazuje cijeli sample

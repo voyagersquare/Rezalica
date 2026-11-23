@@ -55,8 +55,8 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     styleToggle (seqButton, rz::colours::accent2);
     loadChopButton.onClick = [this] { chooseChopFile(); };
     styleToggle (lazyButton, juce::Colour (0xffe0413a));
-    lazyButton.setTooltip ("Lazy Chop: plays the selected pad's whole sample - hit any pad, key or MIDI note "
-                           "to drop a slice at the playhead. Slices fill A1, A2, A3... Click again to stop.");
+    lazyButton.setTooltip ("Lazy Chop: waits in silence; the first pad / key / MIDI note you hit starts the selected pad's sample "
+                           "(first marker), every next hit sets a marker there. Slices fill A1, A2, A3... Click again to stop.");
     lazyButton.onClick = [this]
     {
         if (processor.isLazyChopActive())
@@ -706,7 +706,9 @@ void RezalicaEditor::refreshChopControls()
         text = juce::String (n) + " slices  A-" + juce::String::charToString ((juce::juce_wchar) ('A' + (n - 1) / rz::padsPerBank));
     else if (n > 0)
         text = juce::String (n) + " slices";
-    if (processor.isLazyChopActive())
+    if (processor.isLazyChopWaiting())
+        text = "LAZY: hit a pad to start";
+    else if (processor.isLazyChopActive())
         text = "LAZY: " + juce::String (n) + " slices";
     sliceCountLabel.setText (text, juce::dontSendNotification);
 }

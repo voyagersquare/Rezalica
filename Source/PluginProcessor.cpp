@@ -629,7 +629,14 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                     ++engine.playedCounter;
                     break;
                 }
-                if (lazyActive.load())
+                if (lazyActive.load() && lazyWaiting.exchange (false))
+                {
+                    // the first hit: the sample starts here, and its start is the first marker
+                    engine.startPreview();
+                    auto w = lazyFifo.write (1);
+                    w.forEach ([&] (int idx) { lazyHits[(size_t) idx] = 0.0f; });
+                }
+                else if (lazyActive.load())
                 {
                     const float pos = engine.getPreviewPositionNow();
                     if (pos >= 0.0f)
@@ -656,7 +663,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     deckBuffer.clear (0, numSamples);
     deck.render (deckBuffer, numSamples, sequencer.effectiveBpm.load(), sequencer.nextBeatOffset (numSamples));
 
-    if (lazyActive.load() && ! engine.isPreviewBusy())
+    if (lazyActive.load() && ! lazyWaiting.load() && ! engine.isPreviewBusy())
         lazyActive = false; // preview reached the end of the sample
 
     // ---- mixer: BUS A-D (their effects, fader, mute / solo) into MASTER, then the MASTER effects and fader ----
@@ -1360,14 +1367,16 @@ bool RezalicaProcessor::startLazyChop()
 
     lazyFifo.reset();
     engine.setPreviewSample (s);
-    engine.startPreview();
-    lazyStarting = true; // until the audio thread has started the preview
+    // like on hardware samplers: silence until the first hit; that hit starts the sample and sets the first marker
+    lazyWaiting = true;
+    lazyStarting = false;
     lazyActive = true;
     return true;
 }
 
 void RezalicaProcessor::stopLazyChop()
 {
+    lazyWaiting = false;
     lazyActive = false;
     lazyStarting = false;
     engine.stopPreview();

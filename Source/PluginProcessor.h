@@ -168,6 +168,7 @@ public:
     bool startLazyChop();
     void stopLazyChop();
     bool isLazyChopActive() const noexcept { return lazyActive.load() || lazyStarting; }
+    bool isLazyChopWaiting() const noexcept { return lazyWaiting.load(); } // armed, silent until the first hit
     void updateLazyChop(); // call regularly from the UI (message thread)
 
     int getChopMode() const noexcept               { return chopMode; }
@@ -366,6 +367,7 @@ private:
 
     std::atomic<bool> lazyActive { false };
     bool lazyStarting = false;
+    std::atomic<bool> lazyWaiting { false };   // LAZY CHOP armed, waiting for the first hit
     juce::AbstractFifo lazyFifo { 128 };
     std::array<float, 128> lazyHits {};
 
