@@ -1,4 +1,5 @@
 #include "MixerPanel.h"
+#include "MidiControl.h"
 
 namespace rz
 {
@@ -129,6 +130,12 @@ MixerStrip::MixerStrip (MixerPanel& o, RezalicaProcessor& p, int busIndex) : pro
     }
     addAndMakeVisible (meter);
 
+    {
+        const auto prefix = busName (bus).toLowerCase().removeCharacters (" ");
+        rz::setLearnId (fader, prefix + ".fader");
+        rz::setLearnId (muteButton, prefix + ".mute");
+        rz::setLearnId (soloButton, prefix + ".solo");
+    }
     if (bus == deckChain)
     {
         // the DECK's effects: only the 4 slots (its volume is on the deck)

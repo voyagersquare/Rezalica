@@ -579,6 +579,9 @@ public:
 
     double getSamplesPerStep() const noexcept { return ppqPerSample > 0.0 ? stepLengthPpq / ppqPerSample : sampleRate * 0.125; }
     bool isRunning() const noexcept { return running; }
+    /** Audio thread, after process(): where this block started (quarter notes) and its speed. */
+    double getBlockPpq() const noexcept { return blockPpq; }
+    double getPpqPerSampleNow() const noexcept { return ppqPerSample; }
     /** Audio thread, after process(): sample offset of the next beat in this block, -1 if none / stopped. */
     int nextBeatOffset (int numSamples) const noexcept
     {

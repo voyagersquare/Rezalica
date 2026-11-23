@@ -1,5 +1,6 @@
 #include "DeckPanel.h"
 #include "BinaryData.h"
+#include "MidiControl.h"
 
 namespace rz
 {
@@ -343,6 +344,13 @@ DeckPanel::DeckPanel (RezalicaProcessor& p) : processor (p), platter (p), wave (
     recLabel.setColour (juce::Label::textColourId, colours::text);
     for (auto* b : std::initializer_list<juce::Component*> { &startButton, &rpm33, &rpm45, &syncButton, &loopButton, &reverseButton, &recButton, &range8, &range16 })
         b->setWantsKeyboardFocus (false);
+
+    // MIDI Learn names (the record itself is the jog wheel / cut fader)
+    rz::setLearnId (startButton, "deck.start");  rz::setLearnId (rpm33, "deck.33");    rz::setLearnId (rpm45, "deck.45");
+    rz::setLearnId (syncButton, "deck.sync");    rz::setLearnId (loopButton, "deck.loop");
+    rz::setLearnId (reverseButton, "deck.reverse"); rz::setLearnId (recButton, "deck.rec");
+    rz::setLearnId (pitchKnob.slider, "deck.pitch"); rz::setLearnId (volumeKnob.slider, "deck.volume");
+    rz::setLearnId (platter, "deck.jog");
 
     syncControls();
     startTimerHz (20);

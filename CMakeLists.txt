@@ -54,7 +54,8 @@ target_sources(Rezalica PRIVATE
     Source/RezalicaApp.cpp
     Source/Mp3Writer.cpp
     Source/ExportDialog.cpp
-    Source/DeckPanel.cpp)
+    Source/DeckPanel.cpp
+    Source/MidiControl.cpp)
 
 target_compile_definitions(Rezalica PUBLIC
     JUCE_WEB_BROWSER=0

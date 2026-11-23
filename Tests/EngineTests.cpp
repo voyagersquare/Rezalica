@@ -6,6 +6,7 @@
 #include "../Source/Mp3Writer.h"
 #include "../Source/ExportDialog.h"
 #include "../Source/TimeStretch.h"
+#include "../Source/MidiControl.h"
 #include <iostream>
 
 static int failures = 0;
@@ -2299,6 +2300,109 @@ int main (int argc, char** argv)
             proj.deleteFile();
             first.deleteFile();
         }
+    }
+
+    {
+        // MIDI: pad note layouts, learning a pad's note, MIDI Learn of a knob / button, clock in and out
+        auto mp = std::make_unique<RezalicaProcessor> (false);
+        auto& m = *mp;
+        m.prepareToPlay (48000.0, 480);
+        juce::AudioBuffer<float> buf (2, 480);
+        auto block = [&] (juce::MidiBuffer mb) { buf.clear(); m.processBlock (buf, mb); };
+
+        m.setPadNoteLayout (RezalicaProcessor::layoutRezalica);
+        check (m.padForNote (36) == 0 && m.padForNote (51) == 15 && m.padForNote (99) == 63 && m.padForNote (35) == -1,
+               "pad notes: C1 = A1 ... (64 pads)");
+        m.setPadNoteLayout (RezalicaProcessor::layoutMpc);
+        m.currentBank = 0;
+        const bool mpcA = m.padForNote (37) == 12 && m.padForNote (49) == 0; // MPC pad 1 = bottom left (A13), pad 13 = A1
+        m.currentBank = 1;
+        check (mpcA && m.padForNote (37) == 28, "pad notes: MPC 2000XL plays the current bank");
+        m.currentBank = 0;
+        m.setPadNoteLayout (RezalicaProcessor::layoutGm);
+        check (m.padForNote (36) == 12 && m.padForNote (38) == 13, "pad notes: General MIDI drums");
+
+        m.learnPadNote = 5;
+        { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0); block (mb); }
+        check (m.padForNote (60) == 5 && m.getPadNoteLayout() == RezalicaProcessor::layoutCustom && m.learnPadNote.load() == -1,
+               "Learn MIDI note: the next note plays that pad");
+
+        // MIDI Learn of a knob and a button (a stand-in editor)
+        juce::Component root;
+        root.setSize (400, 300);
+        juce::Slider knob;
+        knob.setRange (0.0, 1.0);
+        rz::setLearnId (knob, "test.knob");
+        root.addAndMakeVisible (knob);
+        juce::TextButton key;
+        int clicks = 0;
+        key.onClick = [&] { ++clicks; };
+        rz::setLearnId (key, "test.key");
+        root.addAndMakeVisible (key);
+        rz::MidiControl mc (m, root, false);
+        mc.clearAll();
+        mc.setLearnMode (true);
+        mc.selectedId = "test.knob";
+        mc.pollNow();
+        check (m.midiLearnListening.load(), "MIDI Learn waits for a control");
+        { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::controllerEvent (2, 21, 10), 0); block (mb); }
+        mc.pollNow();
+        mc.selectedId = "test.key";
+        mc.pollNow();
+        { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOn (1, 70, (juce::uint8) 100), 0); block (mb); }
+        mc.pollNow();
+        mc.setLearnMode (false);
+        check (mc.keyFor ("test.knob") == "CC 21 ch 2" && mc.keyFor ("test.key").startsWith ("Note") && m.noteIsControl[70].load(),
+               "MIDI Learn: a CC to a knob, a note to a button");
+        { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::controllerEvent (2, 21, 127), 0);
+          mb.addEvent (juce::MidiMessage::noteOn (1, 70, (juce::uint8) 100), 1); block (mb); }
+        mc.pollNow();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50); // (a button click is delivered as a message)
+        check (std::abs (knob.getValue() - 1.0) < 1.0e-6 && clicks == 1, "the learned controls move the knob and press the button");
+        mc.clearAll();
+
+        // clock in: 24 ticks per beat at 100 BPM, then STOP
+        m.clockIn = true;
+        {
+            const int perTick = 48000 * 60 / (100 * 24); // 1200 samples
+            juce::MidiBuffer mb;
+            mb.addEvent (juce::MidiMessage::midiStart(), 0);
+            block (mb);
+            long long pos = 480, next = 0;
+            for (int b = 0; b < 400; ++b)
+            {
+                juce::MidiBuffer t;
+                while (next < pos + 480) { t.addEvent (juce::MidiMessage::midiClock(), (int) (next - pos)); next += perTick; }
+                block (t);
+                pos += 480;
+            }
+        }
+        std::cout << "       clock in: " << m.getSequencer().bpm.load() << " BPM\n";
+        check (std::abs (m.getSequencer().bpm.load() - 100.0f) < 0.2f && m.getSequencer().internalPlay.load(),
+               "clock in: Rezalica follows the tempo and START");
+        { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::midiStop(), 0); block (mb); }
+        check (! m.getSequencer().internalPlay.load(), "clock in: STOP stops it");
+        m.clockIn = false;
+
+        // clock out: 24 ticks per beat while playing (120 BPM: 2 beats a second)
+        m.getSequencer().bpm = 120.0f;
+        m.getSequencer().playPattern();
+        int ticks = 0, starts = 0;
+        for (int b = 0; b < 100; ++b) // one second
+        {
+            juce::MidiBuffer none;
+            block (none);
+            juce::MidiBuffer out;
+            m.makeClockMessages (out, 480);
+            for (const auto meta : out)
+            {
+                if (meta.getMessage().isMidiClock()) ++ticks;
+                if (meta.getMessage().isMidiStart()) ++starts;
+            }
+        }
+        m.getSequencer().stopPlayback();
+        std::cout << "       clock out: " << ticks << " ticks in one second\n";
+        check (starts == 1 && std::abs (ticks - 48) <= 1, "clock out: START and 24 ticks per beat");
     }
 
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");

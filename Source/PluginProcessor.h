@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <juce_audio_devices/juce_audio_devices.h>
 #include <limits>
 #include <map>
 #include "SamplerEngine.h"
@@ -193,6 +194,36 @@ public:
     std::atomic<int> currentBank { 0 }; // bank shown in the UI and played by the computer keyboard
     std::atomic<int> chromaticPad { -1 }; // >= 0: incoming MIDI plays this pad's sample chromatically (C3 = original)
 
+    // ---- MIDI controllers: which note plays which pad, MIDI Learn, MIDI clock ----
+    /** Pad note layouts: Rezalica / Akai MPD (C1 = A1 ... 64 pads), MPC 2000XL and General MIDI drums
+        (16 notes that play the current bank), or custom (learned). */
+    enum PadNoteLayout { layoutRezalica = 0, layoutMpc = 1, layoutGm = 2, layoutCustom = 3 };
+    static constexpr int bankRelative = 1000;  // a note map value of 1000 + i = pad i of the current bank
+    void setPadNoteLayout (int layout);        // message thread (fills the note map; custom keeps it)
+    int getPadNoteLayout() const noexcept { return padNoteLayout.load(); }
+    std::array<int, 128> getPadNoteMap() const;
+    void setPadNoteMap (const std::array<int, 128>& map, int layout);
+    int padForNote (int note) const noexcept;  // the pad a note plays now (-1: none)
+    int noteForPad (int pad) const noexcept;   // the note that plays a pad now (-1: none)
+    std::atomic<int> learnPadNote { -1 };      // >= 0: the next note that comes in is learned for this pad
+    std::atomic<int> padNoteMapChanged { 0 };  // counts learned notes (the editor saves them)
+
+    /** CC / notes for MIDI Learn: the audio thread passes them to the editor (lock-free). */
+    struct MidiControlEvent { juce::uint8 kind = 0, channel = 1, number = 0, value = 0; }; // kind: 0 CC, 1 note on, 2 note off
+    juce::AbstractFifo controlFifo { 1024 };
+    std::array<MidiControlEvent, 1024> controlEvents;
+    std::array<std::atomic<bool>, 128> noteIsControl {}; // notes learned for buttons: they do not play pads
+    std::atomic<bool> midiLearnListening { false };      // MIDI Learn waits for a control: notes do not play
+    std::atomic<int> midiActivity { 0 };                 // counts blocks with incoming MIDI (the MIDI key blinks)
+
+    /** MIDI clock in: Rezalica follows an external tempo and its START / CONTINUE / STOP. */
+    std::atomic<bool> clockIn { false };
+    /** MIDI clock out to a MIDI output ("" = off): 24 ticks per beat, START / STOP with the sequencer. */
+    void setClockOutput (const juce::String& deviceIdentifier);
+    juce::String getClockOutput() const { return clockOutId; }
+    /** The clock messages for one block (also used by the tests). */
+    void makeClockMessages (juce::MidiBuffer& out, int numSamples);
+
     /** Moves notes recorded live into the piano roll clips (message thread). Returns true if any were added. */
     bool collectRecordedPianoNotes();
     juce::ChangeBroadcaster padsChanged; // pad samples / settings replaced
@@ -361,6 +392,20 @@ private:
     rz::MasterFx masterFx;
     rz::AudioRecorder recorder;
     rz::Turntable deck;
+    std::array<std::atomic<int>, 128> noteMap {};   // note -> pad (-1 none, 0..63, bankRelative + i)
+    std::atomic<int> padNoteLayout { layoutRezalica };
+    std::array<int, 128> notePlaying {};            // audio thread: the pad each held note started
+    void pushControlEvent (juce::uint8 kind, int channel, int number, int value);
+    // MIDI clock
+    juce::int64 sampleClock = 0, lastClockTick = -1;
+    double clockInterval = 0.0;
+    int clockTicks = 0;
+    std::unique_ptr<juce::MidiOutput> clockOut;
+    juce::SpinLock clockOutLock;
+    juce::String clockOutId;
+    juce::MidiBuffer clockBuffer;
+    double freeClockTicks = 0.0;
+    bool clockWasRunning = false;
     juce::Array<juce::File> sessionFiles;
     juce::CriticalSection sessionFilesLock;
     void forgetSessionFilesUsedBy (const juce::XmlElement& project);

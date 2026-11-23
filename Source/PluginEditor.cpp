@@ -170,6 +170,36 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     tempoSlider.setValue (processor.getSequencer().bpm.load(), juce::dontSendNotification);
     addChildComponent (tempoSlider);   // kept for its callbacks; the LED display shows the tempo now
     addAndMakeVisible (ledBpm);
+
+    // ---- MIDI: learn names of the controls, the MIDI key and its manager ----
+    rz::setLearnId (gainKnob.slider, "pad.gain");       rz::setLearnId (panKnob.slider, "pad.pan");
+    rz::setLearnId (pitchKnob.slider, "pad.pitch");     rz::setLearnId (attackKnob.slider, "pad.attack");
+    rz::setLearnId (releaseKnob.slider, "pad.release"); rz::setLearnId (startKnob.slider, "pad.start");
+    rz::setLearnId (endKnob.slider, "pad.end");
+    rz::setLearnId (loopButton, "pad.loop");     rz::setLearnId (reverseButton, "pad.reverse");
+    rz::setLearnId (gateButton, "pad.gate");     rz::setLearnId (muteButton, "pad.mute");
+    rz::setLearnId (recKey, "transport.rec");    rz::setLearnId (playKey, "transport.play");
+    rz::setLearnId (pauseKey, "transport.pause"); rz::setLearnId (stopKey, "transport.stop");
+    rz::setLearnId (clickKey, "transport.metronome");
+    for (int b = 0; b < rz::numBanks; ++b)
+        rz::setLearnId (bankButtons[(size_t) b], "bank." + juce::String::charToString ((juce::juce_wchar) ('A' + b)));
+    rz::setLearnId (ledBpm, "tempo");
+    midiControl = std::make_unique<rz::MidiControl> (processor, *this, isStandalone);
+    midiControl->onMessage = [this] (const juce::String& m) { showStatus (m); };
+    midiControl->exitButton = &midiButton;
+    midiControl->onPadNotesChanged = [this] { repaint(); for (auto& p : pads) p->repaint(); };
+    midiControl->onLearnModeChanged = [this] (bool on)
+    {
+        midiButton.setToggleState (on, juce::dontSendNotification);
+        midiButton.setButtonText (on ? "MIDI LEARN" : "MIDI");
+        resized();
+    };
+    midiButton.setWantsKeyboardFocus (false);
+    midiButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffd23a));
+    midiButton.setTooltip ("MIDI: MIDI Learn (knobs, faders, buttons, DECK), which notes play the pads, controllers, "
+                           "presets per controller, MIDI clock in / out. Blinks when MIDI comes in.");
+    midiButton.onClick = [this] { midiControl->showMenu (&midiButton); };
+    addAndMakeVisible (midiButton);
     if (isStandalone)
     {
         loadChopButton.setVisible (false); // the BROWSER loads samples in the standalone app
@@ -601,6 +631,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 RezalicaEditor::~RezalicaEditor()
 {
     stopTimer();
+    midiControl = nullptr;
     processor.padsChanged.removeChangeListener (this);
     sequencerWindow = nullptr;
     dockedSequencer = nullptr;
@@ -759,6 +790,11 @@ void RezalicaEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void RezalicaEditor::timerCallback()
 {
+    // the MIDI key blinks when MIDI comes in
+    if (const int a = processor.midiActivity.load(); a != lastMidiActivity) { lastMidiActivity = a; midiBlink = 3; }
+    if (midiBlink > 0 && --midiBlink == 0) midiButton.removeColour (juce::TextButton::buttonColourId);
+    else if (midiBlink > 0) midiButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff6fd36f));
+    if (messageTicks > 0 && --messageTicks == 0) autosaveLabel.setText ({}, juce::dontSendNotification);
     // a double STOP also clears the reverb / delay tails of the mixer's plug-ins
     if (const int hs = processor.getSequencer().hardStops.load(); hs != lastHardStops)
     {
@@ -1461,6 +1497,12 @@ std::vector<juce::Component*> RezalicaEditor::stripAndFxComponents()
              &fxTitle, mixer.get() };
 }
 
+void RezalicaEditor::showStatus (const juce::String& text)
+{
+    autosaveLabel.setText (text, juce::dontSendNotification);
+    messageTicks = 30 * 5; // a few seconds
+}
+
 void RezalicaEditor::showNormalizeMenu()
 {
     const int pad = processor.selectedPad.load();
@@ -1621,6 +1663,11 @@ bool RezalicaEditor::keyPressed (const juce::KeyPress& key)
     {
         // the sampler's PLAY / STOP: the selected pattern, whatever the scenes / song contain
         processor.getSequencer().togglePatternPlay();
+        return true;
+    }
+    if (key == juce::KeyPress::escapeKey && midiControl != nullptr && midiControl->isLearnMode())
+    {
+        midiControl->setLearnMode (false); // ESC ends MIDI Learn
         return true;
     }
     if (key == juce::KeyPress::escapeKey)
@@ -1864,9 +1911,13 @@ void RezalicaEditor::paint (juce::Graphics& g)
         info.setRight (bankButtons[0].getX() - 6);
         g.setColour (ink);
         g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawFittedText ("BANK " + juce::String::charToString ((juce::juce_wchar) ('A' + bank))
-                              + "   MIDI " + juce::MidiMessage::getMidiNoteName (lo, true, true, 3)
-                              + "-" + juce::MidiMessage::getMidiNoteName (lo + 15, true, true, 3),
+        const int layout = processor.getPadNoteLayout();
+        const juce::String midiText = layout == RezalicaProcessor::layoutRezalica
+                                        ? "MIDI " + juce::MidiMessage::getMidiNoteName (lo, true, true, 3) + "-" + juce::MidiMessage::getMidiNoteName (lo + 15, true, true, 3)
+                                    : layout == RezalicaProcessor::layoutMpc ? juce::String ("MIDI: MPC notes")
+                                    : layout == RezalicaProcessor::layoutGm  ? juce::String ("MIDI: GM drums")
+                                                                             : juce::String ("MIDI: custom");
+        g.drawFittedText ("BANK " + juce::String::charToString ((juce::juce_wchar) ('A' + bank)) + "   " + midiText,
                           info.removeFromTop (12), juce::Justification::centredLeft, 1, 1.0f);
         g.setFont (juce::FontOptions (10.5f));
         g.drawFittedText ("keys 1-4  Q-R  A-F  Z-V", info, juce::Justification::centredLeft, 1, 1.0f);
@@ -1927,6 +1978,7 @@ void RezalicaEditor::layoutComponents()
             // FILE + BROWSER next to the name; everything else to the right, up to the transport keys
             put (fileButton, 38);
             put (browserButton, 64);
+            put (midiButton, midiControl != nullptr && midiControl->isLearnMode() ? 86 : 44);
             putRight (pianoRollButton, 74);
             putRight (seqButton, 62);
             putRight (sceneButton, 48);

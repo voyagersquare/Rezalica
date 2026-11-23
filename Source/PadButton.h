@@ -216,9 +216,33 @@ private:
                 send.addItem (61 + bi, busName (bi), true, own == bi);
             m.addSubMenu ("Send to", send);
         }
+        {
+            // which note of the MIDI controller plays this pad
+            m.addSeparator();
+            const int note = processor.noteForPad (index);
+            const bool learning = processor.learnPadNote.load() == index;
+            m.addSectionHeader ("MIDI note: " + (note >= 0 ? juce::MidiMessage::getMidiNoteName (note, true, true, 3) + " (" + juce::String (note) + ")"
+                                                           : juce::String ("none")));
+            m.addItem (70, learning ? "Waiting for a note ... (cancel)" : "Learn MIDI note (hit a pad / key on the controller)");
+            m.addItem (71, "Forget MIDI note", note >= 0);
+        }
 
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this] (int r)
         {
+            if (r == 70)
+            {
+                // the next note that comes in plays this pad (the pad layout becomes "custom")
+                processor.learnPadNote = processor.learnPadNote.load() == index ? -1 : index;
+                repaint();
+            }
+            if (r == 71)
+            {
+                auto map = processor.getPadNoteMap();
+                for (int n = 0; n < 128; ++n)
+                    if (processor.padForNote (n) == index) map[(size_t) n] = -1;
+                processor.setPadNoteMap (map, RezalicaProcessor::layoutCustom);
+                ++processor.padNoteMapChanged;
+            }
             if (r >= 60 && r <= 60 + numBuses)
             {
                 processor.pushUndo ("Send to bus");

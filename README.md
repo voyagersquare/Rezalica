@@ -204,6 +204,24 @@ sample za isti iznos, tako da taj vrh dođe na odabranu razinu. Dinamika se ne m
   obradu (chop, warp, trim ...). Drugi padovi iz istog samplea ostaju kakvi jesu. UNDO ga vraća.
 - Gumb **BOUNCE** (prije RENDER) i dalje sprema warpani (time-stretch) sample kao novi WAV, kao i dosad.
 
+## MIDI kontroleri
+
+Gumb **MIDI** (pored BROWSER) treperi zeleno kad stiže MIDI i otvara izbornik:
+
+- **Kontroleri:** svaki kontroler koji spojiš (i dok program radi) sam se uključi; u *Controllers* ih možeš uključiti / isključiti.
+- **Pad notes** – koje note sviraju padove:
+  - *Rezalica / Akai MPD*: C1 = A1 … D#2 = A16, pa banke B, C, D (64 pada)
+  - *MPC 2000XL* i *General MIDI drums*: 16 nota svira 16 padova **trenutne banke**, raspoređeno kao na hardveru
+  - *Custom*: desni klik na pad → **Learn MIDI note** → udari pad / tipku na kontroleru (ili *Forget MIDI note*)
+- **MIDI Learn:** uključi ga, klikni gumb, fader ili tipku u programu (plavo), pa pomakni / pritisni kontrolu na kontroleru.
+  Radi za gumbe pada (GAIN … END, LOOP, REVERSE, GATE, MUTE), transport (REC, PLAY, PAUSE, STOP, metronom), banke A–D,
+  tempo, fadere i M / S miksera te DECK (START, 33/45, SYNC, LOOP, REVERSE, REC, PITCH, VOLUME; ploča = **jog wheel**
+  za scratch ili **cut** fader). Desni klik briše vezu, ESC ili MIDI LEARN završava.
+- **Presets:** postavke (pad note + MIDI Learn) spremaju se za svaki kontroler posebno (*Save for <kontroler>*) i same se
+  učitaju kad taj kontroler spojiš; *Save as…* sprema pod bilo kojim imenom.
+- **Clock in:** Rezalica prati tempo i START / CONTINUE / STOP drugog uređaja.
+- **Clock out:** šalje MIDI clock (24 po udarcu) i START / STOP na odabrani MIDI izlaz.
+
 ## Audio datoteke iz sesije (kao u Abletonu)
 
 Rezalica pamti svaki audio koji sama napravi u sesiji: BOUNCE, NORMALIZE, TRIM, warp, snimke sa SAMPLING-a i scratcheve s DECK-a.

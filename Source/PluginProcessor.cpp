@@ -29,13 +29,136 @@ RezalicaProcessor::RezalicaProcessor (bool withInput)
     pendingSeqOff.fill (-1.0);
 
     pMaster = apvts.getRawParameterValue ("master");
+    for (auto& n : noteIsControl) n = false;
+    notePlaying.fill (-1);
+    clockBuffer.ensureSize (2048);
+    setPadNoteLayout (layoutRezalica);
 
     startTimer (1000);
+}
+
+//==============================================================================
+// MIDI: pad notes
+
+void RezalicaProcessor::setPadNoteLayout (int layout)
+{
+    if (layout == layoutCustom) { padNoteLayout = layoutCustom; return; } // keeps the learned map
+    std::array<int, 128> m;
+    m.fill (-1);
+    if (layout == layoutMpc || layout == layoutGm)
+    {
+        // 16 notes that play the 16 pads of the current bank, laid out like the hardware:
+        // the MPC's pad 1 is bottom left (our A13), pad 13 top left (our A1)
+        static const int mpc[16] = { 37, 36, 42, 82, 40, 38, 46, 44, 48, 47, 45, 43, 49, 55, 51, 53 };
+        // General MIDI drums: kick / snare / hats in the bottom row, toms and cymbals above
+        static const int gm[16]  = { 36, 38, 42, 46, 37, 39, 44, 49, 41, 43, 45, 47, 48, 50, 51, 53 };
+        for (int k = 0; k < 16; ++k)
+        {
+            const int row = 3 - k / 4, col = k % 4;             // hardware pad k+1 -> our position
+            const int note = (layout == layoutMpc ? mpc : gm)[k];
+            m[(size_t) note] = bankRelative + row * 4 + col;
+        }
+    }
+    else
+    {
+        for (int n = midiBaseNote; n < midiBaseNote + rz::numPads && n < 128; ++n)
+            m[(size_t) n] = n - midiBaseNote;                // C1 = A1 ... D#7 = D16
+        layout = layoutRezalica;
+    }
+    for (int n = 0; n < 128; ++n) noteMap[(size_t) n] = m[(size_t) n];
+    padNoteLayout = layout;
+}
+
+std::array<int, 128> RezalicaProcessor::getPadNoteMap() const
+{
+    std::array<int, 128> m;
+    for (int n = 0; n < 128; ++n) m[(size_t) n] = noteMap[(size_t) n].load();
+    return m;
+}
+
+void RezalicaProcessor::setPadNoteMap (const std::array<int, 128>& map, int layout)
+{
+    for (int n = 0; n < 128; ++n) noteMap[(size_t) n] = map[(size_t) n];
+    padNoteLayout = layout;
+}
+
+int RezalicaProcessor::padForNote (int note) const noexcept
+{
+    if (note < 0 || note > 127) return -1;
+    const int v = noteMap[(size_t) note].load();
+    if (v >= bankRelative) return juce::jlimit (0, rz::numPads - 1, currentBank.load() * rz::padsPerBank + (v - bankRelative));
+    return v >= 0 && v < rz::numPads ? v : -1;
+}
+
+int RezalicaProcessor::noteForPad (int pad) const noexcept
+{
+    for (int n = 0; n < 128; ++n)
+        if (padForNote (n) == pad) return n;
+    return -1;
+}
+
+void RezalicaProcessor::pushControlEvent (juce::uint8 kind, int channel, int number, int value)
+{
+    const auto w = controlFifo.write (1);
+    w.forEach ([&] (int i)
+    {
+        controlEvents[(size_t) i] = { kind, (juce::uint8) juce::jlimit (1, 16, channel), (juce::uint8) juce::jlimit (0, 127, number),
+                                      (juce::uint8) juce::jlimit (0, 127, value) };
+    });
+}
+
+//==============================================================================
+// MIDI clock out
+
+void RezalicaProcessor::setClockOutput (const juce::String& id)
+{
+    std::unique_ptr<juce::MidiOutput> fresh;
+    if (id.isNotEmpty())
+    {
+        fresh = juce::MidiOutput::openDevice (id);
+        if (fresh != nullptr) fresh->startBackgroundThread();
+    }
+    std::unique_ptr<juce::MidiOutput> old;
+    {
+        const juce::SpinLock::ScopedLockType sl (clockOutLock);
+        old = std::move (clockOut);
+        clockOut = std::move (fresh);
+        clockOutId = clockOut != nullptr ? id : juce::String();
+        clockWasRunning = false;
+    }
+    if (old != nullptr) { old->stopBackgroundThread(); }
+}
+
+void RezalicaProcessor::makeClockMessages (juce::MidiBuffer& out, int numSamples)
+{
+    // 24 clock ticks per beat: in time with the sequencer while it plays, free running at the tempo when it stops
+    const bool running = sequencer.isRunning() && sequencer.internalPlay.load();
+    if (sequencer.justRestarted)
+        out.addEvent (juce::MidiMessage::midiStart(), 0);
+    if (running)
+    {
+        const double ppq0 = sequencer.getBlockPpq(), pps = sequencer.getPpqPerSampleNow();
+        // (the same rounding at both ends of the block: a tick on the boundary is sent once)
+        if (pps > 0.0)
+            for (double k = std::ceil (ppq0 * 24.0 - 1.0e-6), end = std::ceil ((ppq0 + numSamples * pps) * 24.0 - 1.0e-6); k < end; k += 1.0)
+                out.addEvent (juce::MidiMessage::midiClock(), juce::jlimit (0, numSamples - 1, (int) ((k / 24.0 - ppq0) / pps)));
+    }
+    else
+    {
+        if (clockWasRunning) out.addEvent (juce::MidiMessage::midiStop(), 0);
+        const double perSample = juce::jmax (20.0f, sequencer.bpm.load()) / 60.0 / juce::jmax (1.0, currentSampleRate) * 24.0;
+        const double end = freeClockTicks + numSamples * perSample;
+        for (double k = std::ceil (freeClockTicks - 1.0e-6), last = std::ceil (end - 1.0e-6); k < last; k += 1.0)
+            out.addEvent (juce::MidiMessage::midiClock(), juce::jlimit (0, numSamples - 1, (int) ((k - freeClockTicks) / perSample)));
+        freeClockTicks = end;
+    }
+    clockWasRunning = running;
 }
 
 RezalicaProcessor::~RezalicaProcessor()
 {
     stopTimer();
+    setClockOutput ({});
     pluginsAboutToChange.clear();
     for (auto& bus : buses)
     {
@@ -262,6 +385,22 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         engine.releaseAll();
     }
 
+    // MIDI clock out
+    {
+        const juce::SpinLock::ScopedTryLockType tl (clockOutLock);
+        if (tl.isLocked() && clockOut != nullptr)
+        {
+            clockBuffer.clear();
+            makeClockMessages (clockBuffer, numSamples);
+            if (! clockBuffer.isEmpty())
+            {
+                // stamped so the ticks leave together with the audio of this block
+                const double delayMs = (pluginLatencySamples.load() + deviceOutputLatencySamples.load()) * 1000.0 / juce::jmax (1.0, currentSampleRate);
+                clockOut->sendBlockOfMessages (clockBuffer, juce::Time::getMillisecondCounterHiRes() + delayMs, currentSampleRate);
+            }
+        }
+    }
+
     if (sequencer.justRestarted)
     {
         recorder.sequencerStarted(); // resampling a pattern starts exactly with it
@@ -331,10 +470,63 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     }
 
     // ---- MIDI ----
+    if (! midi.isEmpty()) ++midiActivity;
     for (const auto meta : midi)
     {
         const auto m = meta.getMessage();
         const int offset = juce::jlimit (0, numSamples - 1, meta.samplePosition);
+
+        // MIDI clock in: follow the external tempo, start / continue / stop
+        if (clockIn.load())
+        {
+            if (m.isMidiClock())
+            {
+                const juce::int64 t = sampleClock + offset;
+                if (lastClockTick >= 0)
+                {
+                    const double iv = (double) (t - lastClockTick);
+                    if (iv > 0.0 && iv < currentSampleRate * 0.5)
+                    {
+                        clockInterval = clockInterval <= 0.0 ? iv : clockInterval * 0.9 + iv * 0.1;
+                        if (++clockTicks % 24 == 0)
+                        {
+                            const double bpm = juce::jlimit (20.0, 400.0, 60.0 * currentSampleRate / (24.0 * clockInterval));
+                            sequencer.bpm = (float) (std::round (bpm * 10.0) / 10.0);
+                        }
+                    }
+                }
+                lastClockTick = t;
+                continue;
+            }
+            if (m.isMidiStart())    { sequencer.playPattern(); continue; }
+            if (m.isMidiContinue()) { if (sequencer.isPaused()) sequencer.resumePlayback(); else sequencer.playPattern(); continue; }
+            if (m.isMidiStop())     { sequencer.stopPlayback(); sequencer.stopSound = 1; continue; }
+        }
+
+        // knobs / faders / buttons of the controller: to the editor (MIDI Learn)
+        if (m.isController())
+        {
+            pushControlEvent (0, m.getChannel(), m.getControllerNumber(), m.getControllerValue());
+            continue;
+        }
+        if ((m.isNoteOn() || m.isNoteOff()) && (midiLearnListening.load() || noteIsControl[(size_t) m.getNoteNumber()].load()))
+        {
+            // a note learned for a button (or MIDI Learn is waiting): it does not play a pad
+            pushControlEvent (m.isNoteOn() ? 1 : 2, m.getChannel(), m.getNoteNumber(), m.isNoteOn() ? m.getVelocity() : 0);
+            continue;
+        }
+        if (m.isNoteOn())
+            if (const int learnFor = learnPadNote.exchange (-1); learnFor >= 0)
+            {
+                // "Learn MIDI note" on a pad: this note plays that pad from now on (the custom layout)
+                const int note = m.getNoteNumber();
+                for (auto& v : noteMap)
+                    if (v.load() == learnFor || (v.load() >= bankRelative && currentBank.load() * rz::padsPerBank + v.load() - bankRelative == learnFor))
+                        v = -1;
+                noteMap[(size_t) note] = learnFor;
+                padNoteLayout = layoutCustom;
+                ++padNoteMapChanged;
+            }
 
         const int chromatic = chromaticPad.load();
 
@@ -352,7 +544,8 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         }
         else if (m.isNoteOn())
         {
-            const int pad = m.getNoteNumber() - midiBaseNote;
+            const int pad = padForNote (m.getNoteNumber());
+            notePlaying[(size_t) m.getNoteNumber()] = pad; // (its note-off goes to the same pad, even if the bank changes)
             if (pad >= 0 && pad < rz::numPads)
             {
                 addEvent (offset, evOn, pad, m.getFloatVelocity());
@@ -362,7 +555,9 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         }
         else if (m.isNoteOff())
         {
-            const int pad = m.getNoteNumber() - midiBaseNote;
+            int pad = notePlaying[(size_t) m.getNoteNumber()];
+            if (pad < 0) pad = padForNote (m.getNoteNumber());
+            notePlaying[(size_t) m.getNoteNumber()] = -1;
             if (pad >= 0 && pad < rz::numPads)
             {
                 addEvent (offset, evOff, pad, 0.0f);
@@ -541,6 +736,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         for (int c = 0; c < outChannels; ++c)
             buffer.addFrom (c, 0, clickBuffer, 0, 0, numSamples);
     }
+    sampleClock += numSamples; // (MIDI clock in measures its ticks against it)
 }
 
 //==============================================================================

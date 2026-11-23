@@ -10,6 +10,7 @@
 #include "BankControls.h"
 #include "SceneWindow.h"
 #include "DeckPanel.h"
+#include "MidiControl.h"
 #include "ToolWindows.h"
 #include "AppSettings.h"
 #include "LedDisplay.h"
@@ -131,6 +132,10 @@ private:
     rz::Knob gainKnob { "GAIN" }, panKnob { "PAN" }, pitchKnob { "PITCH" }, attackKnob { "ATTACK" },
              releaseKnob { "RELEASE" }, startKnob { "START" }, endKnob { "END" };
     juce::TextButton normalizeButton { "NORMALIZE" };
+    juce::TextButton midiButton { "MIDI" };            // MIDI Learn, pad notes, controllers, presets, clock
+    std::unique_ptr<rz::MidiControl> midiControl;
+    int lastMidiActivity = 0, midiBlink = 0, messageTicks = 0;
+    void showStatus (const juce::String&);
     float normalizeTargetDb = -1.0f;                   // the last NORMALIZE target (dBFS)
     void showNormalizeMenu();
     /** After "don't save": delete or keep the audio files this session made. */
