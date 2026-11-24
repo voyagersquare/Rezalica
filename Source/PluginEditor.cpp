@@ -1768,13 +1768,17 @@ void RezalicaEditor::renderFaceplate()
     }
 
     // everything that stands on the faceplate casts a soft shadow away from the light
-    juce::Image shapes (juce::Image::ARGB, w, h, true);
+    juce::Image shapes (juce::Image::ARGB, w, h, true), headerShapes (juce::Image::ARGB, w, h, true);
     {
-        juce::Graphics sg (shapes);
+        juce::Graphics sg (shapes), hg (headerShapes);
         sg.setColour (juce::Colours::black);
-        auto cast = [&sg] (juce::Rectangle<int> r, float radius)
+        hg.setColour (juce::Colours::black);
+        // the keys of the header row only get a small shadow right under them
+        const int headerBottom = headerArea.getBottom() + 2;
+        auto cast = [&sg, &hg, headerBottom] (juce::Rectangle<int> r, float radius)
         {
-            if (! r.isEmpty()) sg.fillRoundedRectangle (r.toFloat(), radius);
+            if (r.isEmpty()) return;
+            (r.getBottom() <= headerBottom ? hg : sg).fillRoundedRectangle (r.toFloat(), radius);
         };
         for (auto r : { sampleArea, filterArea, satArea, delayArea, reverbArea })
             cast (r, 8.0f);
@@ -1800,7 +1804,8 @@ void RezalicaEditor::renderFaceplate()
         };
         addChildren (*this, {}, 0);
     }
-    juce::DropShadow (juce::Colours::black.withAlpha (0.82f), 22, { 7, 14 }).drawForImage (g, shapes);  // the soft room shadow
+    juce::DropShadow (juce::Colours::black.withAlpha (0.82f), 22, { 7, 14 }).drawForImage (g, shapes);
+    juce::DropShadow (juce::Colours::black.withAlpha (0.38f), 5, { 1, 3 }).drawForImage (g, headerShapes); // the header: a small one  // the soft room shadow
     juce::DropShadow (juce::Colours::black.withAlpha (0.7f), 5, { 2, 3 }).drawForImage (g, shapes);   // contact shadow right under it
 }
 
@@ -1964,7 +1969,7 @@ void RezalicaEditor::layoutComponents()
     {
         // standalone: the LED tempo display at the right edge, the transport keys next to it;
         // plug-in: the master knob at the right edge, then the tempo display
-        auto right = topBlock.removeFromRight (isStandalone ? 304 : 196);
+        auto right = topBlock.removeFromRight (isStandalone ? 310 : 196);
         masterKnob.setVisible (! isStandalone);
         if (! isStandalone)
         {
@@ -1976,8 +1981,8 @@ void RezalicaEditor::layoutComponents()
         {
             // REC  PLAY  PAUSE  STOP  METRONOME next to the tempo display
             right.removeFromRight (10);
-            const int key = 38, keyGap = 4;
-            auto keys = right.removeFromRight (5 * key + 4 * keyGap).withSizeKeepingCentre (5 * key + 4 * keyGap, 36);
+            const int key = 39, keyGap = 4;   // (3 % bigger than before)
+            auto keys = right.removeFromRight (5 * key + 4 * keyGap).withSizeKeepingCentre (5 * key + 4 * keyGap, 37);
             transportCentreY = keys.getCentreY();
             for (auto* k : { &clickKey, &stopKey, &pauseKey, &playKey, &recKey })
             {
@@ -1990,9 +1995,11 @@ void RezalicaEditor::layoutComponents()
     headerArea = topBlock;
     {
         auto row = topBlock.withTrimmedLeft (logoArea.getWidth() + 12);
-        row = row.withY ((isStandalone ? transportCentreY : row.getCentreY()) - 12).withHeight (24); // one line with the transport keys
-        auto put = [&row] (juce::Component& c, int w, int gap = 3) { c.setBounds (row.removeFromLeft (w)); row.removeFromLeft (gap); };
-        auto putRight = [&row] (juce::Component& c, int w, int gap = 3) { c.setBounds (row.removeFromRight (w)); row.removeFromRight (gap); };
+        row = row.withY ((isStandalone ? transportCentreY : row.getCentreY()) - 12).withHeight (25); // one line with the transport keys
+        // the header keys are 3 % bigger than their base size
+        auto sz = [] (int w) { return juce::roundToInt ((float) w * 1.03f); };
+        auto put = [&row, sz] (juce::Component& c, int w, int gap = 3) { c.setBounds (row.removeFromLeft (sz (w))); row.removeFromLeft (gap); };
+        auto putRight = [&row, sz] (juce::Component& c, int w, int gap = 3) { c.setBounds (row.removeFromRight (sz (w))); row.removeFromRight (gap); };
         if (isStandalone)
         {
             // FILE + BROWSER next to the name; everything else to the right, up to the transport keys
