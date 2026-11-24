@@ -48,11 +48,18 @@ inline std::vector<int> findOnsets (const juce::AudioBuffer<float>& in, double s
         energy[(size_t) f] = std::sqrt (sum / (float) hop);
     }
 
-    // log-energy flux is level independent: quiet hits count as much as loud ones
+    // log-energy flux is level independent: quiet hits count as much as loud ones.
+    // The rise is measured against the loudest of the previous four frames, so the ripple of a
+    // steady tone (a 128-sample frame rarely holds whole periods) never reads as a new attack.
     std::vector<float> flux ((size_t) frames, 0.0f);
     for (int f = 1; f < frames; ++f)
-        flux[(size_t) f] = juce::jmax (0.0f, std::log10 (energy[(size_t) f] + 1.0e-4f) - std::log10 (energy[(size_t) f - 1] + 1.0e-4f))
+    {
+        float previous = 0.0f;
+        for (int j = juce::jmax (0, f - 4); j < f; ++j)
+            previous = juce::jmax (previous, energy[(size_t) j]);
+        flux[(size_t) f] = juce::jmax (0.0f, std::log10 (energy[(size_t) f] + 1.0e-4f) - std::log10 (previous + 1.0e-4f))
                          * juce::jlimit (0.0f, 1.0f, energy[(size_t) f] * 50.0f); // ignore near-silence
+    }
     const float maxFlux = *std::max_element (flux.begin(), flux.end());
     if (maxFlux <= 0.0f)
         return result;
@@ -68,7 +75,10 @@ inline std::vector<int> findOnsets (const juce::AudioBuffer<float>& in, double s
         local /= (float) juce::jmax (1, n);
 
         const float v = flux[(size_t) f];
-        if (v > 1.8f * local + 0.1f * maxFlux && v >= flux[(size_t) f - 1] && v >= flux[(size_t) f + 1] && f - last >= minGap)
+        // Absolute floor (log10 RMS rise of 0.05, about 1 dB): without it the relative threshold
+        // turns the tiny frame-to-frame ripple of a steady tone into onsets, and Beats would
+        // splice sustained notes (a 440 Hz tone was cut every ~2200 samples).
+        if (v > 0.05f && v > 1.8f * local + 0.1f * maxFlux && v >= flux[(size_t) f - 1] && v >= flux[(size_t) f + 1] && f - last >= minGap)
         {
             // sample-accurate start: walk back from the frame to where the signal leaves its noise floor
             const int frameStart = juce::jmax (0, (f - 1) * hop);

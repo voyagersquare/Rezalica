@@ -354,6 +354,21 @@ int main (int argc, char** argv)
             std::cout << "       beats loop: largest sample step " << maxStepOut << " (original " << maxStepIn << ")\n";
             check (maxStepOut < maxStepIn * 1.6f, "beats: loop forward is click-free");
         }
+        // a steady tone has no transients: Beats must not cut it (it used to find one every ~2200 samples)
+        {
+            for (double rate : { 44100.0, 48000.0 })
+            {
+                juce::AudioBuffer<float> steady (2, (int) rate * 2);
+                for (int i = 0; i < steady.getNumSamples(); ++i)
+                    for (int ch = 0; ch < 2; ++ch)
+                        steady.setSample (ch, i, 0.4f * std::sin (juce::MathConstants<float>::twoPi * 440.0f * (float) i / (float) rate));
+                const auto onsets = rz::stretch::findOnsets (steady, rate);
+                std::cout << "       steady 440 Hz tone at " << rate << " Hz: " << onsets.size() << " onset(s)\n";
+                check (onsets.size() == 1, "onsets: a steady tone has no false transients");
+            }
+            const auto clickOnsets = rz::stretch::findOnsets (clicks, sr);
+            check (clickOnsets.size() == 8, "onsets: every click is still found");
+        }
         auto squeezed = rz::stretch::beats (clicks, sr, 44100, 0, 1, 100.0f, 8.0);
         check (squeezed.getNumSamples() == 44100 && squeezed.getMagnitude (0, 3 * 5512, 300) > 0.3f, "beats: speeding up keeps the hits");
     }
