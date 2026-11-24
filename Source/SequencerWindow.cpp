@@ -166,7 +166,7 @@ void SequencerGrid::paint (juce::Graphics& g)
         {
             auto cell = cellBounds (row, s).reduced (1.5f);
             const bool beatStart = (s / 4) % 2 == 0;
-            juce::Colour c = beatStart ? juce::Colour (0xff2b2e35) : juce::Colour (0xff24262c);
+            juce::Colour c = beatStart ? juce::Colour (0xff2b2e35).brighter (0.03f) : juce::Colour (0xff24262c); // the lighter beats 3 % lighter
             if (s == current) c = c.brighter (0.25f);
 
             const auto v = seq.getStep (pattern, pad, s);

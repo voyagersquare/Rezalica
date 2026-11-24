@@ -1059,6 +1059,18 @@ void PianoRollEditor::paintNotes (juce::Graphics& g)
         }
     }
 
+    // every other group of 4 steps (one beat) a little lighter: 4 darker, 4 lighter ... over the whole pattern
+    {
+        const double lastVisible = stepForX ((float) a.getRight());
+        for (double s = std::floor (viewStart / 4.0) * 4.0; s <= lastVisible; s += 4.0)
+            if (((long long) (s / 4.0)) % 2 == 1)
+            {
+                const float x0 = xForStep (s), x1 = xForStep (s + 4.0);
+                g.setColour (juce::Colours::white.withAlpha (0.05f));
+                g.fillRect (x0, (float) a.getY(), x1 - x0, (float) a.getHeight());
+            }
+    }
+
     // vertical grid: snap lines, beats, bars
     const double grid = snap > 0.0 ? snap : 1.0;
     const double firstLine = std::floor (viewStart / grid) * grid;
