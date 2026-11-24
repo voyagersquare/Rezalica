@@ -293,7 +293,7 @@ Gumb **DECK** (uz SONG) otvara gramofon u donjem dijelu prozora.
 
 1. Na GitHubu otvori **Actions**, pa zadnji uspješni **Build**.
 2. Pod **Artifacts** preuzmi `Rezalica-Setup-Windows` i raspakiraj ga.
-3. Pokreni `Rezalica-Setup-0.2.3.exe`. Instalacija stavlja program u `Program Files\Rezalica`,
+3. Pokreni `Rezalica-Setup-0.2.4.exe`. Instalacija stavlja program u `Program Files\Rezalica`,
    dodaje ga u Start izbornik i (ako je kvačica uključena) ikonu na radnu površinu.
 4. Deinstalacija: *Postavke > Aplikacije* ili *Upravljačka ploča > Programi*.
 
