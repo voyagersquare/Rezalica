@@ -122,6 +122,21 @@ Tempo (crveni LED BPM zaslon) je zajednički za glavni prozor, STEP SEQ, PIANO R
 
 Veliki prozor za waveform izgleda kao ekran starog televizora (kremasti okvir, zaobljeno staklo s odsjajem i linijama). Sve tipke zaglavlja su u jednom redu s transportom. Prozori REZALICE (SAMPLING, efekti …) stoje iznad drugih samo dok je REZALICA aktivna. Sučelje izgleda kao hardverski sampler: brušena srebrna ploča, crni paneli s crvenim tiskom, sive gumene tipke s LED lampicom kad su uključene, crni knobovi s kremastim pokazivačem i crvenom skalom, kremasti gumeni padovi i crveni LED zaslon za tempo (BPM: povuci gore/dolje, Shift = fino, kotačić, dupli klik = upis). Isto je u standalone verziji i u VST pluginu.
 
+## Skale i akordi (PIANO ROLL, MELODIC)
+
+U MELODIC dijelu piano rolla, u gornjem redu: **tonalitet** (C … B) i **skala**, desno **TO SCALE**; u drugom redu **akord**.
+
+- **Skale:** dur i molovi (prirodni, harmonijski, melodijski), modusi (dorski, frigijski, lidijski, miksolidijski, lokrijski,
+  lidijski dominantni, alterirani), pentatonike i blues, balkanske / orijentalne (hijaz – frigijski dominantni,
+  dvostruki harmonijski, mađarski / ciganski mol, ukrajinski dorski, perzijska, napuljske, španjolska 8-tonska),
+  japanske (hirajoshi, in-sen, iwato, kumoi), jazz i simetrične (bebop, cjelotonska, umanjene, Prometheus, enigmatska).
+- Tonovi skale su **svjetliji**, ostali **tamni**; na klavijaturi su zeleno označeni, korijen crveno.
+- **Lijepljenje:** nacrtane i pomaknute note, tipke računala (A W S E …) i **MIDI KEYS** sviraju samo tonove skale.
+  Strelice gore / dolje pomiču označene note za jedan ton skale (Shift: oktavu).
+- **Akord** (Triad, 7th, 9th, Sus2, Sus4, Power): klik nacrta cijeli akord izgrađen iz skale (bez skale: durski akordi).
+- **TO SCALE:** označene note (ili sve) prebaci na najbliži ton skale.
+- Tonalitet, skala i akord spremaju se s projektom.
+
 ## Choke grupe za više padova
 
 Odaberi više padova (Shift + klik, npr. A1, A2, A3), desni klik na bilo koji od njih → **Choke group (3 selected pads)** →

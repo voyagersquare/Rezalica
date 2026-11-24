@@ -2474,6 +2474,52 @@ int main (int argc, char** argv)
         proj.deleteFile();
     }
 
+    {
+        // scales: membership, snapping, scale steps, chords; MIDI keys follow the scale in MELODIC
+        namespace sc = rz::scales;
+        int major = -1, minorPenta = -1, hijaz = -1;
+        for (int i = 0; i < (int) sc::all().size(); ++i)
+        {
+            const juce::String n (sc::all()[(size_t) i].name);
+            if (n.startsWith ("Major (Ionian)")) major = i;
+            if (n == "Minor Pentatonic") minorPenta = i;
+            if (n.startsWith ("Phrygian Dominant")) hijaz = i;
+        }
+        check (sc::all().size() >= 30 && major > 0 && minorPenta > 0 && hijaz > 0, "scales: the list has all the scales");
+        check (sc::contains (major, 0, 64) && ! sc::contains (major, 0, 61) && sc::snap (major, 0, 61) == 60 && sc::snap (major, 0, 66) == 65,
+               "scales: C major contains E, not C#; C# -> C, F# -> F");
+        check (sc::snap (minorPenta, 9, 62) == 62 && sc::snap (minorPenta, 9, 66) == 67 && ! sc::contains (minorPenta, 9, 71),
+               "scales: A minor pentatonic");
+        check (sc::contains (hijaz, 2, 63) && sc::contains (hijaz, 2, 66), "scales: D Hijaz has Eb and F#");
+        check (sc::stepBy (major, 0, 60, 1) == 62 && sc::stepBy (major, 0, 64, 1) == 65 && sc::stepBy (major, 0, 60, -1) == 59,
+               "scales: one scale step up / down");
+        const auto dMinor = sc::chord (sc::chordTriad, major, 0, 62);        // D in C major: D F A
+        const auto g7 = sc::chord (sc::chordSeventh, major, 0, 67);          // G7: G B D F
+        const auto cMajorNoScale = sc::chord (sc::chordTriad, 0, 0, 60);     // no scale: C E G
+        check (dMinor == std::vector<int> { 62, 65, 69 } && g7 == std::vector<int> { 67, 71, 74, 77 } && cMajorNoScale == std::vector<int> { 60, 64, 67 },
+               "scales: chords built from the scale (Dm, G7) and without a scale (C)");
+
+        auto sp = std::make_unique<RezalicaProcessor> (false);
+        auto& sProc = *sp;
+        sProc.prepareToPlay (48000.0, 480);
+        sProc.scaleType = major;
+        sProc.scaleRoot = 0;
+        sProc.chromaticPad = 0;            // MIDI KEYS on: the keyboard plays pad A1 melodically
+        sProc.getSequencer().pianoRecording = true;
+        sProc.getSequencer().playPattern();
+        juce::AudioBuffer<float> sb (2, 480);
+        { juce::MidiBuffer mb; sb.clear(); sProc.processBlock (sb, mb); }
+        { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOn (1, 61, (juce::uint8) 100), 0); sb.clear(); sProc.processBlock (sb, mb); }
+        for (int k = 0; k < 10; ++k) { juce::MidiBuffer mb; sb.clear(); sProc.processBlock (sb, mb); }
+        { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOff (1, 61), 0); sb.clear(); sProc.processBlock (sb, mb); }
+        sProc.getSequencer().stopPlayback();
+        sProc.collectRecordedPianoNotes();
+        bool recordedC = false;
+        if (auto c = sProc.getSequencer().getClip (sProc.getSequencer().currentPattern.load()))
+            for (auto& n : c->notes) recordedC = recordedC || (n.kind == rz::NoteClip::melodic && n.row == 60);
+        check (recordedC, "MIDI KEYS with a scale: C# is played and recorded as C (C major)");
+    }
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

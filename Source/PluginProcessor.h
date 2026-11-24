@@ -13,6 +13,7 @@
 #include "LoopbackCapture.h"
 #include "Mixer.h"
 #include "Turntable.h"
+#include "Scales.h"
 #include "PluginHost.h"
 
 class RezalicaProcessor : public juce::AudioProcessor,
@@ -194,6 +195,8 @@ public:
     std::atomic<int> selectedPad { 0 };
     std::atomic<int> currentBank { 0 }; // bank shown in the UI and played by the computer keyboard
     std::atomic<int> chromaticPad { -1 }; // >= 0: incoming MIDI plays this pad's sample chromatically (C3 = original)
+    /** MELODIC piano roll: key and scale (rz::scales, 0 = chromatic) and the chord a drawn note makes. */
+    std::atomic<int> scaleRoot { 0 }, scaleType { 0 }, chordType { 0 };
 
     // ---- MIDI controllers: which note plays which pad, MIDI Learn, MIDI clock ----
     /** Pad note layouts: Rezalica / Akai MPD (C1 = A1 ... 64 pads), MPC 2000XL and General MIDI drums
@@ -400,6 +403,7 @@ private:
     std::array<std::atomic<int>, 128> noteMap {};   // note -> pad (-1 none, 0..63, bankRelative + i)
     std::atomic<int> padNoteLayout { layoutRezalica };
     std::array<int, 128> notePlaying {};            // audio thread: the pad each held note started
+    std::array<int, 128> melodicPlaying {};         // audio thread: the (scale-snapped) note each held key started
     void pushControlEvent (juce::uint8 kind, int channel, int number, int value);
     // MIDI clock
     juce::int64 sampleClock = 0, lastClockTick = -1;

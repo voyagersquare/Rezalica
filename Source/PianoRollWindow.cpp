@@ -16,6 +16,7 @@ constexpr float minNoteLength = 0.05f;
 PianoRollEditor::PianoRollEditor (RezalicaProcessor& p) : processor (p)
 {
     setWantsKeyboardFocus (true);
+    computerKeys.noteFilter = [this] (int n) { return toScale (n); }; // with a scale the keys play only its notes
     for (auto* s : { &hScroll, &vScroll })
     {
         s->addListener (this);
@@ -290,6 +291,27 @@ void PianoRollEditor::duplicate()
     paste();
 }
 
+bool PianoRollEditor::scaleOn() const
+{
+    return getViewMode() == NoteClip::melodic && ! scales::isChromatic (processor.scaleType.load());
+}
+
+int PianoRollEditor::toScale (int note) const
+{
+    return scaleOn() ? scales::snap (processor.scaleType.load(), processor.scaleRoot.load(), note) : note;
+}
+
+void PianoRollEditor::quantizeToScale()
+{
+    // TO SCALE: the melodic notes (the selected ones, or all) move to the nearest note of the scale
+    if (getViewMode() != NoteClip::melodic || scales::isChromatic (processor.scaleType.load())) return;
+    pushUndo();
+    for (auto& n : notes)
+        if ((int) n.kind == NoteClip::melodic && (selection.empty() || isSelected (n)))
+            n.row = scales::snap (processor.scaleType.load(), processor.scaleRoot.load(), n.row);
+    commit();
+}
+
 void PianoRollEditor::quantize()
 {
     const double grid = snap > 0.0 ? snap : 1.0;
@@ -306,7 +328,12 @@ void PianoRollEditor::transposeSelection (int semitones)
     pushUndo();
     for (auto& n : notes)
         if (isSelected (n))
-            n.row = rowForDisplay (juce::jlimit (0, numRows() - 1, displayForRow (n.row) - semitones));
+        {
+            if (scaleOn() && std::abs (semitones) < 12)   // with a scale: up / down by one note of the scale
+                n.row = scales::stepBy (processor.scaleType.load(), processor.scaleRoot.load(), n.row, semitones > 0 ? 1 : -1);
+            else
+                n.row = rowForDisplay (juce::jlimit (0, numRows() - 1, displayForRow (n.row) - semitones));
+        }
     commit();
     for (auto& n : notes)
         if (isSelected (n)) { preview (n.row, true, n.velocity); preview (n.row, false); break; }
@@ -583,12 +610,27 @@ void PianoRollEditor::mouseDown (const juce::MouseEvent& e)
         PianoNote n;
         n.id = processor.getSequencer().newNoteId();
         n.kind = (juce::uint8) getViewMode();
-        n.row = rowForY (p.y);
+        n.row = toScale (rowForY (p.y));   // with a scale: only its notes
         n.start = (float) juce::jlimit (0.0, juce::jmax (0.0, patternLength() - minNoteLength), snapFloor (stepForX (p.x)));
         n.length = (float) juce::jmin (juce::jmax ((double) minNoteLength, lastLength), patternLength() - n.start);
         n.velocity = (juce::uint8) newVelocity;
         notes.push_back (n);
         selection = { n.id };
+        chordIds.clear();
+        if (getViewMode() == NoteClip::melodic && processor.chordType.load() != scales::chordOff)
+        {
+            // a chord: the other notes of it on the same step
+            const auto chordNotes = scales::chord (processor.chordType.load(), processor.scaleType.load(), processor.scaleRoot.load(), n.row);
+            for (size_t k = 1; k < chordNotes.size(); ++k)
+            {
+                auto c = n;
+                c.id = processor.getSequencer().newNoteId();
+                c.row = chordNotes[k];
+                notes.push_back (c);
+                selection.insert (c.id);
+                chordIds.push_back (c.id);
+            }
+        }
         dragOriginal = { n };
         drag = Drag::create;
         changedDuringDrag = true;
@@ -690,7 +732,7 @@ void PianoRollEditor::mouseDrag (const juce::MouseEvent& e)
         case Drag::create:
         {
             for (auto& n : notes)
-                if (! dragOriginal.empty() && n.id == dragOriginal[0].id)
+                if (! dragOriginal.empty() && (n.id == dragOriginal[0].id || std::find (chordIds.begin(), chordIds.end(), n.id) != chordIds.end()))
                 {
                     const double end = juce::jmax ((double) n.start + minLen, snap > 0.0 ? std::ceil (stepForX (p.x) / snap - 1.0e-6) * snap : stepForX (p.x));
                     n.length = (float) juce::jlimit (minLen, len - n.start, end - n.start);
@@ -734,6 +776,7 @@ void PianoRollEditor::mouseDrag (const juce::MouseEvent& e)
                     {
                         n.start = (float) juce::jlimit (0.0, len - minNoteLength, o.start + d);
                         n.row = rowForDisplay (juce::jlimit (0, numRows() - 1, displayForRow (o.row) + rowDelta));
+                        if ((int) n.kind == NoteClip::melodic) n.row = toScale (n.row); // with a scale: only its notes
                     }
             if (! dragOriginal.empty())
             {
@@ -993,6 +1036,13 @@ void PianoRollEditor::paintKeyboard (juce::Graphics& g)
                 g.setColour (juce::Colour (0xffd8d8d8));
                 g.fillRect (cell.withTrimmedLeft (cell.getWidth() * 0.62f));
             }
+            // a scale: a green mark on its notes (the root brighter)
+            if (! scales::isChromatic (processor.scaleType.load()) && scales::contains (processor.scaleType.load(), processor.scaleRoot.load(), row))
+            {
+                const bool rootRow = (((row - processor.scaleRoot.load()) % 12) + 12) % 12 == 0;
+                g.setColour (rootRow ? juce::Colour (0xffe8423f) : juce::Colour (0xff53d769));
+                g.fillRect (cell.withWidth (5.0f));
+            }
             // the notes the computer keys play now (A ... P): amber strip, held keys light up
             const int base = computerKeys.baseNote();
             if (row >= base && row < base + 16)
@@ -1048,6 +1098,13 @@ void PianoRollEditor::paintNotes (juce::Graphics& g)
         if (y > (float) a.getBottom()) break;
         juce::Colour c = melodic ? (isBlackKey (row) ? juce::Colour (0xff1c1d22) : juce::Colour (0xff24262c))
                                  : ((row / padsPerBank) % 2 == 0 ? juce::Colour (0xff24262c) : juce::Colour (0xff202227));
+        if (melodic && ! scales::isChromatic (processor.scaleType.load()))
+        {
+            // a scale: its notes light, the others dark, the root a little red
+            const bool in = scales::contains (processor.scaleType.load(), processor.scaleRoot.load(), row);
+            const bool rootRow = (((row - processor.scaleRoot.load()) % 12) + 12) % 12 == 0;
+            c = ! in ? juce::Colour (0xff141518) : rootRow ? juce::Colour (0xff332a2d) : juce::Colour (0xff272a31);
+        }
         g.setColour (c);
         g.fillRect ((float) a.getX(), y, (float) a.getWidth(), (float) rowHeight);
         g.setColour (juce::Colour (0xff1a1b1f));
@@ -1245,7 +1302,38 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
             processor.chromaticPad = pad;
     };
     toggle (midiKeysButton, colours::accent2);
-    midiKeysButton.setTooltip ("Your MIDI keyboard plays the chosen pad chromatically instead of triggering pads");
+    midiKeysButton.setTooltip ("Play with MIDI keys: your MIDI keyboard plays the chosen pad chromatically instead of triggering pads "
+                               "(with a scale: only its notes)");
+
+    // ---- scales (MELODIC) ----
+    for (int k = 0; k < 12; ++k)
+        keyBox.addItem (scales::rootName (k), k + 1);
+    keyBox.setTooltip ("The key (root note) of the scale");
+    keyBox.onChange = [this] { processor.scaleRoot = keyBox.getSelectedId() - 1; editor.repaint(); };
+    {
+        juce::String group;
+        const auto& list = scales::all();
+        for (int i = 0; i < (int) list.size(); ++i)
+        {
+            const juce::String g (list[(size_t) i].group);
+            if (g.isNotEmpty() && g != group) { scaleBox.addSectionHeading (g); group = g; }
+            scaleBox.addItem (list[(size_t) i].name, i + 1);
+        }
+    }
+    scaleBox.setTooltip ("Scale: its notes are light in the piano roll, the others dark; drawn, moved and played notes "
+                         "stick to it (also the computer keys and MIDI KEYS). Up / down arrows move notes by one scale step.");
+    scaleBox.onChange = [this] { processor.scaleType = scaleBox.getSelectedId() - 1; editor.repaint(); syncControls(); };
+    for (int c = 0; c < scales::numChords; ++c)
+        chordBox.addItem (scales::chordName (c), c + 1);
+    chordBox.setTooltip ("Chord: a note you draw becomes this chord, built from the scale (no scale: major chords)");
+    chordBox.onChange = [this] { processor.chordType = chordBox.getSelectedId() - 1; };
+    toScaleButton.setTooltip ("To scale: the melodic notes (the selected ones, or all) move to the nearest note of the scale");
+    toScaleButton.onClick = [this] { editor.quantizeToScale(); };
+    for (auto* c : std::initializer_list<juce::Component*> { &keyBox, &scaleBox, &chordBox, &toScaleButton })
+    {
+        c->setWantsKeyboardFocus (false);
+        addAndMakeVisible (*c);
+    }
     midiKeysButton.onClick = [this] { processor.chromaticPad = midiKeysButton.getToggleState() ? editor.getTargetPad() : -1; };
 
     // tools
@@ -1353,6 +1441,14 @@ void PianoRollPanel::syncControls()
     if (! padBox.isPopupActive())
         padBox.setSelectedId (editor.getTargetPad() + 1, juce::dontSendNotification);
     midiKeysButton.setToggleState (processor.chromaticPad.load() >= 0, juce::dontSendNotification);
+    // the scale controls belong to MELODIC
+    for (auto* c : std::initializer_list<juce::Component*> { &keyBox, &scaleBox, &chordBox, &toScaleButton })
+        c->setVisible (melodic);
+    if (! keyBox.isPopupActive())   keyBox.setSelectedId (processor.scaleRoot.load() + 1, juce::dontSendNotification);
+    if (! scaleBox.isPopupActive()) scaleBox.setSelectedId (processor.scaleType.load() + 1, juce::dontSendNotification);
+    if (! chordBox.isPopupActive()) chordBox.setSelectedId (processor.chordType.load() + 1, juce::dontSendNotification);
+    toScaleButton.setEnabled (! scales::isChromatic (processor.scaleType.load()));
+    keyBox.setEnabled (! scales::isChromatic (processor.scaleType.load()));
 
     drawButton.setToggleState (editor.tool == PianoRollEditor::Tool::draw, juce::dontSendNotification);
     selectButton.setToggleState (editor.tool == PianoRollEditor::Tool::select, juce::dontSendNotification);
@@ -1389,41 +1485,50 @@ void PianoRollPanel::paint (juce::Graphics& g)
 void PianoRollPanel::resized()
 {
     auto b = getLocalBounds().reduced (10);
+    const bool melodic = editor.getViewMode() == NoteClip::melodic;
 
+    // (a little narrower than before, so the scale controls fit)
     auto row1 = b.removeFromTop (30);
     playButton.setVisible (false);
     recButton.setVisible (false);
-    transport.setBounds (row1.removeFromLeft (transport.getIdealWidth (38))); row1.removeFromLeft (8);
+    transport.setBounds (row1.removeFromLeft (transport.getIdealWidth (34))); row1.removeFromLeft (8);
     // the sampler's tempo (one tempo for everything): LED display instead of SYNC HOST + BPM bar
     syncButton.setVisible (false);
     bpmSlider.setVisible (false);
-    ledBpm.setBounds (row1.removeFromLeft (84).withSizeKeepingCentre (84, 34).translated (0, -2)); row1.removeFromLeft (10);
-    patternBox.setBounds (row1.removeFromLeft (110)); row1.removeFromLeft (6);
-    lengthBox.setBounds (row1.removeFromLeft (110)); row1.removeFromLeft (16);
-    drumButton.setBounds (row1.removeFromLeft (80)); row1.removeFromLeft (4);
-    melodicButton.setBounds (row1.removeFromLeft (90)); row1.removeFromLeft (8);
-    padBox.setBounds (row1.removeFromLeft (190)); row1.removeFromLeft (6);
-    midiKeysButton.setBounds (row1.removeFromLeft (juce::jmin (170, row1.getWidth())));
+    ledBpm.setBounds (row1.removeFromLeft (80).withSizeKeepingCentre (80, 34).translated (0, -2)); row1.removeFromLeft (8);
+    patternBox.setBounds (row1.removeFromLeft (86)); row1.removeFromLeft (4);
+    lengthBox.setBounds (row1.removeFromLeft (92)); row1.removeFromLeft (10);
+    drumButton.setBounds (row1.removeFromLeft (70)); row1.removeFromLeft (4);
+    melodicButton.setBounds (row1.removeFromLeft (82)); row1.removeFromLeft (8);
+    padBox.setBounds (row1.removeFromLeft (112)); row1.removeFromLeft (4);
+    midiKeysButton.setBounds (row1.removeFromLeft (juce::jmin (92, row1.getWidth()))); row1.removeFromLeft (10);
+    // MELODIC: key + scale + TO SCALE
+    keyBox.setBounds (row1.removeFromLeft (juce::jmin (56, row1.getWidth()))); row1.removeFromLeft (4);
+    toScaleButton.setBounds (row1.removeFromRight (juce::jmin (78, row1.getWidth()))); row1.removeFromRight (4);
+    scaleBox.setBounds (row1.removeFromLeft (juce::jmin (210, row1.getWidth())));
 
     b.removeFromTop (6);
     auto row2 = b.removeFromTop (28);
-    drawButton.setBounds (row2.removeFromLeft (70)); row2.removeFromLeft (4);
-    selectButton.setBounds (row2.removeFromLeft (80)); row2.removeFromLeft (10);
-    snapBox.setBounds (row2.removeFromLeft (120)); row2.removeFromLeft (6);
-    quantizeButton.setBounds (row2.removeFromLeft (90)); row2.removeFromLeft (10);
-    velocitySlider.setBounds (row2.removeFromLeft (150)); row2.removeFromLeft (10);
-    undoButton.setBounds (row2.removeFromLeft (60)); row2.removeFromLeft (4);
-    redoButton.setBounds (row2.removeFromLeft (60)); row2.removeFromLeft (10);
-    clearButton.setBounds (row2.removeFromLeft (70)); row2.removeFromLeft (10);
-    dragWavButton.setBounds (row2.removeFromRight (110));
+    drawButton.setBounds (row2.removeFromLeft (66)); row2.removeFromLeft (4);
+    selectButton.setBounds (row2.removeFromLeft (72)); row2.removeFromLeft (8);
+    snapBox.setBounds (row2.removeFromLeft (100)); row2.removeFromLeft (4);
+    quantizeButton.setBounds (row2.removeFromLeft (84)); row2.removeFromLeft (8);
+    velocitySlider.setBounds (row2.removeFromLeft (126)); row2.removeFromLeft (8);
+    undoButton.setBounds (row2.removeFromLeft (52)); row2.removeFromLeft (4);
+    redoButton.setBounds (row2.removeFromLeft (52)); row2.removeFromLeft (8);
+    clearButton.setBounds (row2.removeFromLeft (62)); row2.removeFromLeft (8);
+    dragWavButton.setBounds (row2.removeFromRight (98));
     row2.removeFromRight (6);
-    dragMidiButton.setBounds (row2.removeFromRight (110));
+    dragMidiButton.setBounds (row2.removeFromRight (98));
     row2.removeFromRight (8);
-    metronome.setBounds (row2.removeFromLeft (juce::jmin (136, row2.getWidth())));
+    metronome.setBounds (row2.removeFromLeft (juce::jmin (116, row2.getWidth()))); row2.removeFromLeft (8);
+    chordBox.setBounds (row2.removeFromLeft (juce::jmin (110, row2.getWidth()))); // MELODIC: the chord a drawn note makes
+    juce::ignoreUnused (melodic);
 
     b.removeFromTop (6);
     infoLabel.setBounds (b.removeFromBottom (18));
     b.removeFromBottom (4);
     editor.setBounds (b);
 }
+
 } // namespace rz

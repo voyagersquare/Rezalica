@@ -33,6 +33,9 @@ public:
     }
 
     /** Chromatic notes of a pad (C3 = original pitch); recorded when the piano roll REC is on. */
+    /** Optional: changes the note a key plays (the piano roll's scale). */
+    std::function<int (int)> noteFilter;
+
     bool pollNotes (RezalicaProcessor& p, int pad, float velocity)
     {
         bool used = false;
@@ -42,7 +45,12 @@ public:
             const bool down = juce::KeyPress::isKeyCurrentlyDown ((int) noteKeys[i]);
             if (down == noteDown[(size_t) i]) continue;
             noteDown[(size_t) i] = down;
-            if (down) { noteStarted[(size_t) i] = juce::jlimit (0, 127, 60 + octave * 12 + i); notePad[(size_t) i] = pad; }
+            if (down)
+            {
+                const int n = juce::jlimit (0, 127, 60 + octave * 12 + i);
+                noteStarted[(size_t) i] = noteFilter != nullptr ? noteFilter (n) : n; // e.g. the nearest note of a scale
+                notePad[(size_t) i] = pad;
+            }
             p.previewNoteFromUi (notePad[(size_t) i], down ? velocity : 0.0f, (float) (noteStarted[(size_t) i] - 60), down, true);
             used = true;
         }

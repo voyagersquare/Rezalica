@@ -31,6 +31,7 @@ RezalicaProcessor::RezalicaProcessor (bool withInput)
     pMaster = apvts.getRawParameterValue ("master");
     for (auto& n : noteIsControl) n = false;
     notePlaying.fill (-1);
+    melodicPlaying.fill (-1);
     clockBuffer.ensureSize (2048);
     setPadNoteLayout (layoutRezalica);
 
@@ -558,15 +559,18 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
         if (m.isNoteOn() && chromatic >= 0 && chromatic < rz::numPads)
         {
-            // melodic: every key plays the chosen pad, C3 (60) = original pitch
-            const int note = m.getNoteNumber();
+            // melodic: every key plays the chosen pad, C3 (60) = original pitch (with a scale: its nearest note)
+            const int note = rz::scales::snap (scaleType.load(), scaleRoot.load(), m.getNoteNumber());
+            melodicPlaying[(size_t) m.getNoteNumber()] = note;
             addTaggedEvent (offset, evOnTag, chromatic, m.getFloatVelocity(), (float) (note - 60), rz::Sequencer::midiTagBase + note, true);
             sequencer.recordPianoNoteOn (note, m.getFloatVelocity(), offset, true);
         }
         else if (m.isNoteOff() && chromatic >= 0 && chromatic < rz::numPads)
         {
-            addTaggedEvent (offset, evOffTag, -1, 0.0f, 0.0f, rz::Sequencer::midiTagBase + m.getNoteNumber(), true);
-            sequencer.recordPianoNoteOff (m.getNoteNumber(), offset, true);
+            const int note = melodicPlaying[(size_t) m.getNoteNumber()] >= 0 ? melodicPlaying[(size_t) m.getNoteNumber()] : m.getNoteNumber();
+            melodicPlaying[(size_t) m.getNoteNumber()] = -1;
+            addTaggedEvent (offset, evOffTag, -1, 0.0f, 0.0f, rz::Sequencer::midiTagBase + note, true);
+            sequencer.recordPianoNoteOff (note, offset, true);
         }
         else if (m.isNoteOn())
         {
@@ -2759,6 +2763,9 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
     root.setProperty ("version", 1, nullptr);
     root.setProperty ("selectedPad", selectedPad.load(), nullptr);
     root.setProperty ("chromaticPad", chromaticPad.load(), nullptr);
+    root.setProperty ("scaleRoot", scaleRoot.load(), nullptr);
+    root.setProperty ("scaleType", scaleType.load(), nullptr);
+    root.setProperty ("chordType", chordType.load(), nullptr);
     root.setProperty ("bank", currentBank.load(), nullptr);
     for (int b = 0; b < rz::numBanks; ++b)
     {
@@ -2903,6 +2910,9 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     selectedPad = juce::jlimit (0, rz::numPads - 1, (int) root.getProperty ("selectedPad", 0));
     chromaticPad = juce::jlimit (-1, rz::numPads - 1, (int) root.getProperty ("chromaticPad", -1));
+    scaleRoot = juce::jlimit (0, 11, (int) root.getProperty ("scaleRoot", 0));
+    scaleType = juce::jlimit (0, (int) rz::scales::all().size() - 1, (int) root.getProperty ("scaleType", 0));
+    chordType = juce::jlimit (0, rz::scales::numChords - 1, (int) root.getProperty ("chordType", 0));
     currentBank = juce::jlimit (0, rz::numBanks - 1, (int) root.getProperty ("bank", 0));
     for (int b = 0; b < rz::numBanks; ++b)
     {

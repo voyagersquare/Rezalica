@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "Scales.h"
 #include "LookAndFeel.h"
 #include "MetronomeControls.h"
 #include "TransportButton.h"
@@ -42,6 +43,10 @@ public:
     void nudgeSelection (double steps);
     void clearAll();
     void setViewMode (int mode);    // NoteClip::drum / melodic
+    /** TO SCALE: melodic notes (the selected ones, or all) to the nearest note of the scale. */
+    void quantizeToScale();
+    bool scaleOn() const;           // melodic view with a scale chosen
+    int toScale (int note) const;   // the nearest scale note (unchanged without a scale)
     int getViewMode() const;
     void setTargetPad (int pad);
     int getTargetPad() const;
@@ -132,6 +137,7 @@ private:
     int rowHeight = 16;
 
     Drag drag = Drag::none;
+    std::vector<juce::uint32> chordIds;   // the other notes of a chord being drawn (they follow its length)
     // ruler: click = move the playhead there (PLAY starts there), hold + drag = scrub (plays while held)
     bool scrubbing = false;
     double lastRulerStep = -1.0;
@@ -177,7 +183,10 @@ private:
 
     juce::TextButton drumButton { "DRUMS" }, melodicButton { "MELODIC" };
     juce::ComboBox padBox;
-    juce::TextButton midiKeysButton { "PLAY WITH MIDI KEYS" };
+    juce::TextButton midiKeysButton { "MIDI KEYS" };
+    // MELODIC: key + scale, the chord a drawn note makes, notes to the scale
+    juce::ComboBox keyBox, scaleBox, chordBox;
+    juce::TextButton toScaleButton { "TO SCALE" };
     juce::TextButton drawButton { "DRAW" }, selectButton { "SELECT" };
     juce::ComboBox snapBox;
     juce::TextButton quantizeButton { "QUANTIZE" }, undoButton { "UNDO" }, redoButton { "REDO" }, clearButton { "CLEAR" };
