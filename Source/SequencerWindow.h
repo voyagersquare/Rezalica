@@ -59,7 +59,7 @@ private:
     void syncControls();
 
     RezalicaProcessor& processor;
-    juce::TextButton playButton { "PLAY" }, recButton { "REC" }, syncButton { "SYNC HOST" }, clearButton { "CLEAR" }, copyButton { "COPY TO NEXT" };
+    juce::TextButton playButton { "PLAY" }, recButton { "REC" }, syncButton { "SYNC HOST" }, clearButton { "CLEAR" }, copyButton { "COPY TO NEXT PATTERN" };
     juce::ComboBox patternBox, lengthBox, swingGridBox;
     juce::Slider bpmSlider, swingSlider;
     juce::Label bpmLabel, swingLabel, patternLabel, lengthLabel, infoLabel;

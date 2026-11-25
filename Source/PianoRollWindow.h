@@ -189,7 +189,7 @@ private:
     juce::TextButton toScaleButton { "TO SCALE" };
     juce::TextButton drawButton { "DRAW" }, selectButton { "SELECT" };
     juce::ComboBox snapBox;
-    juce::TextButton quantizeButton { "QUANTIZE" }, undoButton { "UNDO" }, redoButton { "REDO" }, clearButton { "CLEAR" };
+    juce::TextButton quantizeButton { "QUANTIZE" }, undoButton { "UNDO" }, redoButton { "REDO" }, clearButton { "CLEAR" }, copyNextButton { "COPY TO NEXT PATTERN" };
     juce::Slider velocitySlider;
     juce::Label infoLabel;
     DragExportButton dragMidiButton, dragWavButton;

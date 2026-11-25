@@ -133,6 +133,22 @@ public:
         steps[(size_t) pattern][(size_t) pad][(size_t) step] = velocity;
     }
 
+    /** Copies the current pattern (steps, piano roll notes, nudges, length, swing) to the next one
+        and makes that one current. Returns the new pattern. */
+    int copyToNextPattern()
+    {
+        const int from = currentPattern.load();
+        const int to = (from + 1) % numPatterns;
+        setPatternData (to, getPatternData (from));
+        setClip (to, getClip (from)->copy());
+        setNudgeData (to, getNudgeData (from));
+        length[(size_t) to] = length[(size_t) from].load();
+        patternSwing[(size_t) to] = patternSwing[(size_t) from].load();
+        swingGrid[(size_t) to] = swingGrid[(size_t) from].load();
+        currentPattern = to;
+        return to;
+    }
+
     void clearPattern (int pattern)
     {
         for (auto& row : steps[(size_t) pattern])

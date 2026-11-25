@@ -313,16 +313,7 @@ SequencerPanel::SequencerPanel (RezalicaProcessor& p)
     };
     copyButton.onClick = [this]
     {
-        auto& s = processor.getSequencer();
-        const int from = s.currentPattern.load();
-        const int to = (from + 1) % Sequencer::numPatterns;
-        s.setPatternData (to, s.getPatternData (from));
-        s.setClip (to, s.getClip (from)->copy()); // the piano roll part too
-        s.setNudgeData (to, s.getNudgeData (from));
-        s.length[(size_t) to] = s.length[(size_t) from].load();
-        s.patternSwing[(size_t) to] = s.patternSwing[(size_t) from].load();
-        s.swingGrid[(size_t) to] = s.swingGrid[(size_t) from].load();
-        s.currentPattern = to;
+        processor.getSequencer().copyToNextPattern(); // the piano roll part too
         syncControls();
         grid.repaint();
     };
@@ -509,7 +500,7 @@ void SequencerPanel::resized()
     lengthBox.setBounds (top.removeFromLeft (100)); top.removeFromLeft (12);
     swingSlider.setBounds (top.removeFromLeft (110)); top.removeFromLeft (4);
     swingGridBox.setBounds (top.removeFromLeft (64)); top.removeFromLeft (12);
-    copyButton.setBounds (top.removeFromRight (110)); top.removeFromRight (6);
+    copyButton.setBounds (top.removeFromRight (172)); top.removeFromRight (6);
     clearButton.setBounds (top.removeFromRight (70));
 
     b.removeFromTop (6);

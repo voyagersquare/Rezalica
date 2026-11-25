@@ -1362,7 +1362,7 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
         editor.repaint();
     };
 
-    for (auto* b : { &quantizeButton, &undoButton, &redoButton, &clearButton })
+    for (auto* b : { &quantizeButton, &undoButton, &redoButton, &clearButton, &copyNextButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (*b);
@@ -1372,6 +1372,13 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
     undoButton.onClick = [this] { editor.undo(); };
     redoButton.onClick = [this] { editor.redo(); };
     clearButton.onClick = [this] { editor.clearAll(); };
+    copyNextButton.setTooltip ("Copy this pattern (notes, steps, length, swing) to the next pattern and switch to it");
+    copyNextButton.onClick = [this]
+    {
+        processor.getSequencer().copyToNextPattern();
+        editor.refreshFromSequencer();
+        syncControls();
+    };
 
     velocitySlider.setSliderStyle (juce::Slider::LinearBar);
     velocitySlider.setRange (1.0, 127.0, 1.0);
@@ -1516,7 +1523,8 @@ void PianoRollPanel::resized()
     velocitySlider.setBounds (row2.removeFromLeft (126)); row2.removeFromLeft (8);
     undoButton.setBounds (row2.removeFromLeft (52)); row2.removeFromLeft (4);
     redoButton.setBounds (row2.removeFromLeft (52)); row2.removeFromLeft (8);
-    clearButton.setBounds (row2.removeFromLeft (62)); row2.removeFromLeft (8);
+    clearButton.setBounds (row2.removeFromLeft (62)); row2.removeFromLeft (4);
+    copyNextButton.setBounds (row2.removeFromLeft (172)); row2.removeFromLeft (8);
     dragWavButton.setBounds (row2.removeFromRight (98));
     row2.removeFromRight (6);
     dragMidiButton.setBounds (row2.removeFromRight (98));
