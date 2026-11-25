@@ -37,7 +37,7 @@ juce::Array<juce::PluginDescription> PluginHost::getEffects() const
 {
     juce::Array<juce::PluginDescription> out;
     for (auto& d : known.getTypes())
-        if (! d.isInstrument)
+        if (! d.isInstrument && d.name != "Rezalica")   // (not Rezalica's own VST3)
             out.add (d);
     std::sort (out.begin(), out.end(), [] (const juce::PluginDescription& a, const juce::PluginDescription& b)
     {
@@ -50,7 +50,7 @@ juce::Array<juce::PluginDescription> PluginHost::getInstruments() const
 {
     juce::Array<juce::PluginDescription> out;
     for (auto& d : known.getTypes())
-        if (d.isInstrument)
+        if (d.isInstrument && d.name != "Rezalica")    // (not Rezalica's own VST3)
             out.add (d);
     std::sort (out.begin(), out.end(), [] (const juce::PluginDescription& a, const juce::PluginDescription& b)
     {

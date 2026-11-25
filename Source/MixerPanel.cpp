@@ -137,7 +137,7 @@ MixerStrip::MixerStrip (MixerPanel& o, RezalicaProcessor& p, int busIndex) : pro
     for (int s = 0; s < slotCount; ++s)
     {
         slots.push_back (std::make_unique<MixerSlotView> (o, bus, s));
-        slots.back()->setTooltip ("Drag an effect here from BROWSER > PLUGINS. Click: open it, right-click: bypass / remove / choose");
+        slots.back()->setTooltip ("Drag an effect here from BROWSER > EFFECTS. Click: open it, right-click: bypass / remove / choose");
         addAndMakeVisible (*slots.back());
     }
     addAndMakeVisible (meter);
@@ -337,7 +337,7 @@ void MixerPanel::showSlotMenu (int bus, int slot, juce::Component* target)
     for (int i = 0; i < effects.size(); ++i)
         choose.addItem (100 + i, effects[i].name + "   (" + effects[i].manufacturerName + ")");
     if (effects.isEmpty())
-        choose.addItem (99, "(no effects yet: BROWSER > PLUGINS > SCAN)", false);
+        choose.addItem (99, "(no effects yet: BROWSER > EFFECTS > SCAN)", false);
     m.addSubMenu (filled ? "Replace with" : "Load effect", choose);
 
     juce::Component::SafePointer<MixerPanel> safe (this);

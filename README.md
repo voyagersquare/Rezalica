@@ -144,14 +144,14 @@ U MELODIC dijelu piano rolla, u gornjem redu: **tonalitet** (C … B) i **skala*
 ## Efekti po padu (EFFECTS)
 
 Desno od gumba pada (GAIN … END) je **EFFECTS** s **6 slotova** za odabrani pad – svaki pad ima svojih 6 efekata,
-uz efekte busova u mikseru. Povuci plugin iz **BROWSER > PLUGINS** u slot; klik otvara plugin, desni klik: bypass /
+uz efekte busova u mikseru. Povuci plugin iz **BROWSER > EFFECTS** u slot; klik otvara plugin, desni klik: bypass /
 ukloni / odaberi. Odabereš drugi pad – EFFECTS pokazuje njegove efekte. Padovi s efektima imaju oznaku **FX**.
 Pad svira kroz svoje efekte, zatim kroz svoj bus i MASTER; kašnjenje pluginova (latency) se izjednačava, pa svi padovi
 i metronom ostaju u ritmu. Efekti se spremaju s projektom.
 
 ## VST instrumenti na padovima
 
-- U **BROWSER > PLUGINS** uz efekte su i instrumenti (oznaka **VSTi**, npr. Vital, Serum, Kontakt). **Povuci** instrument na pad
+- Instrumenti su u **BROWSER > INSTRUMENTS** (efekti u **BROWSER > EFFECTS**; npr. Vital, Serum, Kontakt). **Povuci** instrument na pad
   ili desni klik na pad > **Load VST instrument**. Otvori se prozor instrumenta; na padu piše ime i ljubičasta oznaka VSTi.
 - Pad tada svira instrument umjesto samplea: udarac na pad / step sequencer = nota **C3**, a u **PIANO ROLL** (MELODIC, taj pad)
   i s **MIDI KEYS** svaka nota ide u instrument (s velocityjem, akordima, skalama, HUMANIZE).
@@ -218,9 +218,9 @@ Tipkovnica računala svira trenutno odabranu banku:
   - **BUS A–D su SEND busovi:** pad poslan na bus uvijek svira **suh, punom glasnoćom** na MASTER; njegova kopija ide kroz efekte busa, a **fader busa je send količina** (koliko efekta). Bus bez efekata ne vraća ništa (nema udvostručavanja). M / S utišavaju / soliraju povrat efekta. Za insert efekte na jednom padu koristi **EFFECTS** pada (6 slotova).
   - Svi padovi i banke su po defaultu spojeni na **MASTER**.
   - Desni klik na pad → **Send to** → BUS A–D (ili „Same as bank“). Desni klik na gumb banke → **Send bank … to** → cijela banka na BUS. Pad na busu ima plavu oznaku „BUS A“ …
-  - U PLUGINS popisu efekti su složeni u **mape po proizvođačima** (FabFilter, Valhalla DSP, iZotope …); klik otvara mapu, „‹ ALL MAKERS“ vraća natrag.
+  - U EFFECTS i INSTRUMENTS popisima efekti su složeni u **mape po proizvođačima** (FabFilter, Valhalla DSP, iZotope …); klik otvara mapu, „‹ ALL MAKERS“ vraća natrag.
   - **Skeniranje je sigurno**: svaki plugin skenira zasebna kopija Rezalice, pa plugin koji se sruši ne ruši program. Takvi pluginovi se preskaču i vide se pod **SKIPPED (broj)** (ime i mapa, „Try them again“ za ponovni pokušaj). Napredak se sprema nakon svakog plugina.
-  - Efekti: **BROWSER → PLUGINS → SCAN** (pretraži VST3 mape, „VST3 FOLDERS…“ za dodatne mape), zatim **povuci** efekt u utor. Klik na utor otvara efekt, desni klik: Bypass / Remove / Load effect.
+  - Efekti: **BROWSER → EFFECTS → SCAN** (pretraži VST3 mape, „VST3 FOLDERS…“ za dodatne mape), zatim **povuci** efekt u utor. Klik na utor otvara efekt, desni klik: Bypass / Remove / Load effect.
   - Efekti i njihove postavke spremaju se s projektom i ulaze u export / resample.
 - **Višestruki odabir padova**: klik na prvi pad, pa **Shift+klik** na zadnji označi sve između (npr. A1–A16), a **Ctrl+klik** dodaje ili miče pojedini pad. Označeni padovi imaju žuti okvir. Desni klik na bilo koji pad → **Clear all selected pads** isprazni sve odjednom (jedan UNDO ih vraća). ESC ili običan klik poništava odabir.
 - **Chopovi se međusobno prekidaju**: padovi dobiveni rezanjem istog sampla automatski dobiju istu choke grupu, pa svaki novi chop prekine onaj koji svira (kao na MPC-u / Koali). Vrijedi i za starije projekte. Ako želiš da se chopovi preklapaju, na padu odaberi „No choke“.
@@ -314,7 +314,7 @@ Gumb **DECK** (uz SONG) otvara gramofon u donjem dijelu prozora.
 - **PITCH:** okrugli gumb, raspon 8 % ili 16 % (desno = brže, dvoklik = 0). **VOLUME** je glasnoća decka.
 - **SYNC:** ploča se vrti u tempu sekvencera. Tempo samplea se čita iz imena datoteke (npr. „85-bpm"),
   inače se pogađa iz duljine. Sa SYNC-om START, dok sekvencer svira, kreće točno na sljedećem udarcu.
-- **EFFECTS:** 4 slota za efekte, isto kao u mikseru (povuci plugin iz BROWSER > PLUGINS; klik = otvori, desni klik = bypass / ukloni).
+- **EFFECTS:** 4 slota za efekte, isto kao u mikseru (povuci plugin iz BROWSER > EFFECTS; klik = otvori, desni klik = bypass / ukloni).
   Glasnoću decka podešava VOLUME na decku.
 - Klik u gornju traku cijelog samplea (ispod ploče) pomiče iglu.
 - **REC:** snima ono što deck svira (nakon fadera i DECK efekata); kad ga zaustaviš, scratch ide na odabrani pad (tišina se odreže).

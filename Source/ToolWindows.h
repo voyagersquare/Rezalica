@@ -85,6 +85,8 @@ private:
     bool dragStarted = false;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void showPlugins (bool);
+    bool instrumentsShown() const { return instrumentsTab.getToggleState(); }
+    void fillPluginRows();   // the effects or the instruments, by the tab
 
     /** PLUGINS: the scanned effects in one folder per maker (FabFilter, Valhalla ...);
         click a maker to open it, drag an effect onto a mixer slot. */
@@ -176,7 +178,7 @@ private:
         }
     } pluginRows;
     juce::ListBox pluginList { "plugins", &pluginRows };
-    juce::TextButton filesTab { "FILES" }, pluginsTab { "PLUGINS" }, scanButton { "SCAN" }, vstFoldersButton { "VST3 FOLDERS..." }, skippedButton { "SKIPPED" };
+    juce::TextButton filesTab { "FILES" }, pluginsTab { "EFFECTS" }, instrumentsTab { "INSTRUMENTS" }, scanButton { "SCAN" }, vstFoldersButton { "VST3 FOLDERS..." }, skippedButton { "SKIPPED" };
     juce::Label scanStatus;
     void selectionChanged() override;
     void fileClicked (const juce::File&, const juce::MouseEvent&) override;

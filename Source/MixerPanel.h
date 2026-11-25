@@ -8,7 +8,7 @@ namespace rz
 {
 class MixerPanel;
 
-/** One effect slot: drop a plug-in from BROWSER > PLUGINS here, click to open it, right-click for more. */
+/** One effect slot: drop a plug-in from BROWSER > EFFECTS here, click to open it, right-click for more. */
 class MixerSlotView : public juce::Component,
                       public juce::DragAndDropTarget,
                       public juce::SettableTooltipClient

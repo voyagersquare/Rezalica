@@ -513,7 +513,7 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
         addAndMakeVisible (*l);
 
     // FILES / PLUGINS
-    for (auto* t : { &filesTab, &pluginsTab })
+    for (auto* t : { &filesTab, &pluginsTab, &instrumentsTab })
     {
         t->setClickingTogglesState (true);
         t->setRadioGroupId (8301);
@@ -524,7 +524,9 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
     filesTab.setToggleState (true, juce::dontSendNotification);
     filesTab.onClick = [this] { showPlugins (false); };
     pluginsTab.onClick = [this] { showPlugins (true); };
-    pluginsTab.setTooltip ("Third-party VST3 effects: drag one into a slot of the mixer (BUS A-D, MASTER)");
+    instrumentsTab.onClick = [this] { showPlugins (true); };
+    pluginsTab.setTooltip ("VST3 effects: drag one into a slot of the mixer (BUS A-D, MASTER) or a pad's EFFECTS");
+    instrumentsTab.setTooltip ("VST3 instruments (synths, samplers): drag one onto a pad");
     pluginList.setRowHeight (24);
     pluginList.setColour (juce::ListBox::backgroundColourId, colours::panel);
     addChildComponent (pluginList);
@@ -584,13 +586,10 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
     scanStatus.setFont (juce::FontOptions (11.0f));
     addChildComponent (scanStatus);
     processor.pluginHost->addChangeListener (this);
-    pluginRows.effects = processor.pluginHost->getEffects();
-    pluginRows.effects.addArray (processor.pluginHost->getInstruments());
-    pluginRows.openMaker = AppSettings::get().getValue ("pluginMaker");
-    pluginRows.rebuild();
+    fillPluginRows();
     pluginRows.onChanged = [this]
     {
-        AppSettings::get().setValue ("pluginMaker", pluginRows.openMaker);
+        AppSettings::get().setValue (instrumentsShown() ? "instrumentMaker" : "pluginMaker", pluginRows.openMaker);
         pluginList.deselectAllRows();
         pluginList.updateContent();
         pluginList.scrollToEnsureRowIsOnscreen (0);
@@ -618,14 +617,30 @@ BrowserPanel::~BrowserPanel()
     thread.stopThread (2000);
 }
 
+void BrowserPanel::fillPluginRows()
+{
+    const bool inst = instrumentsShown();
+    pluginRows.effects = inst ? processor.pluginHost->getInstruments() : processor.pluginHost->getEffects();
+    pluginRows.openMaker = AppSettings::get().getValue (inst ? "instrumentMaker" : "pluginMaker");
+    // the open maker has nothing of this kind: back to the list of makers
+    bool found = false;
+    for (auto& d : pluginRows.effects) found = found || PluginRows::makerOf (d) == pluginRows.openMaker;
+    if (! found) pluginRows.openMaker = {};
+    pluginRows.rebuild();
+}
+
 void BrowserPanel::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    pluginRows.effects = processor.pluginHost->getEffects();
-    pluginRows.effects.addArray (processor.pluginHost->getInstruments());
-    pluginRows.rebuild();
+    fillPluginRows();
     pluginList.updateContent();
     pluginList.repaint();
-    scanStatus.setText (processor.pluginHost->getScanStatus(), juce::dontSendNotification);
+    {
+        const int nEff = processor.pluginHost->getEffects().size(), nInst = processor.pluginHost->getInstruments().size();
+        const auto status = processor.pluginHost->getScanStatus();
+        scanStatus.setText (processor.pluginHost->isScanning() ? status
+                                                                : juce::String (nEff) + " effects,  " + juce::String (nInst) + " instruments",
+                            juce::dontSendNotification);
+    }
     scanButton.setEnabled (! processor.pluginHost->isScanning());
     const int nFailed = processor.pluginHost->getFailedFiles().size();
     skippedButton.setButtonText ("SKIPPED (" + juce::String (nFailed) + ")");
@@ -639,7 +654,8 @@ void BrowserPanel::showPlugins (bool plugins)
         c->setVisible (! plugins);
     for (auto* c : std::initializer_list<juce::Component*> { &pluginList, &scanButton, &vstFoldersButton, &skippedButton, &scanStatus })
         c->setVisible (plugins);
-    helpLabel.setText (plugins ? "Effects: drag onto a mixer / EFFECTS slot.   VSTi (instruments): drag onto a pad"
+    helpLabel.setText (plugins ? (instrumentsShown() ? "Drag an instrument onto a pad (or right-click a pad > Load VST instrument)"
+                                                     : "Drag an effect onto a mixer slot or a pad's EFFECTS slot")
                                : "Click: preview   Double-click: load   Drag: onto a pad or the sample view", juce::dontSendNotification);
     changeListenerCallback (nullptr);
     resized();
@@ -846,11 +862,13 @@ void BrowserPanel::resized()
     auto b = getLocalBounds().reduced (10);
     {
         auto tabs = b.removeFromTop (26);
-        filesTab.setBounds (tabs.removeFromLeft (tabs.getWidth() / 2).reduced (0, 0).withTrimmedRight (3));
-        pluginsTab.setBounds (tabs.withTrimmedLeft (3));
+        const int w = tabs.getWidth() - 6;
+        filesTab.setBounds (tabs.removeFromLeft (w * 27 / 100)); tabs.removeFromLeft (3);
+        pluginsTab.setBounds (tabs.removeFromLeft (w * 33 / 100)); tabs.removeFromLeft (3);
+        instrumentsTab.setBounds (tabs);
         b.removeFromTop (6);
     }
-    if (pluginsTab.getToggleState())
+    if (pluginsTab.getToggleState() || instrumentsTab.getToggleState())
     {
         auto row = b.removeFromTop (28);
         scanButton.setBounds (row.removeFromLeft (64)); row.removeFromLeft (4);

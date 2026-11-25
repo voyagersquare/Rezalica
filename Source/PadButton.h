@@ -241,7 +241,7 @@ private:
             for (int i = 0; i < instrumentChoices.size(); ++i)
                 inst.addItem (1000 + i, instrumentChoices[i].name + "   (" + instrumentChoices[i].manufacturerName + ")");
             if (instrumentChoices.isEmpty())
-                inst.addItem (999, "No instruments found (BROWSER > PLUGINS > SCAN)", false);
+                inst.addItem (999, "No instruments found (BROWSER > INSTRUMENTS > SCAN)", false);
             m.addSubMenu (hasInst ? "Replace VST instrument" : "Load VST instrument", inst);
             if (processor.isInstrumentPending (index))
             {
