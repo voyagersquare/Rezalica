@@ -606,6 +606,9 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     masterFxButton.setVisible (false);
     mixer = std::make_unique<rz::MixerPanel> (processor);
     addAndMakeVisible (*mixer);
+    // the selected pad's own effects (6 slots), next to its knobs
+    padFx = std::make_unique<rz::MixerPanel> (processor, rz::padChainBase + processor.selectedPad.load());
+    addAndMakeVisible (*padFx);
     fxTitle.setText ("MIXER   drag effects from BROWSER > PLUGINS into the slots", juce::dontSendNotification);
 
     setSize (isStandalone ? 1530 : 1240, isStandalone ? 784 : 772);
@@ -674,6 +677,7 @@ void RezalicaEditor::setBank (int bank)
 void RezalicaEditor::selectPad (int pad, bool grabFocus)
 {
     processor.selectedPad = pad;
+    if (padFx != nullptr) padFx->showChain (rz::padChainBase + pad); // EFFECTS shows this pad's chain
     if (pad / rz::padsPerBank != processor.currentBank.load())
         setBank (pad / rz::padsPerBank);
     for (auto& p : pads)
@@ -795,6 +799,10 @@ void RezalicaEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void RezalicaEditor::timerCallback()
 {
+    // the FX mark on the pads that have effects of their own
+    if (++fxMarkTick % 10 == 0)
+        for (auto& p : pads)
+            p->setHasFx (processor.padHasEffects (p->getIndex()));
     // the MIDI key blinks when MIDI comes in
     if (const int a = processor.midiActivity.load(); a != lastMidiActivity) { lastMidiActivity = a; midiBlink = 3; }
     if (midiBlink > 0 && --midiBlink == 0) midiButton.removeColour (juce::TextButton::buttonColourId);
@@ -1514,7 +1522,7 @@ std::vector<juce::Component*> RezalicaEditor::stripAndFxComponents()
     // (the pad title row with WARP / STRETCH / TRIM / BOUNCE / CLEAR stays)
     return { &gainKnob, &panKnob, &pitchKnob, &attackKnob, &releaseKnob, &startKnob, &endKnob,
              &loopButton, &reverseButton, &gateButton, &muteButton, &chokeBox, &normalizeButton,
-             &fxTitle, mixer.get() };
+             &fxTitle, mixer.get(), padFx.get() };
 }
 
 void RezalicaEditor::showStatus (const juce::String& text)
@@ -2085,33 +2093,40 @@ void RezalicaEditor::layoutComponents()
         auto s = sampleArea.reduced (10);
         waveform.setBounds (s.removeFromTop (s.getHeight() - 190).reduced (tvBezel)); // room for the TV frame
         s.removeFromTop (8);
+        // the pad's own EFFECTS (6 slots) on the right, from the title row down
+        if (padFx != nullptr)
+        {
+            auto fx = s.removeFromRight (juce::jlimit (230, 460, s.getWidth() * 34 / 100));
+            padFx->setBounds (fx);
+            s.removeFromRight (12);
+        }
+        // the title row: the pad's name, then the keys (a little smaller, on the left)
         auto titleRow = s.removeFromTop (24);
-        clearPadButton.setBounds (titleRow.removeFromRight (70));
-        titleRow.removeFromRight (6);
-        renderButton.setBounds (titleRow.removeFromRight (80));
-        titleRow.removeFromRight (6);
-        trimButton.setBounds (titleRow.removeFromRight (70));
-        titleRow.removeFromRight (6);
-        stretchButton.setBounds (titleRow.removeFromRight (90));
-        titleRow.removeFromRight (6);
-        warpButton.setBounds (titleRow.removeFromRight (70));
+        padTitle.setBounds (titleRow.removeFromLeft (juce::jlimit (96, 220, titleRow.getWidth() - 340)));
+        titleRow.removeFromLeft (4);
+        for (auto [c, w] : std::initializer_list<std::pair<juce::Component*, int>> {
+                 { &warpButton, 58 }, { &stretchButton, 78 }, { &trimButton, 54 }, { &renderButton, 70 }, { &clearPadButton, 58 } })
+        {
+            c->setBounds (titleRow.removeFromLeft (juce::jmin (w, titleRow.getWidth())));
+            titleRow.removeFromLeft (5);
+        }
         layoutChopInfo (titleRow);
-        padTitle.setBounds (titleRow);
 
+        // the knobs: all seven together on the left
         s.removeFromTop (6);
         auto knobs = s.removeFromTop (100);
-        const int kw = knobs.getWidth() / 7;
+        const int kw = juce::jmin (96, knobs.getWidth() / 7);
         for (auto* k : { &gainKnob, &panKnob, &pitchKnob, &attackKnob, &releaseKnob, &startKnob, &endKnob })
             k->setBounds (knobs.removeFromLeft (kw).reduced (2, 0));
 
         s.removeFromTop (8);
-        // half-width keys in one row, NORMALIZE next to them
-        auto toggles = s.removeFromTop (30);
-        const int tw = toggles.getWidth() / 10;
-        for (auto* t : { &loopButton, &reverseButton, &gateButton, &muteButton })
-            t->setBounds (toggles.removeFromLeft (tw).reduced (3, 0));
-        chokeBox.setBounds (toggles.removeFromLeft (juce::jmax (tw, 92)).reduced (3, 0));
-        normalizeButton.setBounds (toggles.removeFromLeft (juce::jmax (tw, 96)).reduced (3, 0));
+        // the keys in one row on the left, a little smaller
+        auto toggles = s.removeFromTop (28);
+        for (auto [t, w] : std::initializer_list<std::pair<juce::Component*, int>> {
+                 { &loopButton, 60 }, { &reverseButton, 80 }, { &gateButton, 60 }, { &muteButton, 60 } })
+            t->setBounds (toggles.removeFromLeft (w).reduced (2, 0));
+        chokeBox.setBounds (toggles.removeFromLeft (86).reduced (2, 0));
+        normalizeButton.setBounds (toggles.removeFromLeft (100).reduced (2, 0));
     }
 
     layoutPads();

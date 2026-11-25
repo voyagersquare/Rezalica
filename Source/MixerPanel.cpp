@@ -81,7 +81,8 @@ void MixerSlotView::itemDropped (const SourceDetails& d)
 //==============================================================================
 MixerStrip::MixerStrip (MixerPanel& o, RezalicaProcessor& p, int busIndex) : processor (p), bus (busIndex)
 {
-    title.setText (bus == deckChain ? juce::String ("EFFECTS") : busName (bus), juce::dontSendNotification);
+    title.setText (bus == deckChain ? juce::String ("EFFECTS") : bus >= padChainBase ? "EFFECTS  " + padLabel (bus - padChainBase) : busName (bus),
+                   juce::dontSendNotification);
     title.setFont (juce::FontOptions (13.0f, juce::Font::bold));
     title.setColour (juce::Label::textColourId, bus == 0 ? colours::accent : colours::text);
     addAndMakeVisible (title);
@@ -122,7 +123,8 @@ MixerStrip::MixerStrip (MixerPanel& o, RezalicaProcessor& p, int busIndex) : pro
     fader.setDoubleClickReturnValue (true, 0.0);
     addAndMakeVisible (fader);
 
-    for (int s = 0; s < MixerBus::numSlots; ++s)
+    const int slotCount = bus >= padChainBase ? MixerBus::maxSlots : MixerBus::numSlots; // a pad has 6
+    for (int s = 0; s < slotCount; ++s)
     {
         slots.push_back (std::make_unique<MixerSlotView> (o, bus, s));
         slots.back()->setTooltip ("Drag an effect here from BROWSER > PLUGINS. Click: open it, right-click: bypass / remove / choose");
@@ -136,9 +138,9 @@ MixerStrip::MixerStrip (MixerPanel& o, RezalicaProcessor& p, int busIndex) : pro
         rz::setLearnId (muteButton, prefix + ".mute");
         rz::setLearnId (soloButton, prefix + ".solo");
     }
-    if (bus == deckChain)
+    if (bus == deckChain || bus >= padChainBase)
     {
-        // the DECK's effects: only the 4 slots (its volume is on the deck)
+        // the DECK's / a pad's effects: only the slots (the volume is the deck's / the pad's GAIN)
         for (auto* c : std::initializer_list<juce::Component*> { &muteButton, &soloButton, &fader, &meter })
             c->setVisible (false);
     }
@@ -147,7 +149,7 @@ MixerStrip::MixerStrip (MixerPanel& o, RezalicaProcessor& p, int busIndex) : pro
 void MixerStrip::refresh()
 {
     auto& b = processor.getBus (bus);
-    if (bus == deckChain) { for (auto& s : slots) s->repaint(); return; }
+    if (bus == deckChain || bus >= padChainBase) { for (auto& s : slots) s->repaint(); return; }
     muteButton.setToggleState (b.mute.load(), juce::dontSendNotification);
     soloButton.setToggleState (b.solo.load(), juce::dontSendNotification);
     if (bus != 0 && ! fader.isMouseButtonDown())
@@ -187,6 +189,16 @@ void MixerStrip::resized()
         fader.setBounds (right);
         b.removeFromRight (6);
     }
+    if (bus >= padChainBase)
+    {
+        // a pad: 6 slots in 2 columns x 3 rows
+        const int rows = 3, gap = 6;
+        const int sh = juce::jmin (36, (b.getHeight() - (rows - 1) * gap) / rows);
+        const int sw = (b.getWidth() - gap) / 2;
+        for (int i = 0; i < (int) slots.size(); ++i)
+            slots[(size_t) i]->setBounds (b.getX() + (i % 2) * (sw + gap), b.getY() + (i / 2) * (sh + gap), sw, sh);
+        return;
+    }
     const int sh = juce::jmin (30, (b.getHeight() - 3 * 4) / MixerBus::numSlots);
     for (auto& s : slots)
     {
@@ -221,6 +233,20 @@ MixerPanel::~MixerPanel()
 }
 
 void MixerPanel::closeAllEditors() { editors.clear(); }
+
+void MixerStrip::setBus (int b)
+{
+    if (b == bus) return;
+    bus = b;
+    title.setText (bus >= padChainBase ? "EFFECTS  " + padLabel (bus - padChainBase) : busName (bus), juce::dontSendNotification);
+    for (auto& s : slots) s->setBus (b);
+    repaint();
+}
+
+void MixerPanel::showChain (int chain)
+{
+    for (auto& s : strips) s->setBus (chain);
+}
 
 void MixerPanel::changeListenerCallback (juce::ChangeBroadcaster*)
 {

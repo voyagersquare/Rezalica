@@ -2520,6 +2520,98 @@ int main (int argc, char** argv)
         check (recordedC, "MIDI KEYS with a scale: C# is played and recorded as C (C major)");
     }
 
+    {
+        // a pad's own effects: they process only that pad, and a plug-in with latency on one pad
+        // keeps every pad (and the metronome) in time
+        struct Gain : public juce::AudioProcessor
+        {
+            explicit Gain (float g, int latency = 0)
+                : juce::AudioProcessor (BusesProperties().withInput ("In", juce::AudioChannelSet::stereo()).withOutput ("Out", juce::AudioChannelSet::stereo())), gain (g)
+            { setLatencySamples (latency); line.setSize (2, juce::jmax (1, latency)); line.clear(); }
+            float gain; juce::AudioBuffer<float> line; int pos = 0;
+            const juce::String getName() const override { return "Gain"; }
+            void prepareToPlay (double, int) override {}
+            void releaseResources() override {}
+            void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer&) override
+            {
+                b.applyGain (gain);
+                const int L = getLatencySamples();
+                if (L <= 0) return;
+                for (int i = 0; i < b.getNumSamples(); ++i)
+                {
+                    for (int ch = 0; ch < 2; ++ch) { const float in = b.getSample (ch, i); b.setSample (ch, i, line.getSample (ch, pos)); line.setSample (ch, pos, in); }
+                    pos = (pos + 1) % L;
+                }
+            }
+            double getTailLengthSeconds() const override { return 0.0; }
+            bool acceptsMidi() const override { return false; }
+            bool producesMidi() const override { return false; }
+            juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+            bool hasEditor() const override { return false; }
+            int getNumPrograms() override { return 1; }
+            int getCurrentProgram() override { return 0; }
+            void setCurrentProgram (int) override {}
+            const juce::String getProgramName (int) override { return {}; }
+            void changeProgramName (int, const juce::String&) override {}
+            void getStateInformation (juce::MemoryBlock&) override {}
+            void setStateInformation (const void*, int) override {}
+        };
+        auto clickFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_timing.wav");
+        auto tp = std::make_unique<RezalicaProcessor> (false);
+        auto& t = *tp;
+        t.prepareToPlay (48000.0, 512);
+        t.loadFileToPad (0, clickFile);
+        t.loadFileToPad (1, clickFile);
+        auto peakOf = [&] (int pad)
+        {
+            t.triggerPadFromUi (pad, 1.0f, true);
+            float pk = 0.0f;
+            juce::AudioBuffer<float> buf (2, 512);
+            for (int i = 0; i < 6; ++i) { juce::MidiBuffer m; buf.clear(); t.processBlock (buf, m); pk = juce::jmax (pk, buf.getMagnitude (0, 0, 512)); }
+            t.triggerPadFromUi (pad, 0.0f, false);
+            for (int i = 0; i < 20; ++i) { juce::MidiBuffer m; buf.clear(); t.processBlock (buf, m); }
+            return pk;
+        };
+        const float dry0 = peakOf (0), dry1 = peakOf (1);
+        t.setSlotProcessor (rz::padChainBase + 0, 5, std::make_unique<Gain> (0.5f), nullptr); // slot 6 of pad A1
+        const float wet0 = peakOf (0), still1 = peakOf (1);
+        std::cout << "       pad effects: A1 " << dry0 << " -> " << wet0 << ", A2 " << dry1 << " -> " << still1 << "\n";
+        check (std::abs (wet0 - dry0 * 0.5f) < dry0 * 0.05f && std::abs (still1 - dry1) < dry1 * 0.05f && t.padHasEffects (0) && ! t.padHasEffects (1),
+               "a pad's own effect processes only that pad");
+
+        // latency 1000 on pad A1's chain: A1 (with it) and A2 (without) still sound together with the metronome
+        t.setSlotProcessor (rz::padChainBase + 0, 5, std::make_unique<Gain> (1.0f, 1000), nullptr);
+        auto& sq = t.getSequencer();
+        sq.bpm = 96.0f;
+        auto onset = [&] (int pad, bool metro)
+        {
+            for (int p2 = 0; p2 < 2; ++p2)
+                for (int st = 0; st < 32; ++st) sq.setStep (0, p2, st, p2 == pad && st % 4 == 0 ? 127 : 0);
+            sq.metronome = metro;
+            sq.metronomeLevel = 1.0f;
+            juce::AudioBuffer<float> buf (2, 512);
+            long long pos = 0; int found = -1;
+            sq.playPattern();
+            while (pos < 60000 && found < 0)
+            {
+                juce::MidiBuffer m; buf.clear(); t.processBlock (buf, m);
+                for (int i = 0; i < 512 && found < 0; ++i)
+                    if (pos + i > 15000 && std::abs (buf.getSample (0, i)) > 0.05f) found = (int) (pos + i);
+                pos += 512;
+            }
+            sq.stopPlayback(); sq.stopSound = 2;
+            juce::AudioBuffer<float> fl (2, 512);
+            for (int k = 0; k < 120; ++k) { juce::MidiBuffer m; fl.clear(); t.processBlock (fl, m); }
+            return found;
+        };
+        const int a = onset (0, false), b = onset (1, false), c = onset (-1, true);
+        std::cout << "       pad latency 1000: A1 " << a << ", A2 " << b << ", click " << c << "\n";
+        check (std::abs (a - b) <= 2 && std::abs (a - c) <= 2 && std::abs (a - 31000) <= 2,
+               "a pad effect with latency: all pads and the metronome stay together");
+        t.clearSlot (rz::padChainBase + 0, 5);
+        check (! t.padHasEffects (0) && rz::busName (rz::padChainBase + 0) == "PAD A1", "removing the effect; chain name");
+    }
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

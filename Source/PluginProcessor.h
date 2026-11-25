@@ -236,6 +236,13 @@ public:
     // ---- mixer: BUS A-D + MASTER, 4 third-party effect slots each (message thread API) ----
     /** 0 = MASTER, 1..4 = BUS A..D, rz::deckChain = the DECK's effects. */
     rz::MixerBus& getBus (int bus) noexcept { return buses[(size_t) juce::jlimit (0, rz::numEffectChains - 1, bus)]; }
+    /** Message thread: does this pad have effects of its own? */
+    bool padHasEffects (int pad) const
+    {
+        for (auto& slot : buses[(size_t) (rz::padChainBase + juce::jlimit (0, rz::numPads - 1, pad))].slots)
+            if (slot.owned != nullptr) return true;
+        return false;
+    }
     /** Loads a plug-in (from the scanned list) into a slot; returns false with an error message. */
     bool loadPluginIntoSlot (int bus, int slot, const juce::PluginDescription&, juce::String& error);
     /** Puts any processor into a slot (prepared here); desc may be null. */
@@ -389,6 +396,9 @@ private:
     std::array<juce::AudioBuffer<float>, rz::numBuses> busBuffers;   // what each mixer bus collects this block
     std::array<rz::MixerBus, rz::numEffectChains> buses; // the mixer buses + the DECK's effect slots
     juce::AudioBuffer<float> deckBuffer;                 // the DECK this block, through its effects
+    std::array<juce::AudioBuffer<float>, rz::numPads> padBuffers;   // pads with their own effects play here first
+    std::array<bool, rz::numPads> padHasFx {};                      // audio thread
+    std::array<rz::LatencyDelay, rz::numBuses> busPreDelay;          // the pads without effects wait for the ones with
     void processEffectChain (rz::MixerBus& bus, juce::AudioBuffer<float>& data, int numSamples);
     int preparedBlockSize = 512;
     void prepareSlot (rz::MixerSlot&);

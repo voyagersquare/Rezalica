@@ -137,6 +137,14 @@ U MELODIC dijelu piano rolla, u gornjem redu: **tonalitet** (C … B) i **skala*
 - **TO SCALE:** označene note (ili sve) prebaci na najbliži ton skale.
 - Tonalitet, skala i akord spremaju se s projektom.
 
+## Efekti po padu (EFFECTS)
+
+Desno od gumba pada (GAIN … END) je **EFFECTS** s **6 slotova** za odabrani pad – svaki pad ima svojih 6 efekata,
+uz efekte busova u mikseru. Povuci plugin iz **BROWSER > PLUGINS** u slot; klik otvara plugin, desni klik: bypass /
+ukloni / odaberi. Odabereš drugi pad – EFFECTS pokazuje njegove efekte. Padovi s efektima imaju oznaku **FX**.
+Pad svira kroz svoje efekte, zatim kroz svoj bus i MASTER; kašnjenje pluginova (latency) se izjednačava, pa svi padovi
+i metronom ostaju u ritmu. Efekti se spremaju s projektom.
+
 ## Choke grupe za više padova
 
 Odaberi više padova (Shift + klik, npr. A1, A2, A3), desni klik na bilo koji od njih → **Choke group (3 selected pads)** →

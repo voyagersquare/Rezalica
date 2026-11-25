@@ -340,7 +340,8 @@ void SamplerEngine::render (std::array<juce::AudioBuffer<float>, numBuses>& buse
             const int bank = v.getPad() / padsPerBank;
             if (bankMute[(size_t) bank].load() && ! v.isReleasing())
                 v.fastStop(); // muting a bank also silences what is playing in it
-            v.render (buses[(size_t) busForPad (v.getPad())], startSample, numSamples, bankGain[(size_t) bank].load());
+            auto* own = padTarget[(size_t) v.getPad()];   // a pad with its own effects: into its buffer
+            v.render (own != nullptr ? *own : buses[(size_t) busForPad (v.getPad())], startSample, numSamples, bankGain[(size_t) bank].load());
         }
     previewVoice.render (buses[0], startSample, numSamples); // browser preview / lazy chop: straight to MASTER
 }

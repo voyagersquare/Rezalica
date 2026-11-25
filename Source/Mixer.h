@@ -49,15 +49,17 @@ struct LatencyDelay
     }
 };
 
-/** BUS A-D and MASTER: 4 effect slots, a fader, mute / solo and a level meter. */
+/** BUS A-D and MASTER: 4 effect slots, a fader, mute / solo and a level meter.
+    (The same holds the DECK's effects and every pad's own 6 effects.) */
 struct MixerBus
 {
-    static constexpr int numSlots = 4;
+    static constexpr int numSlots = 4;   // the mixer's buses and the DECK
+    static constexpr int maxSlots = 6;   // a pad's own effects
     std::atomic<float> gainDb { 0.0f };   // the MASTER fader is the "master" parameter instead
     std::atomic<bool> mute { false }, solo { false };
     std::atomic<float> peak { 0.0f };
     float lastGain = 1.0f;
-    std::array<MixerSlot, numSlots> slots;
+    std::array<MixerSlot, maxSlots> slots;
     juce::SpinLock lock;
     int latency = 0;          // audio thread: the delay of its active plug-ins (samples)
     LatencyDelay compensation; // audio thread: lines this bus up with the slowest one
@@ -67,6 +69,7 @@ inline juce::String busName (int bus)
 {
     if (bus == 0) return "MASTER";
     if (bus == deckChain) return "DECK";
+    if (bus >= padChainBase) return "PAD " + padLabel (bus - padChainBase);
     return "BUS " + juce::String::charToString ((juce::juce_wchar) ('A' + bus - 1));
 }
 } // namespace rz

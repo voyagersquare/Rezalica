@@ -13,7 +13,8 @@ constexpr int numPads = padsPerBank * numBanks;   // 64 pads in total
 constexpr int maxVoices = 32;
 constexpr int numBuses = 5;                       // mixer: 0 = MASTER, 1..4 = BUS A..D
 constexpr int deckChain = numBuses;               // the DECK's own 4 effect slots (after the buses in the processor)
-constexpr int numEffectChains = numBuses + 1;
+constexpr int padChainBase = numBuses + 1;        // then every pad's own 6 effect slots (pad i = padChainBase + i)
+constexpr int numEffectChains = numBuses + 1 + numPads;
 
 /** "A1" ... "D16" */
 inline juce::String padLabel (int pad)
@@ -317,6 +318,8 @@ public:
     void releaseAll();
     /** Renders every voice into the mixer bus of its pad (buses[0] = MASTER). */
     void render (std::array<juce::AudioBuffer<float>, numBuses>& buses, int startSample, int numSamples);
+    /** Audio thread: a pad with its own effects plays into this buffer instead of its bus (nullptr = the bus). */
+    std::array<juce::AudioBuffer<float>*, numPads> padTarget {};
     /** The mixer bus a pad plays into: its own choice, else its bank's. */
     int busForPad (int pad) const noexcept
     {

@@ -83,7 +83,7 @@ private:
     static constexpr int logoIconSize = 50;
     juce::Image faceplate;                             // brushed silver texture, rendered on resize
     float faceplateScale = 1.0f;
-    int latencyPoll = 0;
+    int latencyPoll = 0, fxMarkTick = 0;
     int lastHardStops = 0;                       // physical pixels per point it was rendered at
     void renderFaceplate();
     void layoutComponents();
@@ -146,6 +146,7 @@ private:
                      warpButton { "WARP" }, stretchButton { "STRETCH..." };
     juce::ComboBox chokeBox;
     std::unique_ptr<rz::MixerPanel> mixer;            // BUS A-D + MASTER with third-party effects (replaces the built-in effects)
+    std::unique_ptr<rz::MixerPanel> padFx;            // the selected pad's own 6 effect slots
     std::vector<juce::Component*> builtInFxComponents();
 
     // pads

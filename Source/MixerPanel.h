@@ -21,6 +21,7 @@ public:
     void itemDragEnter (const SourceDetails&) override { dragOver = true; repaint(); }
     void itemDragExit (const SourceDetails&) override  { dragOver = false; repaint(); }
     void itemDropped (const SourceDetails&) override;
+    void setBus (int b) { bus = b; repaint(); }
 
 private:
     MixerPanel& owner;
@@ -36,6 +37,8 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void refresh();
+    /** A pad's effects: show another pad's chain. */
+    void setBus (int b);
 
 private:
     friend class MixerPanel;
@@ -67,6 +70,8 @@ public:
     void openEditor (int bus, int slot);
     void showSlotMenu (int bus, int slot, juce::Component* target);
     void closeAllEditors();
+    /** The pad-effects view: show this pad's chain (rz::padChainBase + pad). */
+    void showChain (int chain);
 
 private:
     void timerCallback() override;
