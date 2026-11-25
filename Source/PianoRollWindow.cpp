@@ -322,6 +322,26 @@ void PianoRollEditor::quantize()
     commit();
 }
 
+void PianoRollEditor::humanize (double amount)
+{
+    amount = juce::jlimit (0.0, 1.0, amount);
+    if (amount <= 0.0) return;
+    auto& rnd = juce::Random::getSystemRandom();
+    const double maxShift = 0.25 * amount;      // in steps (1/16): at 100 % up to a quarter of a step early / late
+    const int maxVel = (int) std::round (24.0 * amount);
+    const double len = patternLength();
+    pushUndo();
+    for (auto& n : notes)
+        if ((int) n.kind == getViewMode() && (selection.empty() || isSelected (n)))
+        {
+            const double shift = (rnd.nextDouble() * 2.0 - 1.0) * maxShift;
+            n.start = (float) juce::jlimit (0.0, juce::jmax (0.0, len - (double) n.length), (double) n.start + shift);
+            const int dv = maxVel > 0 ? rnd.nextInt (2 * maxVel + 1) - maxVel : 0;
+            n.velocity = (juce::uint8) juce::jlimit (1, 127, (int) n.velocity + dv);
+        }
+    commit();
+}
+
 void PianoRollEditor::transposeSelection (int semitones)
 {
     if (selection.empty()) return;
@@ -474,7 +494,7 @@ void PianoRollEditor::mouseMove (const juce::MouseEvent& e)
         }
         else
         {
-            if (tool == Tool::draw) setMouseCursor (pencilCursor());
+            if (tool == Tool::draw && ! e.mods.isShiftDown()) setMouseCursor (pencilCursor());
             else                    setMouseCursor (juce::MouseCursor::NormalCursor);
         }
     }
@@ -603,8 +623,8 @@ void PianoRollEditor::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // empty space
-    if (tool == Tool::draw)
+    // empty space: the pencil draws; with no tool, or with Shift held, a frame selects notes
+    if (tool == Tool::draw && ! e.mods.isShiftDown())
     {
         pushUndo();
         PianoNote n;
@@ -1337,15 +1357,29 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
     midiKeysButton.onClick = [this] { processor.chromaticPad = midiKeysButton.getToggleState() ? editor.getTargetPad() : -1; };
 
     // tools
-    for (auto* b : { &drawButton, &selectButton })
+    toggle (pencilButton, colours::accent);
+    pencilButton.setTooltip ("Pencil (B): on = click to draw a note, drag to set its length.  "
+                             "Shift+drag = select notes (frame).  Off = select and move notes only");
+    pencilButton.onClick = [this]
     {
-        b->setRadioGroupId (5302);
-        toggle (*b, colours::accent);
-    }
-    drawButton.setTooltip ("Pencil (B): click to draw a note, drag to set its length");
-    selectButton.setTooltip ("Select (B): drag a frame to select notes, drag notes to move them");
-    drawButton.onClick = [this] { editor.tool = PianoRollEditor::Tool::draw; };
-    selectButton.onClick = [this] { editor.tool = PianoRollEditor::Tool::select; };
+        editor.tool = pencilButton.getToggleState() ? PianoRollEditor::Tool::draw : PianoRollEditor::Tool::select;
+        editor.grabKeyboardFocus();
+    };
+
+    humanizeButton.setWantsKeyboardFocus (false);
+    humanizeButton.setTooltip ("Humanize the selected notes (or all): they move a little off the grid and their velocities vary, "
+                               "like played by hand. The slider sets how much");
+    humanizeButton.onClick = [this] { editor.humanize (humanizeSlider.getValue() / 100.0); };
+    addAndMakeVisible (humanizeButton);
+    humanizeSlider.setSliderStyle (juce::Slider::LinearBar);
+    humanizeSlider.setRange (0.0, 100.0, 1.0);
+    humanizeSlider.textFromValueFunction = [] (double v) { return "Amount " + juce::String ((int) v) + " %"; };
+    humanizeSlider.setValue (30.0, juce::dontSendNotification);
+    humanizeSlider.updateText();
+    humanizeSlider.setWantsKeyboardFocus (false);
+    humanizeSlider.setColour (juce::Slider::trackColourId, colours::accent2.withAlpha (0.45f));
+    humanizeSlider.setTooltip ("Humanize amount: 100 % = notes up to a quarter step (1/64) early or late, velocity +-24");
+    addAndMakeVisible (humanizeSlider);
 
     snapBox.addItem ("Snap 1/4", 1);
     snapBox.addItem ("Snap 1/8", 2);
@@ -1391,7 +1425,7 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
     addAndMakeVisible (velocitySlider);
 
     infoLabel.setText ("KEYS: melodic A W S E D F T G Z H U J K = notes, Y / X = octave down / up; drums 1-4 Q-R A-F Z-V = pads   |   "
-                       "Ruler: click = jump, hold + drag = scrub  STOP x2 = cut  |  Click = note  edge = resize  right-click = delete  Ctrl+drag = copy  wheel / Ctrl = zoom  Ctrl+Z/Y C/V/D  Del",
+                       "Ruler: click = jump, hold + drag = scrub  STOP x2 = cut  |  Pencil: click = note  Shift+drag = select  edge = resize  right-click = delete  Ctrl+drag = copy  wheel / Ctrl = zoom  Ctrl+Z/Y C/V/D  Del",
                        juce::dontSendNotification);
     infoLabel.setColour (juce::Label::textColourId, colours::dim);
     infoLabel.setFont (juce::FontOptions (11.0f));
@@ -1457,8 +1491,7 @@ void PianoRollPanel::syncControls()
     toScaleButton.setEnabled (! scales::isChromatic (processor.scaleType.load()));
     keyBox.setEnabled (! scales::isChromatic (processor.scaleType.load()));
 
-    drawButton.setToggleState (editor.tool == PianoRollEditor::Tool::draw, juce::dontSendNotification);
-    selectButton.setToggleState (editor.tool == PianoRollEditor::Tool::select, juce::dontSendNotification);
+    pencilButton.setToggleState (editor.tool == PianoRollEditor::Tool::draw, juce::dontSendNotification);
     undoButton.setEnabled (editor.canUndo());
     redoButton.setEnabled (editor.canRedo());
 }
@@ -1516,11 +1549,12 @@ void PianoRollPanel::resized()
 
     b.removeFromTop (6);
     auto row2 = b.removeFromTop (28);
-    drawButton.setBounds (row2.removeFromLeft (66)); row2.removeFromLeft (4);
-    selectButton.setBounds (row2.removeFromLeft (72)); row2.removeFromLeft (8);
+    pencilButton.setBounds (row2.removeFromLeft (40)); row2.removeFromLeft (8);
     snapBox.setBounds (row2.removeFromLeft (100)); row2.removeFromLeft (4);
     quantizeButton.setBounds (row2.removeFromLeft (84)); row2.removeFromLeft (8);
-    velocitySlider.setBounds (row2.removeFromLeft (126)); row2.removeFromLeft (8);
+    velocitySlider.setBounds (row2.removeFromLeft (118)); row2.removeFromLeft (8);
+    humanizeButton.setBounds (row2.removeFromLeft (88)); row2.removeFromLeft (4);
+    humanizeSlider.setBounds (row2.removeFromLeft (112)); row2.removeFromLeft (8);
     undoButton.setBounds (row2.removeFromLeft (52)); row2.removeFromLeft (4);
     redoButton.setBounds (row2.removeFromLeft (52)); row2.removeFromLeft (8);
     clearButton.setBounds (row2.removeFromLeft (62)); row2.removeFromLeft (4);
@@ -1540,3 +1574,34 @@ void PianoRollPanel::resized()
 }
 
 } // namespace rz
+
+void rz::PianoRollPanel::PencilButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
+{
+    auto& lf = getLookAndFeel();
+    lf.drawButtonBackground (g, *this, findColour (getToggleState() ? buttonOnColourId : buttonColourId), highlighted, down);
+
+    // a pencil, pointing down-left
+    auto r = getLocalBounds().toFloat().reduced (getHeight() * 0.2f).withSizeKeepingCentre (getHeight() * 0.62f, getHeight() * 0.62f);
+    const float s = r.getWidth() / 24.0f;
+    auto pt = [&] (float x, float y) { return juce::Point<float> (r.getX() + x * s, r.getY() + y * s); };
+    juce::Path body;
+    body.startNewSubPath (pt (5, 14)); body.lineTo (pt (16, 3)); body.lineTo (pt (21, 8)); body.lineTo (pt (10, 19)); body.closeSubPath();
+    juce::Path tip;
+    tip.startNewSubPath (pt (2, 22)); tip.lineTo (pt (5, 14)); tip.lineTo (pt (10, 19)); tip.closeSubPath();
+    juce::Path eraser;
+    eraser.startNewSubPath (pt (16, 3)); eraser.lineTo (pt (18.5f, 0.5f)); eraser.lineTo (pt (23.5f, 5.5f)); eraser.lineTo (pt (21, 8)); eraser.closeSubPath();
+    const bool on = getToggleState();
+    const auto ink = juce::Colours::black.withAlpha (0.85f);
+    g.setColour (on ? juce::Colour (0xffffc94a) : juce::Colour (0xffd9c27a));
+    g.fillPath (body);
+    g.setColour (juce::Colour (0xffe8cfa0));
+    g.fillPath (tip);
+    g.setColour (juce::Colour (0xffff8fa3));
+    g.fillPath (eraser);
+    g.setColour (ink);
+    const float w = juce::jmax (1.0f, 1.3f * s);
+    g.strokePath (body, juce::PathStrokeType (w));
+    g.strokePath (tip, juce::PathStrokeType (w));
+    g.strokePath (eraser, juce::PathStrokeType (w));
+    g.fillEllipse (juce::Rectangle<float> (3.2f * s, 3.2f * s).withCentre (pt (2.8f, 20.6f)));
+}

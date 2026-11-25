@@ -18,12 +18,13 @@ class PianoRollEditor : public juce::Component,
                         private juce::ScrollBar::Listener
 {
 public:
+    /** draw = the pencil is on; select = no tool (click / Shift+drag selects, notes can be moved). */
     enum class Tool { draw, select };
 
     explicit PianoRollEditor (RezalicaProcessor& p);
 
     // settings from the toolbar
-    Tool tool = Tool::draw;
+    Tool tool = Tool::select;       // the piano roll opens with no tool: the pencil is switched on by its button
     double snap = 1.0;              // in steps (1 = 1/16), 0 = off
     int newVelocity = 100;
     std::function<void()> onChanged; // after every edit (toolbar refresh)
@@ -34,6 +35,9 @@ public:
     bool canUndo() const { return ! undoStack.empty(); }
     bool canRedo() const { return ! redoStack.empty(); }
     void quantize();                // selected notes (or all) to the snap grid
+    /** HUMANIZE: the selected notes (or all) move a little off the grid and get slightly different
+        velocities, like a drummer playing by hand. amount 0 .. 1 (1 = up to +-1/4 step, +-24 velocity). */
+    void humanize (double amount);
     void deleteSelected();
     void selectAll();
     void copySelection();
@@ -165,7 +169,10 @@ public:
     void focusEditor() { editor.grabKeyboardFocus(); }
     bool forwardKeyPressed (const juce::KeyPress& k) { return editor.keyPressed (k); }
     bool forwardKeyState (bool down) { return editor.keyStateChanged (down); }
-    void showDrums() { editor.refreshFromSequencer(); editor.setViewMode (NoteClip::drum); syncControls(); }
+    void showDrums() { editor.refreshFromSequencer(); editor.setViewMode (NoteClip::drum); noTool(); }
+    /** Entering the piano roll: no tool is chosen (the pencil is off). */
+    void noTool() { editor.tool = PianoRollEditor::Tool::select; syncControls(); }
+    void visibilityChanged() override { if (isShowing()) noTool(); }
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -187,7 +194,15 @@ private:
     // MELODIC: key + scale, the chord a drawn note makes, notes to the scale
     juce::ComboBox keyBox, scaleBox, chordBox;
     juce::TextButton toScaleButton { "TO SCALE" };
-    juce::TextButton drawButton { "DRAW" }, selectButton { "SELECT" };
+    /** The pencil key: a toggle button that shows a pencil icon. */
+    struct PencilButton : public juce::TextButton
+    {
+        PencilButton() : juce::TextButton ("") {}
+        void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+    };
+    PencilButton pencilButton;
+    juce::TextButton humanizeButton { "HUMANIZE" };
+    juce::Slider humanizeSlider;
     juce::ComboBox snapBox;
     juce::TextButton quantizeButton { "QUANTIZE" }, undoButton { "UNDO" }, redoButton { "REDO" }, clearButton { "CLEAR" }, copyNextButton { "COPY TO NEXT PATTERN" };
     juce::Slider velocitySlider;
