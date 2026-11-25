@@ -279,6 +279,9 @@ public:
     juce::String getInstrumentName (int pad) const;
     bool padHasInstrument (int pad) const { return getInstrument (pad) != nullptr; }
     int countInstruments() const;
+    /** The piano roll's MELODIC pad of the current pattern becomes this pad when it plays nothing now
+        (no sample, no instrument). Returns true when it changed. */
+    bool aimMelodicAt (int pad);
     juce::ChangeBroadcaster instrumentsChanged;
     juce::SharedResourcePointer<rz::PluginHost> pluginHost;
 

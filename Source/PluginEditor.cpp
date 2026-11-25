@@ -697,6 +697,8 @@ void RezalicaEditor::setBank (int bank)
 void RezalicaEditor::selectPad (int pad, bool grabFocus)
 {
     processor.selectedPad = pad;
+    if (processor.padHasInstrument (pad))
+        processor.aimMelodicAt (pad); // an instrument pad: the piano roll plays it (when its MELODIC pad was empty)
     if (padFx != nullptr) padFx->showChain (rz::padChainBase + pad); // EFFECTS shows this pad's chain
     if (pad / rz::padsPerBank != processor.currentBank.load())
         setBank (pad / rz::padsPerBank);
@@ -832,6 +834,7 @@ void RezalicaEditor::loadInstrumentToPad (int pad, const juce::String& identifie
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "VST instrument", desc.name + ": " + error);
         return;
     }
+    processor.aimMelodicAt (pad); // the piano roll plays it (when its MELODIC pad was empty)
     selectPad (pad);
     openInstrumentWindow (pad);
 }

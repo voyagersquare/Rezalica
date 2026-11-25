@@ -571,7 +571,11 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                 ++padNoteMapChanged;
             }
 
-        const int chromatic = chromaticPad.load();
+        int chromatic = chromaticPad.load();
+        // the selected pad has a VST instrument: the MIDI keyboard plays it (like an armed track in a DAW)
+        if (const int sel = selectedPad.load(); sel >= 0 && sel < rz::numPads && instruments[(size_t) sel].active.load())
+            chromatic = sel;
+        const bool wasMelodic = m.isNoteOff() && melodicPlaying[(size_t) m.getNoteNumber()] >= 0;
 
         if (m.isNoteOn() && chromatic >= 0 && chromatic < rz::numPads)
         {
@@ -581,7 +585,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             addTaggedEvent (offset, evOnTag, chromatic, m.getFloatVelocity(), (float) (note - 60), rz::Sequencer::midiTagBase + note, true);
             sequencer.recordPianoNoteOn (note, m.getFloatVelocity(), offset, true);
         }
-        else if (m.isNoteOff() && chromatic >= 0 && chromatic < rz::numPads)
+        else if (m.isNoteOff() && ((chromatic >= 0 && chromatic < rz::numPads) || wasMelodic))
         {
             const int note = melodicPlaying[(size_t) m.getNoteNumber()] >= 0 ? melodicPlaying[(size_t) m.getNoteNumber()] : m.getNoteNumber();
             melodicPlaying[(size_t) m.getNoteNumber()] = -1;
@@ -2883,6 +2887,21 @@ juce::String RezalicaProcessor::getInstrumentName (int pad) const
 {
     if (auto* p = getInstrument (pad)) return p->getName();
     return {};
+}
+
+bool RezalicaProcessor::aimMelodicAt (int pad)
+{
+    if (pad < 0 || pad >= rz::numPads) return false;
+    const int pattern = sequencer.currentPattern.load();
+    auto clip = sequencer.getClip (pattern);
+    if (clip == nullptr || clip->targetPad == pad) return false;
+    const int t = juce::jlimit (0, rz::numPads - 1, clip->targetPad);
+    if (engine.getPadSample (t) != nullptr || padHasInstrument (t)) return false; // it plays something: leave it
+    auto c = clip->copy();
+    c->targetPad = pad;
+    sequencer.setClip (pattern, c);
+    if (chromaticPad.load() >= 0) chromaticPad = pad; // MIDI KEYS follow
+    return true;
 }
 
 int RezalicaProcessor::countInstruments() const

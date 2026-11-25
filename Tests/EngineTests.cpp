@@ -2688,6 +2688,28 @@ int main (int argc, char** argv)
         check (block() < 1.0e-6f, "the key's note-off stops it");
         t.chromaticPad = -1;
 
+        // the selected pad has the instrument: the MIDI keyboard plays it even without MIDI KEYS
+        // (and with MIDI KEYS on another, empty pad)
+        for (int keysPad : { -1, 0 })
+        {
+            t.chromaticPad = keysPad;
+            t.selectedPad = 5;
+            juce::MidiBuffer k2;
+            k2.addEvent (juce::MidiMessage::noteOn (1, 64, (juce::uint8) 100), 0);
+            { juce::AudioBuffer<float> buf (2, 512); buf.clear(); t.processBlock (buf, k2); }
+            const bool heard = synth->notesSeen.back() == 64 && block() > 0.3f;
+            t.selectedPad = 0; // selecting another pad while the key is held: its note-off still reaches the instrument
+            juce::MidiBuffer u2;
+            u2.addEvent (juce::MidiMessage::noteOff (1, 64), 0);
+            { juce::AudioBuffer<float> buf (2, 512); buf.clear(); t.processBlock (buf, u2); }
+            check (heard && block() < 1.0e-6f, keysPad < 0 ? "selected instrument pad: the MIDI keyboard plays it" : "... also when MIDI KEYS points at an empty pad");
+        }
+        t.chromaticPad = -1;
+
+        // the piano roll's MELODIC pad (empty) follows the instrument pad
+        check (t.aimMelodicAt (5) && t.getSequencer().getClip (t.getSequencer().currentPattern.load())->targetPad == 5,
+               "the piano roll's empty MELODIC pad becomes the instrument pad");
+
         // STOP twice: everything stops
         t.triggerPadFromUi (5, 1.0f, true);
         block();

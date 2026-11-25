@@ -158,6 +158,8 @@ i metronom ostaju u ritmu. Efekti se spremaju s projektom.
 - Zvuk ide kroz **GAIN, PAN, MUTE** pada, njegove **EFFECTS** (6 slotova) i bus, kao sample. STOP dvaput gasi sve note.
 - Klik na ekran valnog oblika (ili desni klik na pad > Open instrument window) otvara instrument; desni klik na pad > Replace / Remove.
 - Instrument i njegove postavke spremaju se u projekt. Najviše 16 padova s instrumentom.
+- Kad je **odabran pad s instrumentom**, MIDI klavijatura automatski svira taj instrument (kao "armed" kanal u DAW-u).
+  Ako Piano Roll (MELODIC) svira prazan pad, prebaci se na pad s instrumentom.
 
 ## Choke grupe za više padova
 
@@ -324,7 +326,7 @@ Gumb **DECK** (uz SONG) otvara gramofon u donjem dijelu prozora.
 
 1. Na GitHubu otvori **Actions**, pa zadnji uspješni **Build**.
 2. Pod **Artifacts** preuzmi `Rezalica-Setup-Windows` i raspakiraj ga.
-3. Pokreni `Rezalica-Setup-0.2.6.exe`. Instalacija stavlja program u `Program Files\Rezalica`,
+3. Pokreni `Rezalica-Setup-0.2.7.exe`. Instalacija stavlja program u `Program Files\Rezalica`,
    dodaje ga u Start izbornik i (ako je kvačica uključena) ikonu na radnu površinu.
 4. Deinstalacija: *Postavke > Aplikacije* ili *Upravljačka ploča > Programi*.
 
