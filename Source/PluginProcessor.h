@@ -254,6 +254,19 @@ public:
         (the mixer and the DECK's effects), keyed by its owner. Message thread. */
     std::map<const void*, std::function<void()>> pluginsAboutToChange;
     juce::ChangeBroadcaster mixerChanged;
+
+    // ---- VST instruments on pads: the pad's notes (pads, step sequencer, piano roll, MIDI keys) play the
+    //      instrument instead of a sample; its sound goes through the pad's EFFECTS and bus like a sample ----
+    static constexpr int maxInstruments = 16;
+    bool loadInstrument (int pad, const juce::PluginDescription&, juce::String& error);
+    /** Puts any processor on a pad as its instrument (prepared here); desc may be null (then not saved). */
+    bool setInstrumentProcessor (int pad, std::unique_ptr<juce::AudioProcessor>, const juce::PluginDescription* desc, juce::String& error);
+    void clearInstrument (int pad);
+    juce::AudioProcessor* getInstrument (int pad) const;
+    juce::String getInstrumentName (int pad) const;
+    bool padHasInstrument (int pad) const { return getInstrument (pad) != nullptr; }
+    int countInstruments() const;
+    juce::ChangeBroadcaster instrumentsChanged;
     juce::SharedResourcePointer<rz::PluginHost> pluginHost;
 
     // ---- master chain (EQ / compressor / limiter on the output) ----
@@ -398,6 +411,29 @@ private:
     juce::AudioBuffer<float> deckBuffer;                 // the DECK this block, through its effects
     std::array<juce::AudioBuffer<float>, rz::numPads> padBuffers;   // pads with their own effects play here first
     std::array<bool, rz::numPads> padHasFx {};                      // audio thread
+
+    struct PadInstrument
+    {
+        std::unique_ptr<juce::AudioProcessor> owned;    // message thread
+        juce::AudioProcessor* live = nullptr;           // what the audio thread runs (guarded by lock)
+        juce::PluginDescription desc;
+        bool hasDesc = false;
+        juce::SpinLock lock;
+        std::atomic<bool> active { false };             // quick check for the audio thread
+        juce::AudioBuffer<float> scratch;
+        juce::MidiBuffer midi;                          // audio thread: this block's notes
+        std::array<std::pair<int, int>, 64> tagged {};  // audio thread: piano roll / MIDI keys notes (tag, note) that sound
+        std::array<juce::uint8, 128> held {};           // audio thread: notes that sound
+        bool allOff = false;                            // audio thread: send "all notes off" this block
+    };
+    std::array<PadInstrument, rz::numPads> instruments;
+    void prepareInstrument (PadInstrument&);
+    /** Audio thread: does this event go to the pad's instrument? (then it is turned into MIDI) */
+    bool sendToInstrument (const Event& e);
+    void instrumentsAllNotesOff();
+    void renderInstruments (int numSamples);
+    juce::ValueTree instrumentsToValueTree() const;
+    void instrumentsFromValueTree (const juce::ValueTree&);
     std::array<rz::LatencyDelay, rz::numBuses> busPreDelay;          // the pads without effects wait for the ones with
     void processEffectChain (rz::MixerBus& bus, juce::AudioBuffer<float>& data, int numSamples);
     int preparedBlockSize = 512;

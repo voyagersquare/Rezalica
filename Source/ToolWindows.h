@@ -91,7 +91,7 @@ private:
     struct PluginRows : public juce::ListBoxModel
     {
         struct Row { bool folder = false, back = false; juce::String maker; int count = 0; int effect = -1; };
-        juce::Array<juce::PluginDescription> effects;
+        juce::Array<juce::PluginDescription> effects;   // effects and instruments (isInstrument)
         juce::String openMaker;                     // empty: the list of makers
         std::vector<Row> rows;
         std::function<void()> onChanged;
@@ -155,7 +155,8 @@ private:
             g.drawText (d.name, 18, 0, w - 70, h, juce::Justification::centredLeft, true);
             g.setColour (colours::dim);
             g.setFont (juce::FontOptions (10.0f));
-            g.drawText (d.pluginFormatName, w - 52, 0, 42, h, juce::Justification::centredRight);
+            g.setColour (d.isInstrument ? juce::Colour (0xffe0a020) : colours::dim);
+            g.drawText (d.isInstrument ? juce::String ("VSTi") : d.pluginFormatName, w - 52, 0, 42, h, juce::Justification::centredRight);
         }
 
         void listBoxItemClicked (int row, const juce::MouseEvent&) override
@@ -171,7 +172,7 @@ private:
             if (sel.isEmpty() || sel[0] >= (int) rows.size()) return {};
             const auto& r = rows[(size_t) sel[0]];
             if (r.effect < 0 || r.effect >= effects.size()) return {}; // folders are not dragged
-            return "rzplugin:" + effects[r.effect].createIdentifierString();
+            return (effects[r.effect].isInstrument ? "rzinstrument:" : "rzplugin:") + effects[r.effect].createIdentifierString();
         }
     } pluginRows;
     juce::ListBox pluginList { "plugins", &pluginRows };

@@ -29,6 +29,9 @@ public:
     std::function<void()> onClearSelected, onDeselect;
     /** Choke group for this pad, or for all selected pads when several are selected (0 = none). */
     std::function<void (int pad, int group)> onChokeGroup;
+    /** VST instruments: load one onto the pad (plug-in identifier), open its window, remove it. */
+    std::function<void (int pad, const juce::String& identifier)> onInstrument;
+    std::function<void (int pad)> onOpenInstrument, onRemoveInstrument;
     void setMultiSelected (bool m)           { if (m != multiSelected) { multiSelected = m; repaint(); } }
 
     void setIndex (int i)                    { if (i != index) { index = i; flashLevel = 0.0f; held = false; repaint(); } }
@@ -120,6 +123,17 @@ public:
             g.drawText ("BUS " + busBadge, badge, juce::Justification::centred);
             inner.removeFromRight (36.0f);
         }
+        if (processor.padHasInstrument (index))
+        {
+            // a VST instrument plays this pad
+            auto badge = b.reduced (8.0f, 6.0f).removeFromBottom (14.0f).removeFromRight (hasFx ? 58.0f : 32.0f).removeFromLeft (32.0f);
+            g.setColour (juce::Colour (0xff7a4fd6));
+            g.fillRoundedRectangle (badge, 3.0f);
+            g.setColour (juce::Colours::white);
+            g.setFont (juce::FontOptions (9.0f, juce::Font::bold));
+            g.drawText ("VSTi", badge, juce::Justification::centred);
+            if (! hasFx) inner.removeFromRight (34.0f);
+        }
         if (hasFx)
         {
             auto badge = b.reduced (8.0f, 6.0f).removeFromBottom (14.0f).removeFromRight (22.0f);
@@ -178,10 +192,24 @@ public:
     void fileDragEnter (const juce::StringArray&, int, int) override { dragOver = true; flashLevel = 0.4f; repaint(); }
     void fileDragExit (const juce::StringArray&) override            { dragOver = false; flashLevel = 0.0f; repaint(); }
     // drag & drop from Rezalica's sample browser (description "rzfile:<path>")
-    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description.toString().startsWith ("rzfile:"); }
+    bool isInterestedInDragSource (const SourceDetails& d) override
+    {
+        const auto s = d.description.toString();
+        return s.startsWith ("rzfile:") || s.startsWith ("rzinstrument:");
+    }
     void itemDragEnter (const SourceDetails&) override { fileDragEnter ({}, 0, 0); }
     void itemDragExit (const SourceDetails&) override { fileDragExit ({}); }
-    void itemDropped (const SourceDetails& d) override { filesDropped (juce::StringArray (d.description.toString().fromFirstOccurrenceOf ("rzfile:", false, false)), 0, 0); }
+    void itemDropped (const SourceDetails& d) override
+    {
+        const auto s = d.description.toString();
+        if (s.startsWith ("rzinstrument:"))
+        {
+            dragOver = false; flashLevel = 0.0f; repaint();
+            if (onInstrument) onInstrument (index, s.fromFirstOccurrenceOf ("rzinstrument:", false, false));
+            return;
+        }
+        filesDropped (juce::StringArray (s.fromFirstOccurrenceOf ("rzfile:", false, false)), 0, 0);
+    }
 
 
     void filesDropped (const juce::StringArray& files, int, int) override
@@ -203,6 +231,23 @@ private:
             m.addSectionHeader (juce::String (multi) + " pads selected");
             m.addItem (30, "Clear all selected pads (" + juce::String (multi) + ")");
             m.addItem (31, "Deselect");
+            m.addSeparator();
+        }
+        {
+            // VST instruments
+            const bool hasInst = processor.padHasInstrument (index);
+            juce::PopupMenu inst;
+            instrumentChoices = processor.pluginHost->getInstruments();
+            for (int i = 0; i < instrumentChoices.size(); ++i)
+                inst.addItem (1000 + i, instrumentChoices[i].name + "   (" + instrumentChoices[i].manufacturerName + ")");
+            if (instrumentChoices.isEmpty())
+                inst.addItem (999, "No instruments found (BROWSER > PLUGINS > SCAN)", false);
+            m.addSubMenu (hasInst ? "Replace VST instrument" : "Load VST instrument", inst);
+            if (hasInst)
+            {
+                m.addItem (40, "Open instrument window (" + processor.getInstrumentName (index) + ")");
+                m.addItem (41, "Remove instrument");
+            }
             m.addSeparator();
         }
         m.addItem (1, "Load sample...");
@@ -274,6 +319,10 @@ private:
                 const int bus = processor.getEngine().busForPad (index);
                 setBusBadge (bus > 0 ? juce::String::charToString ((juce::juce_wchar) ('A' + bus - 1)) : juce::String());
             }
+            if (r >= 1000 && r < 1000 + instrumentChoices.size() && onInstrument)
+                onInstrument (index, instrumentChoices[r - 1000].createIdentifierString());
+            if (r == 40 && onOpenInstrument) onOpenInstrument (index);
+            if (r == 41 && onRemoveInstrument) onRemoveInstrument (index);
             if (r == 30 && onClearSelected) onClearSelected();
             if (r == 31 && onDeselect) onDeselect();
             if (r == 1 && onLoadRequest) onLoadRequest (index);
@@ -292,6 +341,7 @@ private:
     int heldIndex = 0;
     bool selected = false, held = false, dragOver = false, hasFx = false, multiSelected = false;
     juce::String busBadge;
+    juce::Array<juce::PluginDescription> instrumentChoices;
     bool armed = false;
     float flashLevel = 0.0f;
 };

@@ -50,6 +50,11 @@ private:
     void refreshFxControls();
     void refreshPadNames();
     void choosePadFile (int pad);
+    // VST instruments on pads
+    void loadInstrumentToPad (int pad, const juce::String& identifier);
+    void openInstrumentWindow (int pad);
+    struct InstrumentWindow;
+    std::unique_ptr<InstrumentWindow> instrumentWindow;
     void chooseChopFile();
     int chopModeFromBox() const;
     void toggleSequencerWindow();

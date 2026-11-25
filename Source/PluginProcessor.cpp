@@ -208,6 +208,11 @@ void RezalicaProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
             if (slot.owned != nullptr)
                 prepareSlot (slot);
     }
+    for (auto& in : instruments)
+    {
+        const juce::SpinLock::ScopedLockType sl (in.lock);
+        if (in.owned != nullptr) prepareInstrument (in);
+    }
     masterFx.prepare (sampleRate, juce::jmax (1, samplesPerBlock));
     clickLength = juce::jmax (1, (int) (sampleRate * 0.035));
     clickSamplesLeft = 0;
@@ -387,11 +392,13 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     if (const int stopKind = sequencer.stopSound.exchange (0); stopKind == 2)
     {
         engine.allNotesOff();
+        instrumentsAllNotesOff();
         clickSamplesLeft = 0;
     }
     else if (stopKind == 1)
     {
         engine.releaseAll();
+        instrumentsAllNotesOff();
     }
 
     // MIDI clock out
@@ -639,9 +646,12 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         engine.render (busBuffers, cursor, e.offset - cursor);
         cursor = e.offset;
 
+        if (e.type != evStopAll && ! padChoiceArmed.load() && ! lazyActive.load() && sendToInstrument (e))
+            continue; // a pad with a VST instrument: the note goes to the instrument
+
         switch (e.type)
         {
-            case evStopAll: engine.allNotesOff(); sequencer.internalPlay = false; break;
+            case evStopAll: engine.allNotesOff(); instrumentsAllNotesOff(); sequencer.internalPlay = false; break;
             case evOff:     engine.noteOff (e.pad, false); break;
             case evOffSeq:  engine.noteOff (e.pad, true); break;
             case evOffTag:  engine.noteOffTag (e.tag, e.flag); break;
@@ -685,6 +695,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     }
     engine.render (busBuffers, cursor, numSamples - cursor);
     engine.updatePlayPositions();
+    renderInstruments (numSamples);
 
     // DECK: its own buffer, then its effects, then MASTER (below, with the plug-in delay compensation)
     if (deckBuffer.getNumSamples() < numSamples)
@@ -1612,6 +1623,8 @@ void RezalicaProcessor::clearPad (int pad)
 
 juce::String RezalicaProcessor::getPadName (int pad) const
 {
+    if (auto* inst = getInstrument (pad))
+        return inst->getName();
     if (auto s = engine.getPadSample (pad))
         return s->name;
 
@@ -2757,6 +2770,259 @@ juce::String RezalicaProcessor::getSlotName (int busIndex, int slotIndex) const
     return {};
 }
 
+//==============================================================================
+// VST instruments on pads
+void RezalicaProcessor::prepareInstrument (PadInstrument& in)
+{
+    auto* p = in.owned.get();
+    if (p == nullptr) return;
+    const double sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
+    if (auto* inst = dynamic_cast<juce::AudioPluginInstance*> (p))
+    {
+        // no audio input, stereo out (when the instrument can do that)
+        juce::AudioProcessor::BusesLayout layout;
+        layout.outputBuses.add (juce::AudioChannelSet::stereo());
+        if (inst->checkBusesLayoutSupported (layout))
+            inst->setBusesLayout (layout);
+        else
+        {
+            layout.inputBuses.add (juce::AudioChannelSet::stereo());
+            if (inst->checkBusesLayoutSupported (layout))
+                inst->setBusesLayout (layout);
+        }
+    }
+    p->setRateAndBufferSizeDetails (sr, preparedBlockSize);
+    p->prepareToPlay (sr, preparedBlockSize);
+    const int chans = juce::jmax (2, p->getTotalNumInputChannels(), p->getTotalNumOutputChannels());
+    in.scratch.setSize (chans, juce::jmax (preparedBlockSize, 4096));
+    in.midi.ensureSize (2048);
+}
+
+bool RezalicaProcessor::loadInstrument (int pad, const juce::PluginDescription& desc, juce::String& error)
+{
+    if (pad < 0 || pad >= rz::numPads) return false;
+    if (! padHasInstrument (pad) && countInstruments() >= maxInstruments)
+    {
+        error = "At most " + juce::String (maxInstruments) + " pads can have an instrument";
+        return false;
+    }
+    auto inst = pluginHost->createInstance (desc, currentSampleRate > 0.0 ? currentSampleRate : 44100.0, preparedBlockSize, error);
+    if (inst == nullptr)
+    {
+        if (error.isEmpty()) error = "The instrument could not be loaded";
+        return false;
+    }
+    return setInstrumentProcessor (pad, std::unique_ptr<juce::AudioProcessor> (inst.release()), &desc, error);
+}
+
+bool RezalicaProcessor::setInstrumentProcessor (int pad, std::unique_ptr<juce::AudioProcessor> fresh, const juce::PluginDescription* desc, juce::String& error)
+{
+    if (pad < 0 || pad >= rz::numPads || fresh == nullptr) { error = "No instrument"; return false; }
+    for (auto& [owner, closeEditors] : pluginsAboutToChange) if (closeEditors) closeEditors();
+    auto& in = instruments[(size_t) pad];
+    std::unique_ptr<juce::AudioProcessor> old;
+    {
+        // prepared first, then swapped in while the audio thread does not use it
+        PadInstrument tmp;
+        std::swap (tmp.owned, fresh);
+        prepareInstrument (tmp);
+        const juce::SpinLock::ScopedLockType sl (in.lock);
+        old = std::move (in.owned);
+        in.owned = std::move (tmp.owned);
+        in.live = in.owned.get();
+        in.hasDesc = desc != nullptr;
+        if (desc != nullptr) in.desc = *desc;
+        std::swap (in.scratch, tmp.scratch);
+        in.midi.clear();
+        in.midi.ensureSize (2048);
+        in.held.fill (0);
+        in.tagged.fill ({ -1, -1 });
+        in.allOff = false;
+        in.active = true;
+    }
+    if (old != nullptr) old->releaseResources();
+    instrumentsChanged.sendChangeMessage();
+    return true;
+}
+
+void RezalicaProcessor::clearInstrument (int pad)
+{
+    if (pad < 0 || pad >= rz::numPads) return;
+    auto& in = instruments[(size_t) pad];
+    if (in.owned == nullptr) return;
+    for (auto& [owner, closeEditors] : pluginsAboutToChange) if (closeEditors) closeEditors();
+    std::unique_ptr<juce::AudioProcessor> old;
+    {
+        const juce::SpinLock::ScopedLockType sl (in.lock);
+        in.active = false;
+        in.live = nullptr;
+        old = std::move (in.owned);
+    }
+    if (old != nullptr) old->releaseResources();
+    instrumentsChanged.sendChangeMessage();
+}
+
+juce::AudioProcessor* RezalicaProcessor::getInstrument (int pad) const
+{
+    if (pad < 0 || pad >= rz::numPads) return nullptr;
+    return instruments[(size_t) pad].owned.get();
+}
+
+juce::String RezalicaProcessor::getInstrumentName (int pad) const
+{
+    if (auto* p = getInstrument (pad)) return p->getName();
+    return {};
+}
+
+int RezalicaProcessor::countInstruments() const
+{
+    int n = 0;
+    for (auto& in : instruments) if (in.owned != nullptr) ++n;
+    return n;
+}
+
+bool RezalicaProcessor::sendToInstrument (const Event& e)
+{
+    auto noteFor = [] (float transpose) { return juce::jlimit (0, 127, 60 + (int) std::round (transpose)); };
+    if (e.type == evOffTag)
+    {
+        // a piano roll / MIDI keys note ends: find the instrument that plays it
+        bool found = false;
+        for (int pd = 0; pd < rz::numPads; ++pd)
+        {
+            auto& in = instruments[(size_t) pd];
+            if (! in.active.load()) continue;
+            for (auto& t : in.tagged)
+                if (t.first == e.tag)
+                {
+                    const int note = t.second;
+                    t = { -1, -1 };
+                    if (in.held[(size_t) note] > 0 && --in.held[(size_t) note] == 0)
+                        in.midi.addEvent (juce::MidiMessage::noteOff (1, note), e.offset);
+                    found = true;
+                }
+        }
+        return found;
+    }
+    if (e.pad < 0 || e.pad >= rz::numPads) return false;
+    auto& in = instruments[(size_t) e.pad];
+    if (! in.active.load()) return false;
+
+    switch (e.type)
+    {
+        case evOn: case evOnSeq: case evOnTag:
+        {
+            const int note = e.type == evOnTag ? noteFor (e.transpose) : 60;   // C3 = the pad's note
+            const auto vel = (juce::uint8) juce::jlimit (1, 127, (int) std::round (e.velocity * 127.0f));
+            if (in.held[(size_t) note] > 0) // the same note again: end the old one first
+                in.midi.addEvent (juce::MidiMessage::noteOff (1, note), e.offset);
+            in.midi.addEvent (juce::MidiMessage::noteOn (1, note, vel), e.offset);
+            in.held[(size_t) note] = (juce::uint8) juce::jmin (100, in.held[(size_t) note] + 1);
+            if (e.type == evOnTag && e.tag >= 0)
+            {
+                for (auto& t : in.tagged)
+                    if (t.first < 0) { t = { e.tag, note }; break; }
+            }
+            if (e.type == evOn) { engine.lastPlayedPad = e.pad; ++engine.playedCounter; }
+            else                { engine.lastSequencedPad = e.pad; ++engine.sequencedCounter; }
+            ++engine.hitCounter[(size_t) e.pad];
+            return true;
+        }
+        case evOff: case evOffSeq:
+            if (in.held[(size_t) 60] > 0)
+            {
+                in.held[(size_t) 60] = 0;
+                in.midi.addEvent (juce::MidiMessage::noteOff (1, 60), e.offset);
+            }
+            return true;
+        default:
+            return false;
+    }
+}
+
+void RezalicaProcessor::instrumentsAllNotesOff()
+{
+    for (auto& in : instruments)
+        if (in.active.load()) in.allOff = true;
+}
+
+void RezalicaProcessor::renderInstruments (int numSamples)
+{
+    for (int pd = 0; pd < rz::numPads; ++pd)
+    {
+        auto& in = instruments[(size_t) pd];
+        if (! in.active.load()) continue;
+        const juce::SpinLock::ScopedTryLockType tl (in.lock);
+        if (! tl.isLocked() || in.live == nullptr) { in.midi.clear(); continue; }
+        if (in.allOff)
+        {
+            for (int n = 0; n < 128; ++n)
+                if (in.held[(size_t) n] > 0) in.midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+            in.midi.addEvent (juce::MidiMessage::allNotesOff (1), 0);
+            in.held.fill (0);
+            in.tagged.fill ({ -1, -1 });
+            in.allOff = false;
+        }
+        auto& sc = in.scratch;
+        const int n = juce::jmin (numSamples, sc.getNumSamples());
+        juce::AudioBuffer<float> sub (sc.getArrayOfWritePointers(), sc.getNumChannels(), n);
+        sub.clear();
+        in.live->processBlock (sub, in.midi);
+        in.midi.clear();
+
+        // the pad's GAIN, PAN and MUTE, the bank's volume / mute
+        const auto& ps = engine.getPad (pd);
+        const int bank = pd / rz::padsPerBank;
+        if (ps.mute.load() || engine.bankMute[(size_t) bank].load()) continue;
+        const float gain = juce::Decibels::decibelsToGain (ps.gainDb.load()) * engine.bankGain[(size_t) bank].load();
+        const float pan = juce::jlimit (-1.0f, 1.0f, ps.pan.load());
+        const float gl = gain * juce::jmin (1.0f, 1.0f - pan), gr = gain * juce::jmin (1.0f, 1.0f + pan);
+        auto& target = padHasFx[(size_t) pd] ? padBuffers[(size_t) pd] : busBuffers[(size_t) engine.busForPad (pd)];
+        const int outs = sub.getNumChannels();
+        target.addFrom (0, 0, sub, 0, 0, n, gl);
+        target.addFrom (1, 0, sub, juce::jmin (1, outs - 1), 0, n, gr);
+    }
+}
+
+juce::ValueTree RezalicaProcessor::instrumentsToValueTree() const
+{
+    juce::ValueTree t ("INSTRUMENTS");
+    for (int pd = 0; pd < rz::numPads; ++pd)
+    {
+        auto& in = instruments[(size_t) pd];
+        if (in.owned == nullptr || ! in.hasDesc) continue;
+        juce::ValueTree it ("INSTRUMENT");
+        it.setProperty ("pad", pd, nullptr);
+        if (auto xml = in.desc.createXml())
+            it.appendChild (juce::ValueTree::fromXml (*xml), nullptr);
+        juce::MemoryBlock mb;
+        in.owned->getStateInformation (mb);
+        it.setProperty ("state", mb.toBase64Encoding(), nullptr);
+        t.appendChild (it, nullptr);
+    }
+    return t;
+}
+
+void RezalicaProcessor::instrumentsFromValueTree (const juce::ValueTree& t)
+{
+    for (int pd = 0; pd < rz::numPads; ++pd)
+        clearInstrument (pd);
+    if (! t.isValid()) return;
+    for (auto it : t)
+    {
+        const int pd = it.getProperty ("pad", -1);
+        if (pd < 0 || pd >= rz::numPads || it.getNumChildren() == 0) continue;
+        juce::PluginDescription d;
+        if (auto xml = it.getChild (0).createXml(); xml == nullptr || ! d.loadFromXml (*xml)) continue;
+        juce::String err;
+        if (! loadInstrument (pd, d, err)) continue; // not installed on this computer
+        juce::MemoryBlock mb;
+        mb.fromBase64Encoding (it.getProperty ("state").toString());
+        if (auto* p = getInstrument (pd); p != nullptr && mb.getSize() > 0)
+            p->setStateInformation (mb.getData(), (int) mb.getSize());
+    }
+}
+
 juce::ValueTree RezalicaProcessor::mixerToValueTree() const
 {
     juce::ValueTree m ("MIXER");
@@ -2917,6 +3183,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
     root.appendChild (seq, nullptr);
     root.appendChild (sequencer.songToValueTree(), nullptr);
     root.appendChild (mixerToValueTree(), nullptr);
+    root.appendChild (instrumentsToValueTree(), nullptr);
     {
         juce::ValueTree d ("DECK");
         if (auto r = deck.getRecord(); r != nullptr && r->file.existsAsFile())
@@ -3138,6 +3405,7 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     sequencer.songFromValueTree (root.getChildWithName ("SONG"));
     mixerFromValueTree (root.getChildWithName ("MIXER"));
+    instrumentsFromValueTree (root.getChildWithName ("INSTRUMENTS"));
     if (auto d = root.getChildWithName ("DECK"); d.isValid())
     {
         // a project that is opened brings its record; the session Rezalica restores at start only does

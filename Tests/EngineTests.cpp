@@ -2616,6 +2616,89 @@ int main (int argc, char** argv)
         check (! t.padHasEffects (0) && rz::busName (rz::padChainBase + 0) == "PAD A1", "removing the effect; chain name");
     }
 
+    {
+        std::cout << "VST instrument on a pad\n";
+        // a tiny "synth": while a note is held it outputs a DC level = velocity / 127 * (1 + (note - 60) / 100)
+        struct Synth : public juce::AudioProcessor
+        {
+            Synth() : juce::AudioProcessor (BusesProperties().withOutput ("Out", juce::AudioChannelSet::stereo())) {}
+            std::map<int, float> on; std::vector<int> notesSeen;
+            const juce::String getName() const override { return "TestSynth"; }
+            void prepareToPlay (double, int) override {}
+            void releaseResources() override {}
+            void processBlock (juce::AudioBuffer<float>& b, juce::MidiBuffer& m) override
+            {
+                b.clear();
+                int pos = 0;
+                auto fill = [&] (int to) { float lvl = 0.0f; for (auto& [n, v] : on) lvl += v * (1.0f + (n - 60) / 100.0f);
+                                           for (int i = pos; i < to; ++i) for (int ch = 0; ch < b.getNumChannels(); ++ch) b.setSample (ch, i, lvl); pos = to; };
+                for (const auto meta : m)
+                {
+                    fill (meta.samplePosition);
+                    auto msg = meta.getMessage();
+                    if (msg.isNoteOn()) { on[msg.getNoteNumber()] = msg.getVelocity() / 127.0f; notesSeen.push_back (msg.getNoteNumber()); }
+                    else if (msg.isNoteOff()) on.erase (msg.getNoteNumber());
+                    else if (msg.isAllNotesOff()) on.clear();
+                }
+                fill (b.getNumSamples());
+            }
+            double getTailLengthSeconds() const override { return 0.0; }
+            bool acceptsMidi() const override { return true; }
+            bool producesMidi() const override { return false; }
+            bool isMidiEffect() const override { return false; }
+            juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+            bool hasEditor() const override { return false; }
+            int getNumPrograms() override { return 1; }
+            int getCurrentProgram() override { return 0; }
+            void setCurrentProgram (int) override {}
+            const juce::String getProgramName (int) override { return {}; }
+            void changeProgramName (int, const juce::String&) override {}
+            void getStateInformation (juce::MemoryBlock&) override {}
+            void setStateInformation (const void*, int) override {}
+        };
+        auto tp = std::make_unique<RezalicaProcessor> (false);
+        auto& t = *tp;
+        t.prepareToPlay (48000.0, 512);
+        auto synthOwned = std::make_unique<Synth>();
+        auto* synth = synthOwned.get();
+        juce::String err;
+        check (t.setInstrumentProcessor (5, std::move (synthOwned), nullptr, err) && t.padHasInstrument (5) && t.getPadName (5) == "TestSynth",
+               "an instrument goes on pad A6 and names it");
+        auto block = [&] { juce::AudioBuffer<float> buf (2, 512); juce::MidiBuffer m; buf.clear(); t.processBlock (buf, m); return buf.getMagnitude (0, 0, 512); };
+        const float silent = block();
+        t.triggerPadFromUi (5, 1.0f, true);
+        block();
+        const float playing = block();
+        t.triggerPadFromUi (5, 0.0f, false);
+        block();
+        const float released = block();
+        std::cout << "       instrument: " << silent << " -> " << playing << " -> " << released << "\n";
+        check (silent < 1.0e-6f && playing > 0.5f && released < 1.0e-6f && ! synth->notesSeen.empty() && synth->notesSeen.back() == 60,
+               "hitting the pad plays the instrument (C3), letting go stops it");
+
+        // MIDI keys on that pad: the key's note goes to the instrument
+        t.chromaticPad = 5;
+        juce::MidiBuffer keys;
+        keys.addEvent (juce::MidiMessage::noteOn (1, 67, (juce::uint8) 127), 0);
+        { juce::AudioBuffer<float> buf (2, 512); buf.clear(); t.processBlock (buf, keys); }
+        check (! synth->notesSeen.empty() && synth->notesSeen.back() == 67 && block() > 0.5f, "MIDI keys play the instrument's notes");
+        juce::MidiBuffer up;
+        up.addEvent (juce::MidiMessage::noteOff (1, 67), 0);
+        { juce::AudioBuffer<float> buf (2, 512); buf.clear(); t.processBlock (buf, up); }
+        check (block() < 1.0e-6f, "the key's note-off stops it");
+        t.chromaticPad = -1;
+
+        // STOP twice: everything stops
+        t.triggerPadFromUi (5, 1.0f, true);
+        block();
+        t.getSequencer().stopSound = 2;
+        block();
+        check (block() < 1.0e-6f, "STOP x2 silences the instrument");
+
+        t.clearInstrument (5);
+        check (! t.padHasInstrument (5) && t.getPadName (5).isEmpty(), "removing the instrument");
+    }
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

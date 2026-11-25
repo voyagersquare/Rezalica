@@ -105,6 +105,10 @@ Tempo (crveni LED BPM zaslon) je zajednički za glavni prozor, STEP SEQ, PIANO R
 
 ## Piano roll: odabir i velocity
 
+- **Olovka** (gumb s ikonom): kad uđeš u Piano Roll, nijedan alat nije odabran. Uključi olovku za crtanje nota (tipka B);
+  **Shift + povlačenje** označava note okvirom. **HUMANIZE** + klizač *Amount*: označene note (ili sve) malo pomakne s grida
+  (najviše 1/4 koraka) i promijeni im velocity (najviše ±24), kao da svira čovjek. **COPY TO NEXT PATTERN** kopira pattern u sljedeći.
+
 - **DRAW** alat ima pokazivač u obliku olovke.
 - Klik na tipku klavijature lijevo (u MELODIC i DRUMS prikazu) odabire sve note tog reda; povlačenje po klavijaturi odabire sve note u redovima između (Shift / Ctrl: dodaje postojećem odabiru).
 - Kad su note odabrane, traka **VELOCITY** mijenja jačinu svih odabranih nota odjednom.
@@ -144,6 +148,16 @@ uz efekte busova u mikseru. Povuci plugin iz **BROWSER > PLUGINS** u slot; klik 
 ukloni / odaberi. Odabereš drugi pad – EFFECTS pokazuje njegove efekte. Padovi s efektima imaju oznaku **FX**.
 Pad svira kroz svoje efekte, zatim kroz svoj bus i MASTER; kašnjenje pluginova (latency) se izjednačava, pa svi padovi
 i metronom ostaju u ritmu. Efekti se spremaju s projektom.
+
+## VST instrumenti na padovima
+
+- U **BROWSER > PLUGINS** uz efekte su i instrumenti (oznaka **VSTi**, npr. Vital, Serum, Kontakt). **Povuci** instrument na pad
+  ili desni klik na pad > **Load VST instrument**. Otvori se prozor instrumenta; na padu piše ime i ljubičasta oznaka VSTi.
+- Pad tada svira instrument umjesto samplea: udarac na pad / step sequencer = nota **C3**, a u **PIANO ROLL** (MELODIC, taj pad)
+  i s **MIDI KEYS** svaka nota ide u instrument (s velocityjem, akordima, skalama, HUMANIZE).
+- Zvuk ide kroz **GAIN, PAN, MUTE** pada, njegove **EFFECTS** (6 slotova) i bus, kao sample. STOP dvaput gasi sve note.
+- Klik na ekran valnog oblika (ili desni klik na pad > Open instrument window) otvara instrument; desni klik na pad > Replace / Remove.
+- Instrument i njegove postavke spremaju se u projekt. Najviše 16 padova s instrumentom.
 
 ## Choke grupe za više padova
 

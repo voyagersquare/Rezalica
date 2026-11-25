@@ -176,6 +176,23 @@ void WaveformView::paint (juce::Graphics& g)
 
     auto area = waveArea();
 
+    if (sample == nullptr && processor.padHasInstrument (processor.selectedPad.load()))
+    {
+        // a VST instrument plays this pad
+        auto r = getLocalBounds().reduced (20).toFloat();
+        g.setColour (juce::Colour (0xff7a4fd6).withAlpha (0.9f));
+        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.drawText ("VST INSTRUMENT", r.withTrimmedBottom (r.getHeight() * 0.5f + 18.0f), juce::Justification::centredBottom);
+        g.setColour (juce::Colour (0xffffc94a));
+        g.setFont (juce::FontOptions (26.0f, juce::Font::bold));
+        g.drawText (processor.getInstrumentName (processor.selectedPad.load()), r.withSizeKeepingCentre (r.getWidth(), 34.0f), juce::Justification::centred);
+        g.setColour (dim);
+        g.setFont (juce::FontOptions (13.0f));
+        g.drawFittedText ("Click here to open the instrument.  Pads, STEP SEQ, PIANO ROLL and MIDI KEYS play it (the pad = C3).\n"
+                          "Its sound goes through this pad's EFFECTS, GAIN, PAN and bus.  Right-click the pad: replace / remove.",
+                          r.withTrimmedTop (r.getHeight() * 0.5f + 22.0f).toNearestInt(), juce::Justification::centredTop, 3);
+        return;
+    }
     if (sample == nullptr)
     {
         g.setColour (dim);
@@ -570,7 +587,11 @@ void WaveformView::showMenu (float x)
 void WaveformView::mouseDown (const juce::MouseEvent& e)
 {
     if (sample == nullptr)
+    {
+        if (const int pad = processor.selectedPad.load(); processor.padHasInstrument (pad) && onOpenInstrument && ! e.mods.isPopupMenu())
+            onOpenInstrument (pad);
         return;
+    }
 
     const float x = (float) e.x;
 

@@ -585,6 +585,7 @@ BrowserPanel::BrowserPanel (RezalicaProcessor& p) : processor (p)
     addChildComponent (scanStatus);
     processor.pluginHost->addChangeListener (this);
     pluginRows.effects = processor.pluginHost->getEffects();
+    pluginRows.effects.addArray (processor.pluginHost->getInstruments());
     pluginRows.openMaker = AppSettings::get().getValue ("pluginMaker");
     pluginRows.rebuild();
     pluginRows.onChanged = [this]
@@ -620,6 +621,7 @@ BrowserPanel::~BrowserPanel()
 void BrowserPanel::changeListenerCallback (juce::ChangeBroadcaster*)
 {
     pluginRows.effects = processor.pluginHost->getEffects();
+    pluginRows.effects.addArray (processor.pluginHost->getInstruments());
     pluginRows.rebuild();
     pluginList.updateContent();
     pluginList.repaint();
@@ -637,7 +639,7 @@ void BrowserPanel::showPlugins (bool plugins)
         c->setVisible (! plugins);
     for (auto* c : std::initializer_list<juce::Component*> { &pluginList, &scanButton, &vstFoldersButton, &skippedButton, &scanStatus })
         c->setVisible (plugins);
-    helpLabel.setText (plugins ? "Drag an effect onto a slot of BUS A-D or MASTER in the mixer"
+    helpLabel.setText (plugins ? "Effects: drag onto a mixer / EFFECTS slot.   VSTi (instruments): drag onto a pad"
                                : "Click: preview   Double-click: load   Drag: onto a pad or the sample view", juce::dontSendNotification);
     changeListenerCallback (nullptr);
     resized();

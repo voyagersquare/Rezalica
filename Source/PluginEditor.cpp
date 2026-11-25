@@ -295,6 +295,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     addAndMakeVisible (waveform);
     waveform.onPadSelected = [this] (int pad) { selectPad (pad); };
     waveform.onRegionChanged = [this] { refreshPadControls(); };
+    waveform.onOpenInstrument = [this] (int pad) { openInstrumentWindow (pad); };
     waveform.onFileDropped = [this] (const juce::File& f)
     {
         processor.pushUndo ("Load sample");
@@ -453,7 +454,10 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         pad->onChokeGroup = [this] (int idx, int group) { setChokeGroup (idx, group); };
         pad->onDeselect = [this] { multiSelection.fill (false); refreshMultiSelection(); };
         pad->onLoadRequest = [this] (int idx) { choosePadFile (idx); };
-        pad->onClear = [this] (int idx) { processor.pushUndo ("Clear pad"); processor.clearPad (idx); };
+        pad->onInstrument = [this] (int idx, const juce::String& id) { loadInstrumentToPad (idx, id); };
+        pad->onOpenInstrument = [this] (int idx) { openInstrumentWindow (idx); };
+        pad->onRemoveInstrument = [this] (int idx) { processor.clearInstrument (idx); };
+        pad->onClear = [this] (int idx) { processor.pushUndo ("Clear pad"); processor.clearPad (idx); processor.clearInstrument (idx); };
         pad->onCopy = [this] (int idx) { processor.copyPad (idx); };
         pad->onPaste = [this] (int idx) { processor.pushUndo ("Paste pad"); processor.pastePad (idx); selectPad (idx); };
         pad->onChop = [this] (int idx, int mode) { processor.pushUndo ("Chop"); processor.chopPadSample (idx, mode); selectPad (0); refreshChopControls(); };
@@ -589,6 +593,8 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     };
 
     processor.padsChanged.addChangeListener (this);
+    processor.instrumentsChanged.addChangeListener (this);
+    processor.pluginsAboutToChange[&instrumentWindow] = [this] { instrumentWindow = nullptr; };
 
     lastPlayedCounter = processor.getEngine().playedCounter.load();
 
@@ -641,6 +647,9 @@ RezalicaEditor::~RezalicaEditor()
     stopTimer();
     midiControl = nullptr;
     processor.padsChanged.removeChangeListener (this);
+    processor.instrumentsChanged.removeChangeListener (this);
+    processor.pluginsAboutToChange.erase (&instrumentWindow);
+    instrumentWindow = nullptr;
     sequencerWindow = nullptr;
     dockedSequencer = nullptr;
     dockedPianoRoll = nullptr;
@@ -759,6 +768,58 @@ void RezalicaEditor::refreshFxControls()
     filterTypeBox.setSelectedId (fx.filterType.load() + 1, juce::dontSendNotification);
     timeKnob.setEnabled (fx.delayDiv.load() == 0);
     fxTitle.setText ("MIXER   drag effects from BROWSER > PLUGINS into the slots", juce::dontSendNotification);
+}
+
+//==============================================================================
+/** The window of a pad's VST instrument (its own editor, or generic sliders). */
+struct RezalicaEditor::InstrumentWindow : public juce::DocumentWindow
+{
+    std::unique_ptr<rz::StayOnTopOfRezalica> onTopHelper;
+    InstrumentWindow (RezalicaEditor& o, int padIndex, juce::AudioProcessor& p)
+        : juce::DocumentWindow ("PAD " + rz::padLabel (padIndex) + "  -  " + p.getName(), rz::colours::background,
+                                juce::DocumentWindow::closeButton),
+          owner (o), pad (padIndex)
+    {
+        juce::AudioProcessorEditor* ed = p.createEditorIfNeeded();
+        if (ed == nullptr)
+            ed = new juce::GenericAudioProcessorEditor (p);
+        setUsingNativeTitleBar (true);
+        setContentOwned (ed, true);
+        setResizable (ed->isResizable(), false);
+        onTopHelper = std::make_unique<rz::StayOnTopOfRezalica> (*this);
+        centreWithSize (getWidth(), getHeight());
+        setVisible (true);
+    }
+    void closeButtonPressed() override
+    {
+        juce::Component::SafePointer<RezalicaEditor> safe (&owner);
+        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->instrumentWindow = nullptr; });
+        setVisible (false);
+    }
+    RezalicaEditor& owner;
+    int pad;
+};
+
+void RezalicaEditor::openInstrumentWindow (int pad)
+{
+    instrumentWindow = nullptr;
+    if (auto* p = processor.getInstrument (pad))
+        instrumentWindow = std::make_unique<InstrumentWindow> (*this, pad, *p);
+}
+
+void RezalicaEditor::loadInstrumentToPad (int pad, const juce::String& identifier)
+{
+    const auto* d = processor.pluginHost->findByIdentifier (identifier);
+    if (d == nullptr) return;
+    const auto desc = *d;
+    juce::String error;
+    if (! processor.loadInstrument (pad, desc, error))
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "VST instrument", desc.name + ": " + error);
+        return;
+    }
+    selectPad (pad);
+    openInstrumentWindow (pad);
 }
 
 void RezalicaEditor::refreshPadNames()

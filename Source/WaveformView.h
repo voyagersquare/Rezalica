@@ -26,6 +26,7 @@ public:
     std::function<void (int)> onPadSelected;
     std::function<void()> onRegionChanged;
     std::function<void (const juce::File&)> onFileDropped;
+    std::function<void (int pad)> onOpenInstrument;   // the selected pad has a VST instrument: click opens its window
 
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;

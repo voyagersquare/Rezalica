@@ -18,6 +18,8 @@ public:
 
     /** Effect plug-ins (no instruments), sorted by name. */
     juce::Array<juce::PluginDescription> getEffects() const;
+    /** Instrument plug-ins (synths, samplers), sorted by name. */
+    juce::Array<juce::PluginDescription> getInstruments() const;
     const juce::PluginDescription* findByIdentifier (const juce::String& identifier) const;
 
     /** Folders that are scanned (default: the system's VST3 folders). */

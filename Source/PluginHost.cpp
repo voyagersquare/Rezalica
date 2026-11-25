@@ -46,6 +46,19 @@ juce::Array<juce::PluginDescription> PluginHost::getEffects() const
     return out;
 }
 
+juce::Array<juce::PluginDescription> PluginHost::getInstruments() const
+{
+    juce::Array<juce::PluginDescription> out;
+    for (auto& d : known.getTypes())
+        if (d.isInstrument)
+            out.add (d);
+    std::sort (out.begin(), out.end(), [] (const juce::PluginDescription& a, const juce::PluginDescription& b)
+    {
+        return a.name.compareIgnoreCase (b.name) < 0;
+    });
+    return out;
+}
+
 const juce::PluginDescription* PluginHost::findByIdentifier (const juce::String& identifier) const
 {
     static thread_local juce::PluginDescription found;
