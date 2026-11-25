@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Rezalica VERSION 0.2.4 LANGUAGES C CXX)
+project(Rezalica VERSION 0.2.5 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -77,7 +77,7 @@ else()
 endif()
 
 # fonts: Press Start 2P (logo) and Great Vibes (DECK), both SIL Open Font License - see Resources/*-OFL.txt
-juce_add_binary_data(RezalicaData SOURCES Resources/PressStart2P-Regular.ttf Resources/GreatVibes-Regular.ttf Resources/RezalicaIcon.png)
+juce_add_binary_data(RezalicaData SOURCES Resources/PressStart2P-Regular.ttf Resources/GreatVibes-Regular.ttf Resources/RezalicaIcon.png Resources/RezalicaAppIcon.png)
 
 target_link_libraries(Rezalica
     PRIVATE

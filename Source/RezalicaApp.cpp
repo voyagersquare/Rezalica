@@ -8,6 +8,7 @@
 
 #if JucePlugin_Build_Standalone
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
+#include "BinaryData.h"
 
 extern std::function<void (std::function<void()>)> rezalicaConfirmQuit; // set by the editor (PluginEditor.cpp)
 
@@ -59,10 +60,13 @@ public:
             pluginHolder = createPluginHolder();
             return;
         }
+        showSplash();
         mainWindow = std::make_unique<RezalicaWindow> (getApplicationName(),
                                                                      juce::LookAndFeel::getDefaultLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId),
                                                                      createPluginHolder());
-        mainWindow->setVisible (true);
+        // the main window opens when the splash screen has been shown (about 2 s)
+        juce::Component::SafePointer<juce::Component> w (mainWindow.get());
+        juce::Timer::callAfterDelay (splash != nullptr ? 2000 : 0, [w] { if (w != nullptr) { w->setVisible (true); w->toFront (true); } });
     }
 
     void shutdown() override
@@ -100,6 +104,19 @@ public:
     }
 
 private:
+    /** The saw-and-waveform picture in the middle of the screen while Rezalica starts (medium size, ~2.5 s;
+        a click closes it). It deletes itself. */
+    void showSplash()
+    {
+        auto image = juce::ImageCache::getFromMemory (BinaryData::RezalicaAppIcon_png, BinaryData::RezalicaAppIcon_pngSize);
+        if (! image.isValid()) return;
+        const int size = 320;
+        auto* s = new juce::SplashScreen ("Rezalica", image.rescaled (size, size, juce::Graphics::highResamplingQuality), true);
+        s->setAlwaysOnTop (true);
+        s->deleteAfterDelay (juce::RelativeTime::seconds (2.5), true);
+        splash = s;
+    }
+
     std::unique_ptr<juce::StandalonePluginHolder> createPluginHolder()
     {
         const juce::Array<juce::StandalonePluginHolder::PluginInOuts> channelConfig;
@@ -135,6 +152,7 @@ private:
     }
 
     bool confirmed = false;
+    juce::Component::SafePointer<juce::Component> splash;
     juce::ApplicationProperties appProperties;
     std::unique_ptr<juce::StandaloneFilterWindow> mainWindow;
     std::unique_ptr<juce::StandalonePluginHolder> pluginHolder;
