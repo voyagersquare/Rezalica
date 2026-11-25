@@ -1947,26 +1947,55 @@ juce::File RezalicaProcessor::exportPatternWav (int pattern, bool stepPart, bool
     InstrumentLoan loan (*this, offline, sr, block);
     seq.internalPlay = true;
 
-    // two passes: the second one includes the tails (reverb, delay ...) that ring over from the first,
-    // so the file loops seamlessly
-    juce::AudioBuffer<float> out (2, loopSamples);
-    out.clear();
+    // played once from silence (like a bounce in a DAW): the notes start exactly as drawn, and what still
+    // sounds when the pattern ends (release, reverb, delay) is kept after it until it fades out (max 10 s)
+    const int maxTail = (int) (sr * 10.0);
+    juce::AudioBuffer<float> rendered (2, loopSamples + maxTail + 2 * block);
+    rendered.clear();
     juce::AudioBuffer<float> buf (2, block);
     juce::MidiBuffer noMidi;
-    int latency = -1; // the mixer's plug-ins delay everything by the same (compensated) amount: the loop starts that much later
-    for (int pos = 0; latency < 0 || pos < 2 * loopSamples + latency; pos += block)
+    int latency = -1;  // the mixer's plug-ins delay everything by the same (compensated) amount
+    int written = 0, quiet = 0, pos = 0;
+    bool stopped = false;
+    const float silence = juce::Decibels::decibelsToGain (-70.0f);
+    while (true)
     {
-        juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, block);
+        if (! stopped && pos >= loopSamples)
+        {
+            seq.stopPlayback();   // the pattern ends: no second round, what sounds fades out with its release
+            seq.stopSound = 1;
+            stopped = true;
+        }
+        // blocks end exactly where the pattern ends
+        const int n = stopped ? block : juce::jmin (block, loopSamples - pos);
+        juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+        sub.clear();
         offline.processBlock (sub, noMidi);
         noMidi.clear();
         if (latency < 0) latency = juce::jlimit (0, loopSamples, offline.pluginLatencySamples.load());
-        const int n = block;
-        const int dst = pos - loopSamples - latency;
         for (int i = 0; i < n; ++i)
-            if (dst + i >= 0 && dst + i < loopSamples)
-                for (int ch = 0; ch < 2; ++ch)
-                    out.setSample (ch, dst + i, sub.getSample (ch, i));
+        {
+            const int dst = pos + i - latency;
+            if (dst < 0 || dst >= rendered.getNumSamples()) continue;
+            for (int ch = 0; ch < 2; ++ch)
+                rendered.setSample (ch, dst, sub.getSample (ch, i));
+            written = dst + 1;
+        }
+        pos += n;
+        if (stopped && pos > loopSamples + latency)
+        {
+            quiet = sub.getMagnitude (0, n) < silence ? quiet + n : 0;
+            if (quiet >= (int) (sr * 0.3) || written >= loopSamples + maxTail) break;
+        }
     }
+    // the file: the pattern, then the tail up to where it went quiet
+    int length = juce::jmax (loopSamples, written - juce::jmin (juce::jmax (0, written - loopSamples), quiet));
+    length = juce::jmin (length, rendered.getNumSamples());
+    juce::AudioBuffer<float> out (2, length);
+    for (int ch = 0; ch < 2; ++ch)
+        out.copyFrom (ch, 0, rendered, ch, 0, length);
+    if (const int fade = juce::jmin (length - loopSamples, (int) (sr * 0.01)); fade > 16)
+        out.applyGainRamp (length - fade, fade, 1.0f, 0.0f);
 
     auto folder = getExportFolder();
     folder.createDirectory();
@@ -1981,7 +2010,7 @@ juce::File RezalicaProcessor::exportPatternWav (int pattern, bool stepPart, bool
     if (w == nullptr)
         return {};
     os.release();
-    w->writeFromAudioSampleBuffer (out, 0, loopSamples);
+    w->writeFromAudioSampleBuffer (out, 0, out.getNumSamples());
     w.reset();
     return file;
 }
