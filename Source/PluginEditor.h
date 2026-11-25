@@ -129,7 +129,18 @@ private:
 
     // sample view + selected pad
     rz::WaveformView waveform;
-    juce::Label padTitle;
+    /** The pad's name in the sample view: drawn at its own size (the look-and-feel keeps labels small). */
+    struct ScreenTitle : public juce::Label
+    {
+        void paint (juce::Graphics& g) override
+        {
+            g.setFont (getFont());
+            g.setColour (juce::Colours::black.withAlpha (0.6f));
+            g.drawText (getText(), getLocalBounds().translated (1, 1), juce::Justification::centredLeft, true);
+            g.setColour (findColour (juce::Label::textColourId));
+            g.drawText (getText(), getLocalBounds(), juce::Justification::centredLeft, true);
+        }
+    } padTitle;
     rz::Knob gainKnob { "GAIN" }, panKnob { "PAN" }, pitchKnob { "PITCH" }, attackKnob { "ATTACK" },
              releaseKnob { "RELEASE" }, startKnob { "START" }, endKnob { "END" };
     juce::TextButton normalizeButton { "NORMALIZE" };

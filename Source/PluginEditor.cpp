@@ -304,9 +304,11 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     };
 
     // ---- selected pad controls ----
-    padTitle.setFont (juce::FontOptions (16.0f, juce::Font::bold));
-    padTitle.setColour (juce::Label::textColourId, rz::colours::accent);
-    addAndMakeVisible (padTitle);
+    // the pad's name sits in the sample view (top left), in the amber of the waveform
+    padTitle.setFont (juce::FontOptions (17.0f, juce::Font::bold));
+    padTitle.setColour (juce::Label::textColourId, rz::colours::accent2);
+    padTitle.setInterceptsMouseClicks (false, false);
+    waveform.addAndMakeVisible (padTitle);
 
     auto setupPadKnob = [this] (rz::Knob& k, double lo, double hi, double step, double def, const juce::String& suffix,
                                 std::function<void (rz::PadSettings&, float)> apply)
@@ -1964,6 +1966,8 @@ void RezalicaEditor::paint (juce::Graphics& g)
 void RezalicaEditor::resized()
 {
     layoutComponents();
+    // the pad's name: top left inside the sample view
+    padTitle.setBounds (juce::Rectangle<int> (20, 8, juce::jmax (100, waveform.getWidth() / 2 - 30), 24));
     renderFaceplate(); // after the layout: the shadows under the keys and panels are baked into it
 }
 
@@ -2074,7 +2078,7 @@ void RezalicaEditor::layoutComponents()
             stretchButton.setBounds (titleRow.removeFromRight (90));  titleRow.removeFromRight (6);
             warpButton.setBounds (titleRow.removeFromRight (70));
             layoutChopInfo (titleRow);
-            padTitle.setBounds (titleRow);
+
         }
         layoutPads();
         return;
@@ -2102,8 +2106,6 @@ void RezalicaEditor::layoutComponents()
         }
         // the title row: the pad's name, then the keys (a little smaller, on the left)
         auto titleRow = s.removeFromTop (24);
-        padTitle.setBounds (titleRow.removeFromLeft (juce::jlimit (96, 220, titleRow.getWidth() - 340)));
-        titleRow.removeFromLeft (4);
         for (auto [c, w] : std::initializer_list<std::pair<juce::Component*, int>> {
                  { &warpButton, 58 }, { &stretchButton, 78 }, { &trimButton, 54 }, { &renderButton, 70 }, { &clearPadButton, 58 } })
         {
