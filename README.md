@@ -191,6 +191,14 @@ Tipkovnica računala svira trenutno odabranu banku:
   - Projekti se spremaju kao `.rezalica` datoteke (zadano u `Dokumenti/Rezalica/Projects`). Samplovi se pamte po putanji.
   - **Spremanje promjena**: pri zatvaranju programa, New Project i Open, ako ima nespremljenih promjena, pita „Save changes?“ — **YES** (spremi), **NO** (ne spremaj), **CANCEL** (ostani).
 - **Autosave**: svake minute (ako se nešto promijenilo) projekt se automatski sprema. Ako se Rezalica sruši ili nestane struje, pri sljedećem pokretanju nudi vraćanje automatski spremljenog projekta.
+- **Verzije rada**: svakih **5 minuta** (i prije svakog učitavanja plugina / instrumenta i otvaranja projekta) sprema se i zasebna verzija
+  s datumom, vremenom i imenom pjesme. Čuva se zadnjih 50 (i ništa starije od 7 dana, ali uvijek barem 10). **FILE > Restore Version…**
+  otvara popis; trenutni rad se prije vraćanja i sam spremi kao verzija.
+- **Zaštita od pluginova koji ruše program**: Rezalica bilježi što radi s pluginom (učitavanje, otvaranje prozora, postavke). Ako se
+  sruši, pri sljedećem pokretanju kaže koji plugin je bio kriv i nudi **Restore** ili **Without plug-ins**: pjesma se vrati, a efekti i
+  instrumenti ostanu u projektu kao „(not loaded)“ – klik na slot / pad ih učita jednog po jednog. Plugin koji nije instaliran na
+  računalu isto ostaje zapamćen (ne nestaje iz projekta).
+- **Save** prethodnu spremljenu verziju projekta čuva kao `ime.rezalica.bak`.
 - **SAMPLING**: snimanje na odabrani pad, kao na hardverskom sampleru (MPC 2000XL / Roland SP):
   - **Start**: odmah ili **na zvuk iznad thresholda** (klizač, bijela crta na metru); **Length**: do STOP-a ili fiksno (1–8 s, 1 / 2 / 4 takta po tempu) – samo stane.
   - **Channels**: stereo, mono lijevi ili mono desni ulaz; **CLIP** svijetli kad je ulaz preglasan.

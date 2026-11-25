@@ -15,6 +15,7 @@ struct MixerSlot
     std::atomic<bool> bypass { false };
     juce::AudioBuffer<float> scratch;              // room for the plug-in's channels
     juce::MidiBuffer midi;
+    juce::ValueTree pending;                       // a plug-in skipped when the project was restored without plug-ins
 };
 
 /** A fixed delay for plug-in delay compensation: the audio comes out 'delay' samples later.

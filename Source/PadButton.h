@@ -31,7 +31,7 @@ public:
     std::function<void (int pad, int group)> onChokeGroup;
     /** VST instruments: load one onto the pad (plug-in identifier), open its window, remove it. */
     std::function<void (int pad, const juce::String& identifier)> onInstrument;
-    std::function<void (int pad)> onOpenInstrument, onRemoveInstrument;
+    std::function<void (int pad)> onOpenInstrument, onRemoveInstrument, onLoadPendingInstrument;
     void setMultiSelected (bool m)           { if (m != multiSelected) { multiSelected = m; repaint(); } }
 
     void setIndex (int i)                    { if (i != index) { index = i; flashLevel = 0.0f; held = false; repaint(); } }
@@ -243,6 +243,11 @@ private:
             if (instrumentChoices.isEmpty())
                 inst.addItem (999, "No instruments found (BROWSER > PLUGINS > SCAN)", false);
             m.addSubMenu (hasInst ? "Replace VST instrument" : "Load VST instrument", inst);
+            if (processor.isInstrumentPending (index))
+            {
+                m.addItem (42, "Load " + processor.getPendingInstrumentName (index) + "  (skipped after a crash)");
+                m.addItem (41, "Remove instrument");
+            }
             if (hasInst)
             {
                 m.addItem (40, "Open instrument window (" + processor.getInstrumentName (index) + ")");
@@ -322,6 +327,7 @@ private:
             if (r >= 1000 && r < 1000 + instrumentChoices.size() && onInstrument)
                 onInstrument (index, instrumentChoices[r - 1000].createIdentifierString());
             if (r == 40 && onOpenInstrument) onOpenInstrument (index);
+            if (r == 42 && onLoadPendingInstrument) onLoadPendingInstrument (index);
             if (r == 41 && onRemoveInstrument) onRemoveInstrument (index);
             if (r == 30 && onClearSelected) onClearSelected();
             if (r == 31 && onDeselect) onDeselect();

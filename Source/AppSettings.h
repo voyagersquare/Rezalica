@@ -80,5 +80,28 @@ struct AppSettings
     // ---- autosave / crash recovery ----
     static juce::File getAutosaveFile()  { return getFolder().getChildFile ("Autosave").getChildFile ("autosave.rezalica"); }
     static juce::File getRunningFlag()   { return getFolder().getChildFile ("Autosave").getChildFile ("running.flag"); }
+    /** Versions of the work: a copy every 5 minutes (and before risky steps), the newest 50 / 7 days are kept. */
+    static juce::File getVersionsFolder() { return getFolder().getChildFile ("Autosave").getChildFile ("Versions"); }
+    /** What Rezalica is doing with a plug-in right now ("Loading FabFilter Pro-Q 3"): if it crashes there,
+        the file is still there at the next start and tells which plug-in it was. */
+    static juce::File getActivityFile()  { return getFolder().getChildFile ("Autosave").getChildFile ("plugin-activity.txt"); }
+    static void beginPluginActivity (const juce::String& what)
+    {
+        if (! juce::JUCEApplicationBase::isStandaloneApp()) return;
+        auto f = getActivityFile();
+        f.getParentDirectory().createDirectory();
+        f.replaceWithText (what);
+    }
+    static void endPluginActivity()
+    {
+        if (! juce::JUCEApplicationBase::isStandaloneApp()) return;
+        getActivityFile().deleteFile();
+    }
+    /** RAII: marks a plug-in step while it lasts. */
+    struct PluginActivity
+    {
+        explicit PluginActivity (const juce::String& what) { beginPluginActivity (what); }
+        ~PluginActivity() { endPluginActivity(); }
+    };
 };
 } // namespace rz

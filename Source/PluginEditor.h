@@ -97,6 +97,14 @@ private:
     // autosave / crash recovery / recent projects (standalone)
     void autosave();
     void checkCrashRecovery();
+    // versions of the work (every 5 minutes and before risky steps), FILE > Restore Version
+    void saveVersion (const juce::String& reason);
+    void showVersionsMenu();
+    /** Asks: restore / restore without plug-ins / cancel, then opens the file (an autosave or a version). */
+    void offerRestore (const juce::File& file, const juce::String& title, const juce::String& message, bool saveCurrentFirst);
+    void restoreFrom (const juce::File& file, bool withoutPlugins);
+    double lastVersionTime = 0.0;
+    juce::MemoryBlock lastVersionState;
     void openProjectFile (const juce::File& f);
     void chooseProjectToOpen();
     void chooseExportFile (const RezalicaProcessor::ExportSettings&);

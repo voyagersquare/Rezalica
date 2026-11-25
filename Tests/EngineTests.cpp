@@ -2699,6 +2699,61 @@ int main (int argc, char** argv)
         check (! t.padHasInstrument (5) && t.getPadName (5).isEmpty(), "removing the instrument");
     }
 
+    {
+        std::cout << "Plug-ins that are not loaded stay in the project\n";
+        // a project with an effect on BUS A and an instrument on pad A3 that this computer does not have
+        juce::PluginDescription fx, synth;
+        fx.name = "NoSuchEffect"; fx.pluginFormatName = "VST3"; fx.fileOrIdentifier = "/nowhere/NoSuchEffect.vst3"; fx.uniqueId = 123;
+        synth.name = "NoSuchSynth"; synth.pluginFormatName = "VST3"; synth.fileOrIdentifier = "/nowhere/NoSuchSynth.vst3"; synth.uniqueId = 456; synth.isInstrument = true;
+        auto tp = std::make_unique<RezalicaProcessor> (false);
+        auto& t = *tp;
+        juce::MemoryBlock base;
+        t.getStateInformation (base);
+        auto root = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (base.getData(), (int) base.getSize()));
+        auto mixer = root.getChildWithName ("MIXER");
+        for (auto b : mixer)
+            if ((int) b.getProperty ("index") == 1)
+            {
+                juce::ValueTree st ("SLOT");
+                st.setProperty ("index", 2, nullptr);
+                st.setProperty ("state", juce::String ("abc"), nullptr);
+                st.appendChild (juce::ValueTree::fromXml (*fx.createXml()), nullptr);
+                b.appendChild (st, nullptr);
+            }
+        auto inst = root.getChildWithName ("INSTRUMENTS");
+        juce::ValueTree it ("INSTRUMENT");
+        it.setProperty ("pad", 2, nullptr);
+        it.appendChild (juce::ValueTree::fromXml (*synth.createXml()), nullptr);
+        inst.appendChild (it, nullptr);
+        auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_pending.rezalica");
+        root.createXml()->writeTo (file);
+
+        for (bool without : { true, false })
+        {
+            check (t.loadProjectFromFile (file, without), without ? "opened without plug-ins" : "opened normally");
+            check (t.isSlotPending (1, 2) && t.getSlotName (1, 2) == "(not loaded) NoSuchEffect"
+                   && t.isInstrumentPending (2) && t.getPadName (2) == "(not loaded) NoSuchSynth" && t.countPendingPlugins() == 2,
+                   "the effect and the instrument wait in their slot / pad");
+            juce::MemoryBlock again;
+            t.getStateInformation (again);
+            const auto x = juce::AudioProcessor::getXmlFromBinary (again.getData(), (int) again.getSize())->toString();
+            check (x.contains ("NoSuchEffect") && x.contains ("NoSuchSynth") && x.contains ("abc"), "saving keeps them (with their settings)");
+            juce::String err;
+            check (! t.loadPendingSlot (1, 2, err) && err.isNotEmpty() && t.isSlotPending (1, 2), "loading a missing one fails, it stays waiting");
+        }
+        t.clearInstrument (2);
+        t.getBus (1).slots[2].pending = {};
+        check (t.countPendingPlugins() == 0, "removing them");
+
+        // Save keeps the previous file as .bak
+        auto proj = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_bak_test.rezalica");
+        proj.deleteFile(); proj.getSiblingFile (proj.getFileName() + ".bak").deleteFile();
+        t.saveProjectToFile (proj);
+        t.saveProjectToFile (proj);
+        check (proj.getSiblingFile (proj.getFileName() + ".bak").existsAsFile(), "Save keeps the previous save as .bak");
+        file.deleteFile(); proj.deleteFile(); proj.getSiblingFile (proj.getFileName() + ".bak").deleteFile();
+    }
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

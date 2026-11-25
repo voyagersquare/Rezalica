@@ -68,6 +68,7 @@ public:
     RezalicaProcessor& getProcessor() noexcept { return processor; }
     void loadIntoSlot (int bus, int slot, const juce::PluginDescription&);
     void openEditor (int bus, int slot);
+    void loadPending (int bus, int slot);
     void showSlotMenu (int bus, int slot, juce::Component* target);
     void closeAllEditors();
     /** The pad-effects view: show this pad's chain (rz::padChainBase + pad). */

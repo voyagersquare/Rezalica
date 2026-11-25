@@ -457,6 +457,13 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
         pad->onInstrument = [this] (int idx, const juce::String& id) { loadInstrumentToPad (idx, id); };
         pad->onOpenInstrument = [this] (int idx) { openInstrumentWindow (idx); };
         pad->onRemoveInstrument = [this] (int idx) { processor.clearInstrument (idx); };
+        pad->onLoadPendingInstrument = [this] (int idx)
+        {
+            juce::String err;
+            const auto name = processor.getPendingInstrumentName (idx);
+            if (processor.loadPendingInstrument (idx, err)) { selectPad (idx); openInstrumentWindow (idx); }
+            else juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "VST instrument", name + ": " + err);
+        };
         pad->onClear = [this] (int idx) { processor.pushUndo ("Clear pad"); processor.clearPad (idx); processor.clearInstrument (idx); };
         pad->onCopy = [this] (int idx) { processor.copyPad (idx); };
         pad->onPaste = [this] (int idx) { processor.pushUndo ("Paste pad"); processor.pastePad (idx); selectPad (idx); };
@@ -622,8 +629,10 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     setSize (isStandalone ? 1530 : 1240, isStandalone ? 784 : 772);
     if (isStandalone)
     {
-        lastAutosaveTime = juce::Time::getMillisecondCounterHiRes();
+        lastAutosaveTime = lastVersionTime = juce::Time::getMillisecondCounterHiRes();
         processor.markProjectSaved(); // a fresh start has nothing to save
+        juce::Component::SafePointer<RezalicaEditor> safeVersion (this);
+        processor.beforeRiskyStep = [safeVersion] (const juce::String& reason) { if (safeVersion != nullptr) safeVersion->saveVersion (reason); };
         juce::Component::SafePointer<RezalicaEditor> safeQuit (this);
         rezalicaConfirmQuit = [safeQuit] (std::function<void()> quit)
         {
@@ -780,7 +789,11 @@ struct RezalicaEditor::InstrumentWindow : public juce::DocumentWindow
                                 juce::DocumentWindow::closeButton),
           owner (o), pad (padIndex)
     {
-        juce::AudioProcessorEditor* ed = p.createEditorIfNeeded();
+        juce::AudioProcessorEditor* ed = nullptr;
+        {
+            rz::AppSettings::PluginActivity activity ("opening the window of " + p.getName());
+            ed = p.createEditorIfNeeded();
+        }
         if (ed == nullptr)
             ed = new juce::GenericAudioProcessorEditor (p);
         setUsingNativeTitleBar (true);
@@ -812,6 +825,7 @@ void RezalicaEditor::loadInstrumentToPad (int pad, const juce::String& identifie
     const auto* d = processor.pluginHost->findByIdentifier (identifier);
     if (d == nullptr) return;
     const auto desc = *d;
+    processor.safetySave ("before loading " + desc.name);
     juce::String error;
     if (! processor.loadInstrument (pad, desc, error))
     {
@@ -1126,6 +1140,8 @@ void RezalicaEditor::showFileMenu()
     m.addSeparator();
     m.addItem (3, "Save Project           Ctrl+S");
     m.addItem (4, "Save Project As...     Ctrl+Shift+S");
+    if (isStandalone)
+        m.addItem (9, "Restore Version...     (autosaved every 5 min)");
     m.addSeparator();
     m.addItem (7, "Export Song (WAV / MP3)...");
     m.addItem (8, "Export Song as MIDI...");
@@ -1157,6 +1173,7 @@ void RezalicaEditor::showFileMenu()
             case 6: safe->processor.currentProjectFile.revealToUser(); break;
             case 7: safe->exportSong (false); break;
             case 8: safe->exportSong (true); break;
+            case 9: safe->showVersionsMenu(); break;
             default: break;
         }
     });
@@ -1286,6 +1303,7 @@ void RezalicaEditor::chooseProjectToOpen()
 
 void RezalicaEditor::openProjectFile (const juce::File& f)
 {
+    processor.safetySave ("before opening " + f.getFileNameWithoutExtension());
     if (processor.loadProjectFromFile (f))
     {
         rz::AppSettings::addRecentProject (f);
@@ -1429,37 +1447,144 @@ void RezalicaEditor::autosave()
             autosaveLabel.setText ("Autosaved " + juce::Time::getCurrentTime().formatted ("%H:%M"), juce::dontSendNotification);
         }
     }
+    // every 5 minutes (when something changed) a version of the work is kept as well
+    if (juce::Time::getMillisecondCounterHiRes() - lastVersionTime >= 5.0 * 60000.0 && state != lastVersionState)
+        saveVersion ("autosave");
+}
+
+void RezalicaEditor::saveVersion (const juce::String& reason)
+{
+    if (! isStandalone) return;
+    lastVersionTime = juce::Time::getMillisecondCounterHiRes();
+    juce::MemoryBlock state;
+    processor.getStateInformation (state);
+    if (state == lastVersionState)
+        return; // the newest version already is this
+    auto xml = juce::AudioProcessor::getXmlFromBinary (state.getData(), (int) state.getSize());
+    if (xml == nullptr) return;
+    const auto song = processor.currentProjectFile != juce::File() ? processor.currentProjectFile.getFileNameWithoutExtension() : juce::String ("Untitled");
+    xml->setAttribute ("autosaveOf", processor.currentProjectFile.getFullPathName());
+    xml->setAttribute ("versionOf", song);
+    xml->setAttribute ("versionReason", reason);
+    auto folder = rz::AppSettings::getVersionsFolder();
+    folder.createDirectory();
+    const auto now = juce::Time::getCurrentTime();
+    auto file = folder.getChildFile (now.formatted ("%Y-%m-%d_%H-%M-%S") + "  " + juce::File::createLegalFileName (song) + ".rezalica")
+                      .getNonexistentSibling();
+    if (! xml->writeTo (file)) return;
+    lastVersionState = state;
+
+    // keep the newest 50, and nothing older than 7 days (but always the newest 10)
+    auto files = folder.findChildFiles (juce::File::findFiles, false, "*.rezalica");
+    std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b) { return a.getFileName() > b.getFileName(); });
+    for (int i = 10; i < files.size(); ++i)
+        if (i >= 50 || (now - files[i].getLastModificationTime()).inDays() > 7.0)
+            files[i].deleteFile();
+}
+
+void RezalicaEditor::showVersionsMenu()
+{
+    auto files = rz::AppSettings::getVersionsFolder().findChildFiles (juce::File::findFiles, false, "*.rezalica");
+    std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b) { return a.getFileName() > b.getFileName(); });
+    juce::PopupMenu m;
+    m.addSectionHeader ("Versions of your work (newest first)");
+    for (int i = 0; i < files.size(); ++i)
+    {
+        juce::String song, reason;
+        if (auto xml = juce::parseXMLIfTagMatches (files[i], "REZALICA"))
+        {
+            song = xml->getStringAttribute ("versionOf");
+            reason = xml->getStringAttribute ("versionReason");
+        }
+        const auto t = files[i].getLastModificationTime();
+        m.addItem (1 + i, t.formatted ("%d.%m.  %H:%M") + "     " + (song.isNotEmpty() ? song : files[i].getFileNameWithoutExtension())
+                              + (reason.isNotEmpty() && reason != "autosave" ? "     (" + reason + ")" : juce::String()));
+    }
+    if (files.isEmpty())
+        m.addItem (999, "(no versions yet: one is kept every 5 minutes)", false);
+    m.addSeparator();
+    m.addItem (1000, "Show the versions folder");
+    juce::Component::SafePointer<RezalicaEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&fileButton), [safe, files] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (r == 1000) { auto f = rz::AppSettings::getVersionsFolder(); f.createDirectory(); f.revealToUser(); return; }
+        if (r < 1 || r > files.size()) return;
+        const auto f = files[r - 1];
+        safe->offerRestore (f, "Restore version",
+                            "Open the version from " + f.getLastModificationTime().formatted ("%d.%m.%Y %H:%M") + "?\n"
+                            "What you have now is kept as a version too (FILE > Restore Version).", true);
+    });
+}
+
+void RezalicaEditor::offerRestore (const juce::File& file, const juce::String& title, const juce::String& message, bool saveCurrentFirst)
+{
+    juce::Component::SafePointer<RezalicaEditor> safe (this);
+    juce::AlertWindow::showYesNoCancelBox (juce::MessageBoxIconType::QuestionIcon, title,
+                                           message + "\n\n\"Without plug-ins\": effects and instruments are not loaded (if one of them crashed Rezalica); "
+                                                     "each stays in the project and loads when you click it.",
+                                           "Restore", "Without plug-ins", "Cancel", this,
+                                           juce::ModalCallbackFunction::create ([safe, file, saveCurrentFirst] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (saveCurrentFirst) safe->saveVersion ("before restoring a version");
+        safe->restoreFrom (file, r == 2);
+    }));
+}
+
+void RezalicaEditor::restoreFrom (const juce::File& file, bool withoutPlugins)
+{
+    auto xml = juce::XmlDocument::parse (file);
+    const juce::File original (xml != nullptr ? xml->getStringAttribute ("autosaveOf") : juce::String());
+    if (processor.loadProjectFromFile (file, withoutPlugins))
+    {
+        processor.currentProjectFile = original; // Save goes back to the real project file
+        processor.markProjectSaved();
+        lastAutosavedState.reset();             // (so it is autosaved again)
+        updateWindowTitle();
+        selectPad (processor.selectedPad.load());
+        refreshChopControls();
+        refreshPadNames();
+        if (const int skipped = processor.countPendingPlugins(); skipped > 0)
+            showStatus (juce::String (skipped) + " plug-ins not loaded: click a \"(not loaded)\" slot / pad to load it");
+    }
+    else
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Restore", "This version could not be opened.");
+    }
 }
 
 void RezalicaEditor::checkCrashRecovery()
 {
+    if (! isShowing())
+    {
+        // the main window opens after the splash screen: ask when it can be seen
+        juce::Component::SafePointer<RezalicaEditor> safe (this);
+        juce::Timer::callAfterDelay (250, [safe] { if (safe != nullptr) safe->checkCrashRecovery(); });
+        return;
+    }
     auto flag = rz::AppSettings::getRunningFlag();
     auto autosaved = rz::AppSettings::getAutosaveFile();
     const bool crashed = flag.existsAsFile() && autosaved.existsAsFile();
     flag.getParentDirectory().createDirectory();
     flag.replaceWithText (juce::Time::getCurrentTime().toISO8601 (true)); // removed again on a clean exit
+    // which plug-in was Rezalica busy with when it stopped? (the file is removed after every plug-in step)
+    auto activityFile = rz::AppSettings::getActivityFile();
+    const auto culprit = activityFile.existsAsFile() ? activityFile.loadFileAsString().trim() : juce::String();
+    activityFile.deleteFile();
     if (! crashed)
         return;
 
-    juce::Component::SafePointer<RezalicaEditor> safe (this);
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Rezalica was not closed properly",
-                                        "Rezalica did not close normally last time (crash or power cut).\n"
-                                        "Restore the automatically saved project from "
-                                            + autosaved.getLastModificationTime().formatted ("%d.%m.%Y %H:%M") + "?",
-                                        "Restore", "No", this,
-                                        juce::ModalCallbackFunction::create ([safe, autosaved] (int ok)
-    {
-        if (safe == nullptr || ok == 0) return;
-        auto xml = juce::XmlDocument::parse (autosaved);
-        const juce::File original (xml != nullptr ? xml->getStringAttribute ("autosaveOf") : juce::String());
-        if (safe->processor.loadProjectFromFile (autosaved))
-        {
-            safe->processor.currentProjectFile = original; // Save goes back to the real project file
-            safe->updateWindowTitle();
-            safe->selectPad (safe->processor.selectedPad.load());
-            safe->refreshChopControls();
-        }
-    }));
+    // the newest of the autosave and the versions
+    auto newest = autosaved;
+    for (auto& f : rz::AppSettings::getVersionsFolder().findChildFiles (juce::File::findFiles, false, "*.rezalica"))
+        if (f.getLastModificationTime() > newest.getLastModificationTime()) newest = f;
+
+    offerRestore (newest, "Rezalica was not closed properly",
+                  "Rezalica did not close normally last time (crash or power cut).\n"
+                  + (culprit.isNotEmpty() ? "It happened while " + culprit + ".\n" : juce::String())
+                  + "Restore your work from " + newest.getLastModificationTime().formatted ("%d.%m.%Y %H:%M") + "?\n"
+                  "(Older versions: FILE > Restore Version.)", false);
 }
 
 void RezalicaEditor::saveProject (bool saveAs, std::function<void (bool)> done)

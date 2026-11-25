@@ -267,6 +267,7 @@ void PluginHost::timerCallback()
 
 std::unique_ptr<juce::AudioPluginInstance> PluginHost::createInstance (const juce::PluginDescription& d, double sampleRate, int blockSize, juce::String& error)
 {
+    AppSettings::PluginActivity activity ("loading the plug-in " + d.name + " (" + d.manufacturerName + ")");
     return formats.createPluginInstance (d, sampleRate, blockSize, error);
 }
 } // namespace rz

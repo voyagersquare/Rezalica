@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "AppSettings.h"
 #include "PluginEditor.h"
 #include "TimeStretch.h"
 #include "Mp3Writer.h"
@@ -1625,6 +1626,8 @@ juce::String RezalicaProcessor::getPadName (int pad) const
 {
     if (auto* inst = getInstrument (pad))
         return inst->getName();
+    if (isInstrumentPending (pad))
+        return "(not loaded) " + getPendingInstrumentName (pad);
     if (auto s = engine.getPadSample (pad))
         return s->name;
 
@@ -1651,6 +1654,8 @@ bool RezalicaProcessor::saveProjectToFile (const juce::File& file)
     if (xml == nullptr)
         return false;
     file.getParentDirectory().createDirectory();
+    if (file.existsAsFile())
+        file.copyFileTo (file.getSiblingFile (file.getFileName() + ".bak")); // the previous save stays as a backup
     if (! xml->writeTo (file))
         return false;
     currentProjectFile = file;
@@ -1729,7 +1734,7 @@ juce::int64 RezalicaProcessor::projectFingerprint()
 bool RezalicaProcessor::hasUnsavedChanges() { return projectFingerprint() != savedFingerprint; }
 void RezalicaProcessor::markProjectSaved()   { savedFingerprint = projectFingerprint(); }
 
-bool RezalicaProcessor::loadProjectFromFile (const juce::File& file)
+bool RezalicaProcessor::loadProjectFromFile (const juce::File& file, bool withoutPlugins)
 {
     auto xml = juce::XmlDocument::parse (file);
     if (xml == nullptr || ! xml->hasTagName ("REZALICA"))
@@ -1738,7 +1743,9 @@ bool RezalicaProcessor::loadProjectFromFile (const juce::File& file)
     copyXmlToBinary (*xml, state);
     stopAll();
     restoringProject = true;
+    skipPluginsOnLoad = withoutPlugins;
     setStateInformation (state.getData(), (int) state.getSize());
+    skipPluginsOnLoad = false;
     restoringProject = false;
     undoStack.clear();
     redoStack.clear();
@@ -2733,6 +2740,7 @@ void RezalicaProcessor::setSlotProcessor (int busIndex, int slotIndex, std::uniq
         old = std::move (slot.owned);
         slot.owned = std::move (fresh);
         slot.live = slot.owned.get();
+        slot.pending = {};
         slot.hasDesc = desc != nullptr;
         if (desc != nullptr) slot.desc = *desc;
         slot.bypass = false;
@@ -2767,6 +2775,7 @@ juce::AudioProcessor* RezalicaProcessor::getSlotProcessor (int busIndex, int slo
 juce::String RezalicaProcessor::getSlotName (int busIndex, int slotIndex) const
 {
     if (auto* p = getSlotProcessor (busIndex, slotIndex)) return p->getName();
+    if (isSlotPending (busIndex, slotIndex)) return "(not loaded) " + getPendingSlotName (busIndex, slotIndex);
     return {};
 }
 
@@ -2820,6 +2829,7 @@ bool RezalicaProcessor::setInstrumentProcessor (int pad, std::unique_ptr<juce::A
     if (pad < 0 || pad >= rz::numPads || fresh == nullptr) { error = "No instrument"; return false; }
     for (auto& [owner, closeEditors] : pluginsAboutToChange) if (closeEditors) closeEditors();
     auto& in = instruments[(size_t) pad];
+    in.pending = {};
     std::unique_ptr<juce::AudioProcessor> old;
     {
         // prepared first, then swapped in while the audio thread does not use it
@@ -2849,6 +2859,7 @@ void RezalicaProcessor::clearInstrument (int pad)
 {
     if (pad < 0 || pad >= rz::numPads) return;
     auto& in = instruments[(size_t) pad];
+    if (in.owned == nullptr && in.pending.isValid()) { in.pending = {}; instrumentsChanged.sendChangeMessage(); return; }
     if (in.owned == nullptr) return;
     for (auto& [owner, closeEditors] : pluginsAboutToChange) if (closeEditors) closeEditors();
     std::unique_ptr<juce::AudioProcessor> old;
@@ -2990,6 +3001,7 @@ juce::ValueTree RezalicaProcessor::instrumentsToValueTree() const
     for (int pd = 0; pd < rz::numPads; ++pd)
     {
         auto& in = instruments[(size_t) pd];
+        if (in.owned == nullptr && in.pending.isValid()) { t.appendChild (in.pending.createCopy(), nullptr); continue; }
         if (in.owned == nullptr || ! in.hasDesc) continue;
         juce::ValueTree it ("INSTRUMENT");
         it.setProperty ("pad", pd, nullptr);
@@ -3012,15 +3024,26 @@ void RezalicaProcessor::instrumentsFromValueTree (const juce::ValueTree& t)
     {
         const int pd = it.getProperty ("pad", -1);
         if (pd < 0 || pd >= rz::numPads || it.getNumChildren() == 0) continue;
-        juce::PluginDescription d;
-        if (auto xml = it.getChild (0).createXml(); xml == nullptr || ! d.loadFromXml (*xml)) continue;
+        if (skipPluginsOnLoad) { instruments[(size_t) pd].pending = it.createCopy(); continue; } // loaded later, by a click
         juce::String err;
-        if (! loadInstrument (pd, d, err)) continue; // not installed on this computer
-        juce::MemoryBlock mb;
-        mb.fromBase64Encoding (it.getProperty ("state").toString());
-        if (auto* p = getInstrument (pd); p != nullptr && mb.getSize() > 0)
-            p->setStateInformation (mb.getData(), (int) mb.getSize());
+        if (! restoreInstrumentFrom (pd, it, err))
+            instruments[(size_t) pd].pending = it.createCopy(); // not installed on this computer: kept in the project
     }
+}
+
+bool RezalicaProcessor::restoreInstrumentFrom (int pd, const juce::ValueTree& it, juce::String& error)
+{
+    juce::PluginDescription d;
+    if (auto xml = it.getChild (0).createXml(); xml == nullptr || ! d.loadFromXml (*xml)) { error = "Unknown plug-in"; return false; }
+    if (! loadInstrument (pd, d, error)) return false;
+    juce::MemoryBlock mb;
+    mb.fromBase64Encoding (it.getProperty ("state").toString());
+    if (auto* p = getInstrument (pd); p != nullptr && mb.getSize() > 0)
+    {
+        rz::AppSettings::PluginActivity activity ("restoring the settings of " + d.name);
+        p->setStateInformation (mb.getData(), (int) mb.getSize());
+    }
+    return true;
 }
 
 juce::ValueTree RezalicaProcessor::mixerToValueTree() const
@@ -3039,6 +3062,7 @@ juce::ValueTree RezalicaProcessor::mixerToValueTree() const
         for (int si = 0; si < rz::MixerBus::maxSlots; ++si)
         {
             auto& slot = bus.slots[(size_t) si];
+            if (slot.owned == nullptr && slot.pending.isValid()) { t.appendChild (slot.pending.createCopy(), nullptr); continue; }
             if (slot.owned == nullptr || ! slot.hasDesc) continue;
             juce::ValueTree st ("SLOT");
             st.setProperty ("index", si, nullptr);
@@ -3059,8 +3083,11 @@ void RezalicaProcessor::mixerFromValueTree (const juce::ValueTree& m)
 {
     for (int bi = 0; bi < rz::numEffectChains; ++bi)
         for (int si = 0; si < rz::MixerBus::maxSlots; ++si)
+        {
             if (buses[(size_t) bi].slots[(size_t) si].owned != nullptr)
                 clearSlot (bi, si);
+            buses[(size_t) bi].slots[(size_t) si].pending = {};
+        }
     for (int b = 0; b < rz::numBanks; ++b)
         engine.bankBus[(size_t) b] = juce::jlimit (0, rz::numBuses - 1, (int) m.getProperty ("bankBus" + juce::String (b), 0));
     for (auto& bus : buses) { bus.gainDb = 0.0f; bus.mute = false; bus.solo = false; }
@@ -3077,17 +3104,89 @@ void RezalicaProcessor::mixerFromValueTree (const juce::ValueTree& m)
         {
             const int si = st.getProperty ("index", -1);
             if (si < 0 || si >= rz::MixerBus::maxSlots || st.getNumChildren() == 0) continue;
-            juce::PluginDescription d;
-            if (auto xml = st.getChild (0).createXml(); xml == nullptr || ! d.loadFromXml (*xml)) continue;
+            if (skipPluginsOnLoad) { bus.slots[(size_t) si].pending = st.createCopy(); continue; } // loaded later, by a click
             juce::String err;
-            if (! loadPluginIntoSlot (bi, si, d, err)) continue; // plug-in missing on this computer
-            juce::MemoryBlock mb;
-            mb.fromBase64Encoding (st.getProperty ("state").toString());
-            if (auto* p = getSlotProcessor (bi, si); p != nullptr && mb.getSize() > 0)
-                p->setStateInformation (mb.getData(), (int) mb.getSize());
-            bus.slots[(size_t) si].bypass = (bool) st.getProperty ("bypass", false);
+            if (! restoreSlotFrom (bi, si, st, err))
+                bus.slots[(size_t) si].pending = st.createCopy(); // missing on this computer: kept in the project
         }
     }
+}
+
+juce::String RezalicaProcessor::pendingName (const juce::ValueTree& t)
+{
+    juce::PluginDescription d;
+    if (t.getNumChildren() > 0)
+        if (auto xml = t.getChild (0).createXml(); xml != nullptr && d.loadFromXml (*xml))
+            return d.name;
+    return "plug-in";
+}
+
+bool RezalicaProcessor::restoreSlotFrom (int bi, int si, const juce::ValueTree& st, juce::String& error)
+{
+    juce::PluginDescription d;
+    if (auto xml = st.getChild (0).createXml(); xml == nullptr || ! d.loadFromXml (*xml)) { error = "Unknown plug-in"; return false; }
+    if (! loadPluginIntoSlot (bi, si, d, error)) return false;
+    juce::MemoryBlock mb;
+    mb.fromBase64Encoding (st.getProperty ("state").toString());
+    if (auto* p = getSlotProcessor (bi, si); p != nullptr && mb.getSize() > 0)
+    {
+        rz::AppSettings::PluginActivity activity ("restoring the settings of " + d.name);
+        p->setStateInformation (mb.getData(), (int) mb.getSize());
+    }
+    getBus (bi).slots[(size_t) si].bypass = (bool) st.getProperty ("bypass", false);
+    return true;
+}
+
+bool RezalicaProcessor::isSlotPending (int bus, int slot) const
+{
+    const auto& s = buses[(size_t) juce::jlimit (0, rz::numEffectChains - 1, bus)].slots[(size_t) juce::jlimit (0, rz::MixerBus::maxSlots - 1, slot)];
+    return s.owned == nullptr && s.pending.isValid();
+}
+
+juce::String RezalicaProcessor::getPendingSlotName (int bus, int slot) const
+{
+    return isSlotPending (bus, slot) ? pendingName (buses[(size_t) bus].slots[(size_t) slot].pending) : juce::String();
+}
+
+bool RezalicaProcessor::loadPendingSlot (int bus, int slot, juce::String& error)
+{
+    if (! isSlotPending (bus, slot)) return false;
+    auto& s = getBus (bus).slots[(size_t) slot];
+    const auto st = s.pending;
+    safetySave ("before loading " + pendingName (st));
+    if (! restoreSlotFrom (bus, slot, st, error)) return false;
+    s.pending = {};
+    mixerChanged.sendChangeMessage();
+    return true;
+}
+
+bool RezalicaProcessor::isInstrumentPending (int pad) const
+{
+    return pad >= 0 && pad < rz::numPads && instruments[(size_t) pad].owned == nullptr && instruments[(size_t) pad].pending.isValid();
+}
+
+juce::String RezalicaProcessor::getPendingInstrumentName (int pad) const
+{
+    return isInstrumentPending (pad) ? pendingName (instruments[(size_t) pad].pending) : juce::String();
+}
+
+bool RezalicaProcessor::loadPendingInstrument (int pad, juce::String& error)
+{
+    if (! isInstrumentPending (pad)) return false;
+    const auto it = instruments[(size_t) pad].pending;
+    safetySave ("before loading " + pendingName (it));
+    if (! restoreInstrumentFrom (pad, it, error)) return false;
+    instruments[(size_t) pad].pending = {};
+    instrumentsChanged.sendChangeMessage();
+    return true;
+}
+
+int RezalicaProcessor::countPendingPlugins() const
+{
+    int n = 0;
+    for (auto& b : buses) for (auto& s : b.slots) if (s.owned == nullptr && s.pending.isValid()) ++n;
+    for (auto& in : instruments) if (in.owned == nullptr && in.pending.isValid()) ++n;
+    return n;
 }
 
 void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)

@@ -1,5 +1,6 @@
 #include "MixerPanel.h"
 #include "MidiControl.h"
+#include "AppSettings.h"
 
 namespace rz
 {
@@ -10,7 +11,11 @@ struct MixerPanel::EditorWindow : public juce::DocumentWindow
     EditorWindow (MixerPanel& o, int k, juce::AudioProcessor& p)
         : juce::DocumentWindow (p.getName(), colours::background, juce::DocumentWindow::closeButton), owner (o), key (k)
     {
-        juce::AudioProcessorEditor* ed = p.createEditorIfNeeded();
+        juce::AudioProcessorEditor* ed = nullptr;
+        {
+            rz::AppSettings::PluginActivity activity ("opening the window of " + p.getName());
+            ed = p.createEditorIfNeeded();
+        }
         if (ed == nullptr)
             ed = new juce::GenericAudioProcessorEditor (p); // plug-ins without their own window
         setUsingNativeTitleBar (true);
@@ -41,7 +46,7 @@ void MixerSlotView::paint (juce::Graphics& g)
     auto& processor = owner.getProcessor();
     auto r = getLocalBounds().toFloat().reduced (1.0f);
     const auto name = processor.getSlotName (bus, slot);
-    const bool bypassed = processor.getBus (bus).slots[(size_t) slot].bypass.load();
+    const bool bypassed = processor.getBus (bus).slots[(size_t) slot].bypass.load() || processor.isSlotPending (bus, slot);
     g.setColour (dragOver ? accent.withAlpha (0.35f) : juce::Colour (0xff0d0d0e));
     g.fillRoundedRectangle (r, 3.0f);
     g.setColour (dragOver ? accent : juce::Colours::black);
@@ -57,13 +62,15 @@ void MixerSlotView::paint (juce::Graphics& g)
     g.fillRoundedRectangle (r.withWidth (4.0f).reduced (0.0f, 3.0f), 2.0f);
     g.setColour (bypassed ? dim : text);
     g.setFont (juce::FontOptions (juce::jmin (12.0f, r.getHeight() * 0.6f), juce::Font::bold));
-    g.drawFittedText (name + (bypassed ? "  (off)" : ""), r.reduced (8.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1);
+    g.drawFittedText (name + (bypassed && ! processor.isSlotPending (bus, slot) ? "  (off)" : ""), r.reduced (8.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1);
 }
 
 void MixerSlotView::mouseDown (const juce::MouseEvent& e)
 {
     auto& processor = owner.getProcessor();
-    if (! e.mods.isPopupMenu() && processor.getSlotProcessor (bus, slot) != nullptr)
+    if (! e.mods.isPopupMenu() && processor.isSlotPending (bus, slot))
+        owner.loadPending (bus, slot); // skipped after a crash: a click loads it now
+    else if (! e.mods.isPopupMenu() && processor.getSlotProcessor (bus, slot) != nullptr)
         owner.openEditor (bus, slot);
     else
         owner.showSlotMenu (bus, slot, this);
@@ -275,8 +282,18 @@ void MixerPanel::resized()
     }
 }
 
+void MixerPanel::loadPending (int bus, int slot)
+{
+    juce::String err;
+    const auto name = processor.getPendingSlotName (bus, slot);
+    if (! processor.loadPendingSlot (bus, slot, err))
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Load effect", name + ": " + err);
+    for (auto& s : strips) s->refresh();
+}
+
 void MixerPanel::loadIntoSlot (int bus, int slot, const juce::PluginDescription& d)
 {
+    processor.safetySave ("before loading " + d.name);
     juce::String err;
     if (! processor.loadPluginIntoSlot (bus, slot, d, err))
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Load effect", d.name + ": " + err);
@@ -302,6 +319,12 @@ void MixerPanel::showSlotMenu (int bus, int slot, juce::Component* target)
     juce::PopupMenu m;
     const bool filled = processor.getSlotProcessor (bus, slot) != nullptr;
     m.addSectionHeader (busName (bus) + "  slot " + juce::String (slot + 1));
+    if (processor.isSlotPending (bus, slot))
+    {
+        m.addItem (4, "Load " + processor.getPendingSlotName (bus, slot) + "  (skipped after a crash)");
+        m.addItem (5, "Remove it from the project");
+        m.addSeparator();
+    }
     if (filled)
     {
         m.addItem (1, "Open " + processor.getSlotName (bus, slot));
@@ -325,6 +348,8 @@ void MixerPanel::showSlotMenu (int bus, int slot, juce::Component* target)
         if (r == 1) safe->openEditor (bus, slot);
         else if (r == 2) { auto& b = pr.getBus (bus).slots[(size_t) slot].bypass; b = ! b.load(); }
         else if (r == 3) pr.clearSlot (bus, slot);
+        else if (r == 4) safe->loadPending (bus, slot);
+        else if (r == 5) { pr.getBus (bus).slots[(size_t) slot].pending = {}; pr.mixerChanged.sendChangeMessage(); }
         else if (r >= 100 && r < 100 + effects.size()) safe->loadIntoSlot (bus, slot, effects[r - 100]);
         for (auto& s : safe->strips) s->refresh();
     });

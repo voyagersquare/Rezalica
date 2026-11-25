@@ -114,7 +114,20 @@ public:
 
     // ---- projects (standalone app: New / Open / Save / Save As) ----
     bool saveProjectToFile (const juce::File& file);
-    bool loadProjectFromFile (const juce::File& file);
+    /** withoutPlugins: the plug-ins (effects, instruments) are not loaded but kept in the project, each can be
+        loaded later by a click (after a crash caused by a plug-in). */
+    bool loadProjectFromFile (const juce::File& file, bool withoutPlugins = false);
+    /** Before a risky step (loading a plug-in, opening a project): the editor saves a version of the work. */
+    std::function<void (const juce::String& reason)> beforeRiskyStep;
+    void safetySave (const juce::String& reason) { if (beforeRiskyStep && ! restoringProject) beforeRiskyStep (reason); }
+    /** Plug-ins skipped by "restore without plug-ins": loading them one by one. */
+    bool isSlotPending (int bus, int slot) const;
+    juce::String getPendingSlotName (int bus, int slot) const;
+    bool loadPendingSlot (int bus, int slot, juce::String& error);
+    bool isInstrumentPending (int pad) const;
+    juce::String getPendingInstrumentName (int pad) const;
+    bool loadPendingInstrument (int pad, juce::String& error);
+    int countPendingPlugins() const;
     void newProject();
     juce::File currentProjectFile;
     /** Unsaved changes since the last New / Open / Save (pad selection and similar don't count). */
@@ -425,7 +438,12 @@ private:
         std::array<std::pair<int, int>, 64> tagged {};  // audio thread: piano roll / MIDI keys notes (tag, note) that sound
         std::array<juce::uint8, 128> held {};           // audio thread: notes that sound
         bool allOff = false;                            // audio thread: send "all notes off" this block
+        juce::ValueTree pending;                        // skipped by "restore without plug-ins" (message thread)
     };
+    bool skipPluginsOnLoad = false;
+    bool restoreSlotFrom (int bus, int slot, const juce::ValueTree& st, juce::String& error);
+    bool restoreInstrumentFrom (int pad, const juce::ValueTree& it, juce::String& error);
+    static juce::String pendingName (const juce::ValueTree& t);
     std::array<PadInstrument, rz::numPads> instruments;
     void prepareInstrument (PadInstrument&);
     /** Audio thread: does this event go to the pad's instrument? (then it is turned into MIDI) */
