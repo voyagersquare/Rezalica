@@ -1349,6 +1349,11 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
     chordBox.onChange = [this] { processor.chordType = chordBox.getSelectedId() - 1; };
     toScaleButton.setTooltip ("To scale: the melodic notes (the selected ones, or all) move to the nearest note of the scale");
     toScaleButton.onClick = [this] { editor.quantizeToScale(); };
+    bounceButton.setWantsKeyboardFocus (false);
+    bounceButton.setTooltip ("Bounce: render the piano roll notes of this pattern (with the instrument / sample and its effects) "
+                             "to a WAV loop on a pad of any bank, to chop and edit like any sample");
+    bounceButton.onClick = [this] { showBounceMenu(); };
+    addAndMakeVisible (bounceButton);
     for (auto* c : std::initializer_list<juce::Component*> { &keyBox, &scaleBox, &chordBox, &toScaleButton })
     {
         c->setWantsKeyboardFocus (false);
@@ -1442,6 +1447,53 @@ PianoRollPanel::PianoRollPanel (RezalicaProcessor& p)
 PianoRollPanel::~PianoRollPanel()
 {
     stopTimer();
+}
+
+void PianoRollPanel::showBounceMenu()
+{
+    const int pattern = processor.getSequencer().currentPattern.load();
+    auto isFree = [this] (int p) { return processor.getEngine().getPadSample (p) == nullptr && ! processor.padHasInstrument (p)
+                                         && ! processor.isInstrumentPending (p); };
+    int firstFree = -1;
+    for (int p = 0; p < numPads && firstFree < 0; ++p)
+        if (isFree (p)) firstFree = p;
+    const int sel = processor.selectedPad.load();
+
+    juce::PopupMenu m;
+    m.addSectionHeader ("Bounce the piano roll of pattern " + juce::String (pattern + 1) + " to a pad");
+    if (firstFree >= 0) m.addItem (1000 + firstFree, "First empty pad:  " + padLabel (firstFree));
+    if (! processor.padHasInstrument (sel))
+        m.addItem (2000 + sel, "Selected pad:  " + padLabel (sel) + (isFree (sel) ? juce::String() : "   (replaces " + processor.getPadName (sel) + ")"));
+    m.addSeparator();
+    for (int b = 0; b < numBanks; ++b)
+    {
+        juce::PopupMenu bank;
+        for (int i = 0; i < padsPerBank; ++i)
+        {
+            const int p = b * padsPerBank + i;
+            const auto name = processor.getPadName (p);
+            bank.addItem (3000 + p, padLabel (p) + (name.isNotEmpty() ? "   " + name : juce::String ("   (empty)")), ! processor.padHasInstrument (p));
+        }
+        m.addSubMenu ("Bank " + juce::String::charToString ((juce::juce_wchar) ('A' + b)), bank);
+    }
+    juce::Component::SafePointer<PianoRollPanel> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&bounceButton), [safe, pattern] (int r)
+    {
+        if (safe == nullptr || r < 1000) return;
+        const int pad = r % 1000;
+        auto& pr = safe->processor;
+        pr.pushUndo ("Bounce to pad");
+        juce::String err;
+        if (pr.bouncePianoRollToPad (pattern, pad, err))
+        {
+            const auto help = safe->infoLabel.getText();
+            safe->infoLabel.setText ("Bounced pattern " + juce::String (pattern + 1) + " to pad " + padLabel (pad)
+                                     + "  (Documents/Rezalica/Bounced)", juce::dontSendNotification);
+            juce::Timer::callAfterDelay (6000, [safe, help] { if (safe != nullptr) safe->infoLabel.setText (help, juce::dontSendNotification); });
+        }
+        else
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Bounce to pad", err);
+    });
 }
 
 void PianoRollPanel::fillPadBox()
@@ -1540,11 +1592,15 @@ void PianoRollPanel::resized()
     lengthBox.setBounds (row1.removeFromLeft (92)); row1.removeFromLeft (10);
     drumButton.setBounds (row1.removeFromLeft (70)); row1.removeFromLeft (4);
     melodicButton.setBounds (row1.removeFromLeft (82)); row1.removeFromLeft (8);
-    padBox.setBounds (row1.removeFromLeft (112)); row1.removeFromLeft (4);
+    // the buttons keep their size; in a narrow window the pad and scale menus get smaller
+    bounceButton.setBounds (row1.removeFromRight (juce::jmin (112, row1.getWidth()))); row1.removeFromRight (6);
+    toScaleButton.setBounds (row1.removeFromRight (juce::jmin (78, row1.getWidth()))); row1.removeFromRight (4);
+    const int flexible = juce::jmax (0, row1.getWidth() - 92 - 56 - 18);
+    const int padW = juce::jlimit (60, 112, flexible * 2 / 5);
+    padBox.setBounds (row1.removeFromLeft (padW)); row1.removeFromLeft (4);
     midiKeysButton.setBounds (row1.removeFromLeft (juce::jmin (92, row1.getWidth()))); row1.removeFromLeft (10);
     // MELODIC: key + scale + TO SCALE
     keyBox.setBounds (row1.removeFromLeft (juce::jmin (56, row1.getWidth()))); row1.removeFromLeft (4);
-    toScaleButton.setBounds (row1.removeFromRight (juce::jmin (78, row1.getWidth()))); row1.removeFromRight (4);
     scaleBox.setBounds (row1.removeFromLeft (juce::jmin (210, row1.getWidth())));
 
     b.removeFromTop (6);

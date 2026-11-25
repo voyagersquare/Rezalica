@@ -194,6 +194,8 @@ private:
     // MELODIC: key + scale, the chord a drawn note makes, notes to the scale
     juce::ComboBox keyBox, scaleBox, chordBox;
     juce::TextButton toScaleButton { "TO SCALE" };
+    juce::TextButton bounceButton { "BOUNCE TO PAD" };
+    void showBounceMenu();
     /** The pencil key: a toggle button that shows a pencil icon. */
     struct PencilButton : public juce::TextButton
     {

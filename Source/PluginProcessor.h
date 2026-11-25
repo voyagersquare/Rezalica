@@ -149,6 +149,8 @@ public:
     /** stepPart / pianoPart: which part of the pattern to export. */
     juce::File exportPatternMidi (int pattern, bool stepPart, bool pianoPart);
     juce::File exportPatternWav (int pattern, bool stepPart, bool pianoPart);
+    /** BOUNCE TO PAD: renders the pattern's piano roll part (a seamless loop) and loads it on the pad. */
+    bool bouncePianoRollToPad (int pattern, int pad, juce::String& error);
 
     // ---- export the whole song (SCENE window) ----
     bool exportSongWav (const juce::File& file);
@@ -444,6 +446,17 @@ private:
         juce::ValueTree pending;                        // skipped by "restore without plug-ins" (message thread)
     };
     bool skipPluginsOnLoad = false;
+    bool skipInstrumentsOnLoad = false;   // offline renders: they borrow the running instruments instead
+    /** Offline renders use the instruments that already run (loaded, their samples in memory) instead of new copies,
+        which would still be loading their sounds. While lent, the live instruments are silent. */
+    struct InstrumentLoan
+    {
+        InstrumentLoan (RezalicaProcessor& live, RezalicaProcessor& offline, double sampleRate, int blockSize);
+        ~InstrumentLoan();
+        RezalicaProcessor& live;
+        RezalicaProcessor& offline;
+        std::vector<std::pair<int, bool>> pads; // pad, re-prepared
+    };
     bool restoreSlotFrom (int bus, int slot, const juce::ValueTree& st, juce::String& error);
     bool restoreInstrumentFrom (int pad, const juce::ValueTree& it, juce::String& error);
     static juce::String pendingName (const juce::ValueTree& t);

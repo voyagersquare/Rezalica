@@ -2710,6 +2710,40 @@ int main (int argc, char** argv)
         check (t.aimMelodicAt (5) && t.getSequencer().getClip (t.getSequencer().currentPattern.load())->targetPad == 5,
                "the piano roll's empty MELODIC pad becomes the instrument pad");
 
+        // DRAG WAV / BOUNCE: the offline render plays the running instrument (not a fresh copy)
+        {
+            auto& sq = t.getSequencer();
+            const int pat = sq.currentPattern.load();
+            auto c = sq.getClip (pat)->copy();
+            c->mode = rz::NoteClip::melodic;
+            c->targetPad = 5;
+            c->notes.clear();
+            for (int k = 0; k < 4; ++k)
+            {
+                rz::PianoNote n;
+                n.id = sq.newNoteId(); n.kind = (juce::uint8) rz::NoteClip::melodic; n.row = 60 + k;
+                n.start = (float) (k * 4); n.length = 2.0f; n.velocity = 127;
+                c->notes.push_back (n);
+            }
+            sq.setClip (pat, c);
+            const size_t seenBefore = synth->notesSeen.size();
+            auto wav = t.exportPatternWav (pat, false, true);
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (wav));
+            juce::AudioBuffer<float> got (2, rd != nullptr ? (int) rd->lengthInSamples : 1);
+            if (rd != nullptr) rd->read (&got, 0, got.getNumSamples(), 0, true, true);
+            int onsets = 0; bool was = false;
+            // (a seamless loop: a note that starts a sample before the loop's end belongs to its start)
+            for (int i = 0; i < got.getNumSamples() - 8; ++i) { const bool on = got.getSample (0, i) > 0.5f; if (on && ! was) ++onsets; was = on; }
+            std::cout << "       rendered notes: " << onsets << ", instrument saw " << (synth->notesSeen.size() - seenBefore) << " notes\n";
+            check (rd != nullptr && onsets == 4 && synth->notesSeen.size() - seenBefore >= 4, "DRAG WAV renders every piano roll note with the running instrument");
+            check (block() < 1.0e-6f, "... and the instrument is silent again afterwards");
+            juce::String err;
+            check (t.bouncePianoRollToPad (pat, 40, err) && t.getEngine().getPadSample (40) != nullptr, "BOUNCE TO PAD loads the loop on pad C9");
+            check (! t.bouncePianoRollToPad (pat, 5, err), "... not on the instrument's own pad");
+            wav.deleteFile();
+        }
+
         // STOP twice: everything stops
         t.triggerPadFromUi (5, 1.0f, true);
         block();

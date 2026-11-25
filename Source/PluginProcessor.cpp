@@ -1825,6 +1825,91 @@ juce::File RezalicaProcessor::exportPatternMidi (int pattern, bool stepPart, boo
     return file;
 }
 
+//==============================================================================
+RezalicaProcessor::InstrumentLoan::InstrumentLoan (RezalicaProcessor& l, RezalicaProcessor& o, double sr, int block)
+    : live (l), offline (o)
+{
+    for (int pd = 0; pd < rz::numPads; ++pd)
+    {
+        auto& in = live.instruments[(size_t) pd];
+        auto* p = in.owned.get();
+        if (p == nullptr) continue;
+        in.lock.enter(); // the audio thread leaves it alone (it only tries the lock) until it is given back
+        bool reprepared = false;
+        p->setNonRealtime (true);
+        if (std::abs (sr - live.currentSampleRate) > 0.5 || block > live.preparedBlockSize)
+        {
+            p->setRateAndBufferSizeDetails (sr, block);
+            p->prepareToPlay (sr, block);
+            reprepared = true;
+        }
+        // whatever the running instrument still played stops first
+        {
+            juce::AudioBuffer<float> scratch (juce::jmax (2, p->getTotalNumInputChannels(), p->getTotalNumOutputChannels()), block);
+            juce::MidiBuffer off;
+            off.addEvent (juce::MidiMessage::allNotesOff (1), 0);
+            off.addEvent (juce::MidiMessage::allSoundOff (1), 0);
+            scratch.clear();
+            p->processBlock (scratch, off);
+        }
+        auto& oi = offline.instruments[(size_t) pd];
+        oi.scratch.setSize (juce::jmax (2, p->getTotalNumInputChannels(), p->getTotalNumOutputChannels()), juce::jmax (block, 4096));
+        oi.midi.clear();
+        oi.midi.ensureSize (2048);
+        oi.held.fill (0);
+        oi.tagged.fill ({ -1, -1 });
+        oi.live = p;
+        oi.active = true;
+        pads.push_back ({ pd, reprepared });
+    }
+}
+
+RezalicaProcessor::InstrumentLoan::~InstrumentLoan()
+{
+    for (auto [pd, reprepared] : pads)
+    {
+        auto& oi = offline.instruments[(size_t) pd];
+        oi.active = false;
+        oi.live = nullptr;
+        auto& in = live.instruments[(size_t) pd];
+        if (auto* p = in.owned.get())
+        {
+            juce::AudioBuffer<float> scratch (juce::jmax (2, p->getTotalNumInputChannels(), p->getTotalNumOutputChannels()), juce::jmax (64, live.preparedBlockSize));
+            juce::MidiBuffer off;
+            off.addEvent (juce::MidiMessage::allNotesOff (1), 0);
+            off.addEvent (juce::MidiMessage::allSoundOff (1), 0);
+            scratch.clear();
+            p->processBlock (scratch, off);
+            p->setNonRealtime (false);
+            if (reprepared)
+            {
+                const double sr = live.currentSampleRate > 0.0 ? live.currentSampleRate : 44100.0;
+                p->setRateAndBufferSizeDetails (sr, live.preparedBlockSize);
+                p->prepareToPlay (sr, live.preparedBlockSize);
+            }
+        }
+        in.allOff = true; // (the audio thread forgets the notes it thought were held)
+        in.lock.exit();
+    }
+}
+
+bool RezalicaProcessor::bouncePianoRollToPad (int pattern, int pad, juce::String& error)
+{
+    if (pad < 0 || pad >= rz::numPads) { error = "No pad"; return false; }
+    if (padHasInstrument (pad)) { error = "Pad " + rz::padLabel (pad) + " plays a VST instrument: choose another pad"; return false; }
+    if (sequencer.getClip (pattern) == nullptr || sequencer.getClip (pattern)->notes.empty()) { error = "The piano roll of this pattern has no notes"; return false; }
+    auto rendered = exportPatternWav (pattern, false, true);
+    if (! rendered.existsAsFile()) { error = "The pattern could not be rendered"; return false; }
+    // kept with the other bounces (offered for deleting when the project is not saved)
+    auto folder = getRenderFolder();
+    folder.createDirectory();
+    auto file = folder.getNonexistentChildFile ("Bounce P" + juce::String (pattern + 1) + " to " + rz::padLabel (pad), ".wav", false);
+    if (! rendered.moveFileTo (file)) file = rendered;
+    if (! loadFileToPad (pad, file)) { error = "The bounced file could not be loaded"; return false; }
+    noteSessionFile (file);
+    return true;
+}
+
 juce::File RezalicaProcessor::exportPatternWav (int pattern, bool stepPart, bool pianoPart)
 {
     // render offline in a second, private instance with the same project
@@ -1837,6 +1922,7 @@ juce::File RezalicaProcessor::exportPatternWav (int pattern, bool stepPart, bool
     getStateInformation (state);
     auto offlinePtr = std::make_unique<RezalicaProcessor> (false); // on the heap: the processor is large
     auto& offline = *offlinePtr;
+    offline.skipInstrumentsOnLoad = true; // (it borrows the running ones below)
     offline.setStateInformation (state.getData(), (int) state.getSize());
 
     auto& seq = offline.getSequencer();
@@ -1855,9 +1941,10 @@ juce::File RezalicaProcessor::exportPatternWav (int pattern, bool stepPart, bool
     seq.syncToHost = false;
     seq.bpm = (float) bpm;
 
-    const int block = 512;
+    const int block = preparedBlockSize >= 64 ? juce::jmin (preparedBlockSize, 2048) : 512;
     offline.setRateAndBufferSizeDetails (sr, block);
     offline.prepareToPlay (sr, block);
+    InstrumentLoan loan (*this, offline, sr, block);
     seq.internalPlay = true;
 
     // two passes: the second one includes the tails (reverb, delay ...) that ring over from the first,
@@ -1866,13 +1953,15 @@ juce::File RezalicaProcessor::exportPatternWav (int pattern, bool stepPart, bool
     out.clear();
     juce::AudioBuffer<float> buf (2, block);
     juce::MidiBuffer noMidi;
-    for (int pos = 0; pos < 2 * loopSamples; pos += block)
+    int latency = -1; // the mixer's plug-ins delay everything by the same (compensated) amount: the loop starts that much later
+    for (int pos = 0; latency < 0 || pos < 2 * loopSamples + latency; pos += block)
     {
-        const int n = juce::jmin (block, 2 * loopSamples - pos);
-        juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, n);
+        juce::AudioBuffer<float> sub (buf.getArrayOfWritePointers(), 2, block);
         offline.processBlock (sub, noMidi);
         noMidi.clear();
-        const int dst = pos - loopSamples;
+        if (latency < 0) latency = juce::jlimit (0, loopSamples, offline.pluginLatencySamples.load());
+        const int n = block;
+        const int dst = pos - loopSamples - latency;
         for (int i = 0; i < n; ++i)
             if (dst + i >= 0 && dst + i < loopSamples)
                 for (int ch = 0; ch < 2; ++ch)
@@ -1964,6 +2053,7 @@ juce::AudioBuffer<float> RezalicaProcessor::renderSong (double sr, double tailSe
     getStateInformation (state);
     auto offlinePtr = std::make_unique<RezalicaProcessor> (false); // on the heap: the processor is large
     auto& offline = *offlinePtr;
+    offline.skipInstrumentsOnLoad = true; // (it borrows the running ones below)
     offline.setStateInformation (state.getData(), (int) state.getSize());
     auto& seq = offline.getSequencer();
     seq.songMode = true;
@@ -1975,9 +2065,10 @@ juce::AudioBuffer<float> RezalicaProcessor::renderSong (double sr, double tailSe
     seq.syncToHost = false;
     seq.bpm = (float) bpm;
 
-    const int block = 512;
+    const int block = preparedBlockSize >= 64 ? juce::jmin (preparedBlockSize, 2048) : 512;
     offline.setRateAndBufferSizeDetails (sr, block);
     offline.prepareToPlay (sr, block);
+    InstrumentLoan loan (*this, offline, sr, block);
     seq.internalPlay = true;
 
     const int totalSamples = songSamples + tailSamples;
@@ -3038,7 +3129,7 @@ void RezalicaProcessor::instrumentsFromValueTree (const juce::ValueTree& t)
 {
     for (int pd = 0; pd < rz::numPads; ++pd)
         clearInstrument (pd);
-    if (! t.isValid()) return;
+    if (! t.isValid() || skipInstrumentsOnLoad) return;
     for (auto it : t)
     {
         const int pd = it.getProperty ("pad", -1);

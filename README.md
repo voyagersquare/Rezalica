@@ -158,6 +158,10 @@ i metronom ostaju u ritmu. Efekti se spremaju s projektom.
 - Zvuk ide kroz **GAIN, PAN, MUTE** pada, njegove **EFFECTS** (6 slotova) i bus, kao sample. STOP dvaput gasi sve note.
 - Klik na ekran valnog oblika (ili desni klik na pad > Open instrument window) otvara instrument; desni klik na pad > Replace / Remove.
 - Instrument i njegove postavke spremaju se u projekt. Najviše 16 padova s instrumentom.
+- **BOUNCE TO PAD** (Piano Roll, gore desno): note piano rolla ovog patterna (s instrumentom / samplom i efektima) renderiraju se u
+  WAV petlju i učitaju na pad po izboru – prvi prazni, odabrani ili bilo koji pad u bankama A–D – pa se sample dalje obrađuje
+  (chop, warp, efekti …). Datoteke su u *Dokumenti/Rezalica/Bounced*.
+- **DRAG WAV** i izvoz pjesme koriste instrument koji već radi (s učitanim zvukovima), pa su sve note u datoteci.
 - Kad je **odabran pad s instrumentom**, MIDI klavijatura automatski svira taj instrument (kao "armed" kanal u DAW-u).
   Ako Piano Roll (MELODIC) svira prazan pad, prebaci se na pad s instrumentom.
 
@@ -326,7 +330,7 @@ Gumb **DECK** (uz SONG) otvara gramofon u donjem dijelu prozora.
 
 1. Na GitHubu otvori **Actions**, pa zadnji uspješni **Build**.
 2. Pod **Artifacts** preuzmi `Rezalica-Setup-Windows` i raspakiraj ga.
-3. Pokreni `Rezalica-Setup-0.2.7.exe`. Instalacija stavlja program u `Program Files\Rezalica`,
+3. Pokreni `Rezalica-Setup-0.2.8.exe`. Instalacija stavlja program u `Program Files\Rezalica`,
    dodaje ga u Start izbornik i (ako je kvačica uključena) ikonu na radnu površinu.
 4. Deinstalacija: *Postavke > Aplikacije* ili *Upravljačka ploča > Programi*.
 
