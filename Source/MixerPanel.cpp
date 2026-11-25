@@ -81,7 +81,8 @@ void MixerSlotView::itemDropped (const SourceDetails& d)
 //==============================================================================
 MixerStrip::MixerStrip (MixerPanel& o, RezalicaProcessor& p, int busIndex) : processor (p), bus (busIndex)
 {
-    title.setText (bus == deckChain ? juce::String ("EFFECTS") : bus >= padChainBase ? "EFFECTS  " + padLabel (bus - padChainBase) : busName (bus),
+    title.setText (bus == deckChain ? juce::String ("EFFECTS") : bus >= padChainBase ? "EFFECTS  " + padLabel (bus - padChainBase)
+                                       : bus > 0 ? busName (bus) + "  SEND" : busName (bus),
                    juce::dontSendNotification);
     title.setFont (juce::FontOptions (13.0f, juce::Font::bold));
     title.setColour (juce::Label::textColourId, bus == 0 ? colours::accent : colours::text);
@@ -115,6 +116,8 @@ MixerStrip::MixerStrip (MixerPanel& o, RezalicaProcessor& p, int busIndex) : pro
     {
         fader.setRange (-60.0, 6.0, 0.1);
         fader.setSkewFactorFromMidPoint (-12.0);
+        fader.setTooltip ("SEND: how much of the pads on this bus goes into its effects (the effect amount). "
+                          "The pads themselves always play dry at full level.");
         fader.setValue (processor.getBus (bus).gainDb.load(), juce::dontSendNotification);
         fader.onValueChange = [this] { processor.getBus (bus).gainDb = (float) fader.getValue(); };
     }

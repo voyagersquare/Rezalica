@@ -62,6 +62,8 @@ struct MixerBus
     std::array<MixerSlot, maxSlots> slots;
     juce::SpinLock lock;
     int latency = 0;          // audio thread: the delay of its active plug-ins (samples)
+    bool hasEffect = false;   // audio thread: at least one plug-in on and not bypassed
+    float lastSend = 0.0f;    // audio thread: BUS A-D are sends - the fader is the send amount (ramped)
     LatencyDelay compensation; // audio thread: lines this bus up with the slowest one
 };
 

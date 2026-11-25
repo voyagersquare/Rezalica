@@ -611,7 +611,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     // the selected pad's own effects (6 slots), next to its knobs
     padFx = std::make_unique<rz::MixerPanel> (processor, rz::padChainBase + processor.selectedPad.load());
     addAndMakeVisible (*padFx);
-    fxTitle.setText ("MIXER   drag effects from BROWSER > PLUGINS into the slots", juce::dontSendNotification);
+    fxTitle.setText ("MIXER   BUS A-D are sends: the fader = effect amount   drag effects from BROWSER > PLUGINS", juce::dontSendNotification);
 
     setSize (isStandalone ? 1530 : 1240, isStandalone ? 784 : 772);
     if (isStandalone)

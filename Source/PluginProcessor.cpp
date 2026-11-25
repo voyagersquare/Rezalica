@@ -709,10 +709,15 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         const juce::SpinLock::ScopedTryLockType tl (bus.lock);
         if (! tl.isLocked()) continue; // keep the last value while the slots change
         int lat = 0;
+        bool active = false;
         for (auto& slot : bus.slots)
             if (slot.live != nullptr && ! slot.bypass.load())
+            {
                 lat += juce::jmax (0, slot.live->getLatencySamples());
+                active = true;
+            }
         bus.latency = lat;
+        bus.hasEffect = active;
     }
     // the pads' own effects come first: every pad is lined up to the slowest pad chain
     int padLatency = 0;
@@ -742,18 +747,28 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     const int totalLatency = juce::jmin (maxCompensation - 1, padLatency + busLatency + buses[0].latency);
     pluginLatencySamples = totalLatency;
     sequencer.displayLatencySamples = totalLatency + deviceOutputLatencySamples.load();
+    // BUS A-D are SEND buses: the pads sent there always play dry into MASTER at full level; a copy,
+    // as loud as the bus fader says (the send amount), goes through the bus effects, which return into MASTER
+    for (int bi = 1; bi < rz::numBuses; ++bi)
+        for (int ch = 0; ch < 2; ++ch)
+            masterBus.addFrom (ch, 0, busBuffers[(size_t) bi], ch, 0, numSamples);
     buses[0].compensation.process (masterBus.getArrayOfWritePointers(), 2, numSamples, busLatency);
 
     for (int bi = 1; bi < rz::numBuses; ++bi)
     {
         auto& bus = buses[(size_t) bi];
         auto& data = busBuffers[(size_t) bi];
+        const float send = juce::Decibels::decibelsToGain (bus.gainDb.load(), -59.9f);
+        for (int ch = 0; ch < 2; ++ch)
+            data.applyGainRamp (ch, 0, numSamples, bus.lastSend, send);
+        bus.lastSend = send;
         processBusChain (bi, numSamples);
         bus.compensation.process (data.getArrayOfWritePointers(), 2, numSamples, busLatency - bus.latency);
         if (bi == throughBus && inputCopyChannels > 0)
             recorder.capture (rz::AudioRecorder::input, data.getArrayOfReadPointers(), 2, numSamples); // with the bus effects
-        const bool silent = bus.mute.load() || (anySolo && ! bus.solo.load());
-        const float g = silent ? 0.0f : juce::Decibels::decibelsToGain (bus.gainDb.load(), -59.9f);
+        // the return: only when the bus has an effect (else it would just double the dry sound); M / S act on it
+        const bool silent = ! bus.hasEffect || bus.mute.load() || (anySolo && ! bus.solo.load());
+        const float g = silent ? 0.0f : 1.0f;
         for (int ch = 0; ch < 2; ++ch)
             masterBus.addFromWithRamp (ch, 0, data.getReadPointer (ch), numSamples, bus.lastGain, g);
         bus.lastGain = g;

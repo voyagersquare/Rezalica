@@ -1551,22 +1551,26 @@ int main (int argc, char** argv)
         };
         const float dry = level();
         check (m.getEngine().busForPad (0) == 0 && dry > 0.05f, "pads play into MASTER by default");
-        m.getEngine().bankBus[0] = 1;                       // bank A -> BUS A
+        m.getEngine().bankBus[0] = 1;                       // bank A -> BUS A (a send bus)
         m.getBus (1).mute = true;
-        check (m.getEngine().busForPad (0) == 1 && level() < 1.0e-6f, "a bank sent to BUS A follows its mute");
+        check (m.getEngine().busForPad (0) == 1 && std::abs (level() - dry) < dry * 0.05f,
+               "a pad sent to BUS A still plays dry at full level (also with the bus muted / without effects)");
         m.getBus (1).mute = false;
         m.setSlotProcessor (1, 0, std::make_unique<HalfGain>(), nullptr);
-        const float half = level();
-        std::cout << "       mixer: dry " << dry << ", through an effect on BUS A " << half << "\n";
-        check (std::abs (half - dry * 0.5f) < dry * 0.05f, "the effect in a BUS A slot processes the pads of that bus");
+        const float wet = level();
+        std::cout << "       mixer: dry " << dry << ", dry + the BUS A effect (send 0 dB) " << wet << "\n";
+        check (std::abs (wet - dry * 1.5f) < dry * 0.06f, "BUS A is a send: dry + the effect's return");
+        m.getBus (1).gainDb = -60.0f;                        // send all the way down: no effect
+        check (std::abs (level() - dry) < dry * 0.05f, "the BUS fader is the send amount (down = no effect)");
+        m.getBus (1).gainDb = 0.0f;
         m.getBus (1).slots[0].bypass = true;
-        check (std::abs (level() - dry) < dry * 0.05f, "bypass skips the effect");
+        check (std::abs (level() - dry) < dry * 0.05f, "bypass: only the dry sound");
         m.getBus (1).slots[0].bypass = false;
         m.getEngine().getPad (0).outputBus = 2;             // the pad itself -> BUS B (overrides the bank)
         m.getBus (2).solo = true;
         check (m.getEngine().busForPad (0) == 2 && std::abs (level() - dry) < dry * 0.05f, "a pad can go to its own bus; solo plays it");
         m.getEngine().getPad (0).outputBus = -1;            // back to the bank (BUS A), which is not soloed
-        check (level() < 1.0e-6f, "solo silences the other buses");
+        check (std::abs (level() - dry) < dry * 0.05f, "solo silences the other buses' effects (the pads stay dry)");
         m.getBus (2).solo = false;
         m.getBus (1).gainDb = -6.0f;
         juce::MemoryBlock st;
