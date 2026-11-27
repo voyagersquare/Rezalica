@@ -55,7 +55,8 @@ void metalRing (juce::Graphics& g, juce::Rectangle<float> outer, float thickness
 struct Map
 {
     juce::Rectangle<float> f;
-    juce::Point<float> p (float x, float y) const { return { f.getX() + x * f.getWidth(), f.getY() + y * f.getHeight() }; }
+    // y is given in the units of the original 250 px tall front (the unit is 320 px tall: the extras row is below)
+    juce::Point<float> p (float x, float y) const { return { f.getX() + x * f.getWidth(), f.getY() + y * (250.0f / 320.0f) * f.getHeight() }; }
     float u (float px) const { return px * f.getWidth() / 900.0f; }   // a size given for a 900 px wide unit
 };
 
@@ -374,8 +375,21 @@ void LevelerPanel::Meter::paint (juce::Graphics& g)
 //==============================================================================
 LevelerPanel::LevelerPanel (RezalicaProcessor& p) : processor (p)
 {
-    for (auto* k : { &inputKnob, &outputKnob, &modeKnob, &recoveryKnob })
+    for (auto* k : { &inputKnob, &outputKnob, &modeKnob, &recoveryKnob, &attackKnob, &ratioKnob, &characterKnob, &mixKnob })
         addAndMakeVisible (*k);
+    attackKnob.startAngle = -2.2f;    attackKnob.endAngle = 2.2f;
+    ratioKnob.startAngle = -1.6f;     ratioKnob.endAngle = 1.6f;
+    characterKnob.startAngle = -0.8f; characterKnob.endAngle = 0.8f;
+    mixKnob.startAngle = -2.2f;       mixKnob.endAngle = 2.2f;
+    attackKnob.setTooltip ("ATTACK: AUTO = the program sets it (fast, plus the slower MODE stages), or a fixed time in ms");
+    ratioKnob.setTooltip ("RATIO: AUTO = grows with the level (2:1 .. 8:1, like a tube leveler), or fixed 2:1 / 4:1 / 8:1 / 20:1 (limiting)");
+    characterKnob.setTooltip ("CHARACTER: TUBE = vari-mu style (feed-forward, warm 2nd harmonic); "
+                              "DIODE = the diode-shunt compressor (feedback detector, very soft knee, odd harmonics)");
+    mixKnob.setTooltip ("MIX: DRY .. WET - blend the untouched pad with the compressed one (parallel compression). Double-click: all WET");
+    attackKnob.onChange    = [this] (float v) { lev().attack = juce::roundToInt (v); };
+    ratioKnob.onChange     = [this] (float v) { lev().ratio = juce::roundToInt (v); };
+    characterKnob.onChange = [this] (float v) { lev().character = juce::roundToInt (v); };
+    mixKnob.onChange       = [this] (float v) { lev().mix = v; };
     addAndMakeVisible (power);
     addAndMakeVisible (meter);
     modeKnob.startAngle = -1.15f; modeKnob.endAngle = 1.15f;            // SINGLE / DOUBLE / TRIPLE
@@ -407,6 +421,10 @@ void LevelerPanel::syncFromPad()
     outputKnob.setValue (l.output.load(), false);
     modeKnob.setValue ((float) l.mode.load(), false);
     recoveryKnob.setValue (l.recovery.load(), false);
+    attackKnob.setValue ((float) l.attack.load(), false);
+    ratioKnob.setValue ((float) l.ratio.load(), false);
+    characterKnob.setValue ((float) l.character.load(), false);
+    mixKnob.setValue (l.mix.load(), false);
     power.on = l.on.load();
     power.repaint();
     repaint();
@@ -426,7 +444,7 @@ juce::Rectangle<float> LevelerPanel::faceplate() const
 {
     // the unit keeps its shape (about 3.6 : 1) and sits in the middle of the panel
     auto area = getLocalBounds().toFloat().reduced (10.0f);
-    const float aspect = 900.0f / 250.0f;
+    const float aspect = 900.0f / 320.0f;
     float w = area.getWidth(), h = w / aspect;
     if (h > area.getHeight()) { h = area.getHeight(); w = h * aspect; }
     return juce::Rectangle<float> (w, h).withCentre (area.getCentre());
@@ -445,6 +463,10 @@ void LevelerPanel::resized()
     at (outputKnob, 0.765f, 0.47f, 82.0f);
     at (modeKnob, 0.355f, 0.34f, 32.0f);
     at (recoveryKnob, 0.355f, 0.63f, 32.0f);
+    at (attackKnob, 0.2f, 1.055f, 30.0f);
+    at (ratioKnob, 0.33f, 1.055f, 30.0f);
+    at (characterKnob, 0.67f, 1.055f, 30.0f);
+    at (mixKnob, 0.8f, 1.055f, 30.0f);
     power.setBounds (juce::Rectangle<float> (m.u (30.0f), m.u (46.0f)).withCentre (m.p (0.637f, 0.58f)).toNearestInt());
     meter.setBounds (juce::Rectangle<float> (m.u (138.0f), m.u (150.0f)).withCentre (m.p (0.5f, 0.42f)).toNearestInt());
 }
@@ -547,6 +569,35 @@ void LevelerPanel::renderBackground (juce::Graphics& g)
         centredText (g, "REZ-LEVEL", m.p (0.355f, 0.80f), m.u (200.0f), m.u (26.0f));
         g.setFont (scriptFont (m.u (22.0f)));
         centredText (g, "pad edition", m.p (0.355f, 0.885f), m.u (200.0f), m.u (24.0f));
+    }
+
+    // the extras row: an engraved line, then ATTACK / RATIO / CHARACTER / MIX with their positions printed around
+    {
+        const auto l0 = m.p (0.13f, 0.945f), l1 = m.p (0.87f, 0.945f);
+        g.setColour (juce::Colours::black.withAlpha (0.25f));
+        g.drawLine (l0.x, l0.y, l1.x, l1.y, 1.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.6f));
+        g.drawLine (l0.x, l0.y + 1.0f, l1.x, l1.y + 1.0f, 1.0f);
+        g.setColour (printInk);
+        auto labelled = [&] (PanelKnob& k, const juce::String& title, const juce::StringArray& marks)
+        {
+            const auto c = k.getBounds().toFloat().getCentre();
+            const float r = k.getWidth() * 0.5f;
+            g.setFont (boldFont (m.u (12.5f)));
+            centredText (g, title, { c.x, c.y + r * 1.7f }, m.u (110.0f), m.u (15.0f));
+            g.setFont (plainFont (m.u (9.5f)));
+            for (int i = 0; i < marks.size(); ++i)
+            {
+                const float v = marks.size() > 1 ? k.minV + (k.maxV - k.minV) * (float) i / (float) (marks.size() - 1) : k.minV;
+                const float a = k.angleFor (v);
+                g.fillEllipse (juce::Rectangle<float> (m.u (2.6f), m.u (2.6f)).withCentre ({ c.x + std::sin (a) * r * 1.2f, c.y - std::cos (a) * r * 1.2f }));
+                centredText (g, marks[i], { c.x + std::sin (a) * r * 1.85f, c.y - std::cos (a) * r * 1.6f }, m.u (40.0f), m.u (12.0f));
+            }
+        };
+        labelled (attackKnob, "ATTACK ms", { "AUTO", ".3", "1", "3", "10", "30", "100" });
+        labelled (ratioKnob, "RATIO", { "AUTO", "2", "4", "8", "20" });
+        labelled (characterKnob, "CHARACTER", { "TUBE", "DIODE" });
+        labelled (mixKnob, "MIX", { "DRY", "", "", "", "WET" });
     }
 
 }

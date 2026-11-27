@@ -2843,6 +2843,42 @@ int main (int argc, char** argv)
         check (driven.first > soft.first + 6.0f, "more INPUT = more compression");
         check (rz::LevelerDsp::gainReductionDb (-40.0f) == 0.0f && rz::LevelerDsp::gainReductionDb (0.0f) > 8.0f, "soft knee curve");
 
+        // the extras: MIX (parallel), RATIO, CHARACTER (DIODE), ATTACK
+        p.input = 16.0f;
+        p.mix = 0.0f;
+        d.reset();
+        const auto dryOnly = run (0.5f, 100);
+        check (std::abs (dryOnly.second - 0.5f) < 0.01f, "MIX at DRY: the pad comes through untouched (OUTPUT at 0 dB)");
+        p.mix = 1.0f;
+        d.reset();
+        const auto wetOnly = run (0.5f, 100);
+        p.mix = 0.5f;
+        d.reset();
+        const auto half = run (0.5f, 100);
+        check (half.second > wetOnly.second && half.second < dryOnly.second, "MIX in the middle: between compressed and dry");
+        p.mix = 1.0f;
+        p.ratio = 1; d.reset(); const auto r2 = run (0.5f, 100);
+        p.ratio = 4; d.reset(); const auto r20 = run (0.5f, 100);
+        check (r20.first > r2.first + 3.0f, "RATIO 20:1 compresses much more than 2:1");
+        p.ratio = 0;
+        p.character = 1; d.reset(); const auto dio = run (0.5f, 200);
+        std::cout << "       DIODE: GR " << dio.first << " dB, peak " << dio.second << "\n";
+        check (dio.first > 3.0f && dio.second < 0.5f * juce::Decibels::decibelsToGain (15.0f), "DIODE character levels too (feedback detector)");
+        p.character = 0;
+        // ATTACK: 100 ms lets the start of a hit through much louder than 0.3 ms
+        auto onsetPeak = [&] (int attackSel)
+        {
+            p.attack = attackSel;
+            d.reset();
+            juce::AudioBuffer<float> b (2, 480);
+            for (int i = 0; i < 480; ++i) { const float s = 0.5f * std::sin ((float) i * 0.3f); b.setSample (0, i, s); b.setSample (1, i, s); }
+            d.process (b, 480, p);
+            return b.getMagnitude (0, 240, 240);
+        };
+        check (onsetPeak (6) > onsetPeak (1) * 1.5f, "ATTACK: a slow attack lets the start of the hit through");
+        p.attack = 0;
+        p.input = 6.0f;
+
         // on a pad: switched on through the processor, saved with the pad
         auto tp = std::make_unique<RezalicaProcessor> (false);
         auto& t = *tp;

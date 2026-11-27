@@ -237,6 +237,11 @@ struct PadLeveler
     std::atomic<float> output { 10.0f };    // 0 .. 20 (10 = 0 dB)
     std::atomic<int> mode { 0 };            // 0 = SINGLE, 1 = DOUBLE, 2 = TRIPLE (release stages)
     std::atomic<float> recovery { 0.5f };   // 0 = SLOW .. 1 = FAST
+    // extras the original does not have
+    std::atomic<int> attack { 0 };          // 0 = AUTO (program), 1..6 = 0.3, 1, 3, 10, 30, 100 ms
+    std::atomic<int> ratio { 0 };           // 0 = AUTO (grows with level, 2:1 .. 8:1), 1..4 = 2:1, 4:1, 8:1, 20:1
+    std::atomic<float> mix { 1.0f };        // 0 = dry .. 1 = all compressed (parallel compression)
+    std::atomic<int> character { 0 };       // 0 = TUBE (vari-mu style), 1 = DIODE (the diode-shunt compressor)
 
     juce::ValueTree toValueTree() const
     {
@@ -246,6 +251,10 @@ struct PadLeveler
         t.setProperty ("output", output.load(), nullptr);
         t.setProperty ("mode", mode.load(), nullptr);
         t.setProperty ("recovery", recovery.load(), nullptr);
+        t.setProperty ("attack", attack.load(), nullptr);
+        t.setProperty ("ratio", ratio.load(), nullptr);
+        t.setProperty ("mix", mix.load(), nullptr);
+        t.setProperty ("character", character.load(), nullptr);
         return t;
     }
     void fromValueTree (const juce::ValueTree& t)
@@ -255,6 +264,10 @@ struct PadLeveler
         output = juce::jlimit (0.0f, 20.0f, (float) t.getProperty ("output", 10.0f));
         mode = juce::jlimit (0, 2, (int) t.getProperty ("mode", 0));
         recovery = juce::jlimit (0.0f, 1.0f, (float) t.getProperty ("recovery", 0.5f));
+        attack = juce::jlimit (0, 6, (int) t.getProperty ("attack", 0));
+        ratio = juce::jlimit (0, 4, (int) t.getProperty ("ratio", 0));
+        mix = juce::jlimit (0.0f, 1.0f, (float) t.getProperty ("mix", 1.0f));
+        character = juce::jlimit (0, 1, (int) t.getProperty ("character", 0));
     }
     void reset() { fromValueTree (juce::ValueTree ("LEVELER")); }
 };

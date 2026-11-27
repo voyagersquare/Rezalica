@@ -67,6 +67,9 @@ private:
     RezalicaProcessor& processor;
     PanelKnob inputKnob { PanelKnob::big, 0.0f, 20.0f, 6.0f }, outputKnob { PanelKnob::big, 0.0f, 20.0f, 10.0f };
     PanelKnob modeKnob { PanelKnob::pointer, 0.0f, 2.0f, 0.0f, 3 }, recoveryKnob { PanelKnob::pointer, 0.0f, 1.0f, 0.5f };
+    // the extras (lower row): ATTACK, RATIO, CHARACTER, MIX
+    PanelKnob attackKnob { PanelKnob::pointer, 0.0f, 6.0f, 0.0f, 7 }, ratioKnob { PanelKnob::pointer, 0.0f, 4.0f, 0.0f, 5 };
+    PanelKnob characterKnob { PanelKnob::pointer, 0.0f, 1.0f, 0.0f, 2 }, mixKnob { PanelKnob::pointer, 0.0f, 1.0f, 1.0f };
     ToggleSwitch power;
     Meter meter;
     int shownPad = -1;
