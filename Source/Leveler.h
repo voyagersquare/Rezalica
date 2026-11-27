@@ -44,7 +44,7 @@ public:
         const float rec = juce::jlimit (0.0f, 1.0f, p.recovery.load());
         const float baseRelease = 2.5f * std::pow (0.06f, rec);   // SLOW 2.5 s .. FAST 0.15 s
         // stage 1: quick (10 ms attack); stage 2: slower to charge and to let go; stage 3: slower still
-        static constexpr float attackMs[3]  { 10.0f, 80.0f, 400.0f };
+        static constexpr float attackMs[3]  { 3.0f, 80.0f, 400.0f };
         static constexpr float releaseMul[3] { 1.0f, 3.5f, 10.0f };
         float aAtt[3], aRel[3];
         for (int s = 0; s < 3; ++s)

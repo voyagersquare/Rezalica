@@ -166,6 +166,13 @@ i metronom ostaju u ritmu. Efekti se spremaju s projektom.
 - Kad je **odabran pad s instrumentom**, MIDI klavijatura automatski svira taj instrument (kao "armed" kanal u DAW-u).
   Ako Piano Roll (MELODIC) svira prazan pad, prebaci se na pad s instrumentom.
 
+## IN / OUT metri pada
+
+- Na vrhu ekrana s valnim oblikom su dva LED metra (L i R): **IN** pokazuje pad kako svira (sample ili VST instrument,
+  s GAIN / PAN), prije LEVELER-a i EFFECTS; **OUT** pokazuje isti pad nakon LEVELER-a i EFFECTS slotova (što ide dalje u mikser).
+  Zeleno do −9 dB, žuto do 0 dB, crveno iznad 0 dB (prebučno). Najglasniji segment zadnje sekunde ostaje upaljen.
+- ZOOM klizač je uklonjen – zumira se kotačićem miša iznad valnog oblika (Shift + kotačić pomiče).
+
 ## LEVELER (kompresor na svakom padu)
 
 - Gumb **LEVELER** u gornjoj traci otvara prozor u stilu klasičnog rack *leveling* pojačala (krem-bijeli brušeni panel u bojama Rezalice, metalni VU-metar „dB COMPRESSION“ s 3D staklom).

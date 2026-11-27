@@ -7,20 +7,11 @@ WaveformView::WaveformView (RezalicaProcessor& p) : processor (p)
 {
     setWantsKeyboardFocus (false);
 
-    zoomSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    zoomSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    zoomSlider.setRange (0.0, 1.0, 0.0);
-    zoomSlider.setDoubleClickReturnValue (true, 0.0);
-    zoomSlider.setWantsKeyboardFocus (false);
-    zoomSlider.setTooltip ("Horizontal zoom (or mouse wheel over the waveform). Double-click to show the whole sample.");
-    zoomSlider.setColour (juce::Slider::trackColourId, colours::accent2.withAlpha (0.6f));
-    zoomSlider.onValueChange = [this]
-    {
-        const double len = std::pow (minViewLength(), zoomSlider.getValue());
-        const double centre = viewStart + viewLength * 0.5;
-        setView (centre - len * 0.5, len);
-    };
-    addAndMakeVisible (zoomSlider);
+    // the level meters in the top strip (the zoom slider is gone: the mouse wheel zooms)
+    inMeter.setTooltip ("IN: the pad's level as it plays (sample or instrument, with GAIN / PAN), before its LEVELER and EFFECTS");
+    outMeter.setTooltip ("OUT: the pad's level after its LEVELER and EFFECTS (what goes on to the mixer)");
+    addAndMakeVisible (inMeter);
+    addAndMakeVisible (outMeter);
 
     scrollBar.setRangeLimits (0.0, 1.0, juce::dontSendNotification);
     scrollBar.setAutoHide (true);
@@ -33,7 +24,13 @@ WaveformView::WaveformView (RezalicaProcessor& p) : processor (p)
 void WaveformView::resized()
 {
     auto b = getLocalBounds();
-    zoomSlider.setBounds (b.getRight() - 150, 2, 140, 16);
+    {
+        // IN and OUT side by side in the top strip, in the middle of the screen
+        const auto a = waveArea();
+        const int w = juce::roundToInt (a.getWidth() * 0.22f), h = 20, y = juce::roundToInt ((float) b.getY() + 3.0f);
+        inMeter.setBounds (juce::roundToInt (a.getX() + a.getWidth() * 0.31f), y, w, h);
+        outMeter.setBounds (juce::roundToInt (a.getX() + a.getWidth() * 0.56f), y, w, h);
+    }
     auto a = waveArea().toNearestInt();
     scrollBar.setBounds (a.getX(), getHeight() - 12, a.getWidth(), 10);
 }
@@ -50,20 +47,12 @@ double WaveformView::minViewLength() const
     return 16.0 / (double) sample->buffer.getNumSamples(); // 16 samples across the whole view
 }
 
-double WaveformView::zoomToSlider (double length) const
-{
-    const double minLen = minViewLength();
-    if (minLen >= 1.0)
-        return 0.0;
-    return juce::jlimit (0.0, 1.0, std::log (length) / std::log (minLen));
-}
 
 void WaveformView::setView (double start, double length)
 {
     viewLength = juce::jlimit (minViewLength(), 1.0, length);
     viewStart = juce::jlimit (0.0, 1.0 - viewLength, start);
     scrollBar.setCurrentRange (viewStart, viewLength, juce::dontSendNotification);
-    zoomSlider.setValue (zoomToSlider (viewLength), juce::dontSendNotification);
     repaint();
 }
 
@@ -475,7 +464,7 @@ void WaveformView::paintMarkerOverlay (juce::Graphics& g)
     const double secs = sample->buffer.getNumSamples() / sample->sampleRate;
     g.setColour (dim);
     g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
-    auto header = juce::Rectangle<float> (area.getX(), bounds.getY() + 3.0f, (float) zoomSlider.getX() - area.getX() - 8.0f, 14.0f);
+    auto header = juce::Rectangle<float> (area.getX(), bounds.getY() + 3.0f, area.getWidth() - 8.0f, 14.0f);
     if (viewLength < 0.999)
     {
         const double visibleSamples = viewLength * sample->buffer.getNumSamples();
@@ -483,14 +472,11 @@ void WaveformView::paintMarkerOverlay (juce::Graphics& g)
                         + juce::String (juce::roundToInt (visibleSamples)) + " samples)",
                     header, juce::Justification::right);
     }
-    else
-    {
-        g.drawText ("ZOOM", header, juce::Justification::right);
-    }
+
 
     // hints go in the top row (left of the zoom info) so they never cover the sample name
     {
-        auto hint = header.withWidth (juce::jmax (0.0f, header.getWidth() - 290.0f));
+        auto hint = header.withRight ((float) inMeter.getX() - 8.0f);
         g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
         if (processor.isLazyChopActive())
         {
@@ -962,5 +948,71 @@ void WaveformView::filesDropped (const juce::StringArray& files, int, int)
     dragOver = false;
     repaint();
     if (onFileDropped) onFileDropped (juce::File (files[0]));
+}
+} // namespace rz
+
+namespace rz
+{
+//==============================================================================
+void PadLevelMeter::timerCallback()
+{
+    const int pad = processor.selectedPad.load();
+    if (pad != lastPad) { lastPad = pad; level = { -100.0f, -100.0f }; hold = { -100.0f, -100.0f }; }
+    bool changed = false;
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const float db = juce::Decibels::gainToDecibels (processor.takePadPeak (pad, output, ch), -100.0f);
+        // fast up, falls about 24 dB per second
+        const float next = db > level[(size_t) ch] ? db : juce::jmax (db, level[(size_t) ch] - 0.8f);
+        if (next > hold[(size_t) ch] || --holdTicks[(size_t) ch] <= 0) { hold[(size_t) ch] = next; holdTicks[(size_t) ch] = 30; }
+        changed = changed || std::abs (next - level[(size_t) ch]) > 0.05f;
+        level[(size_t) ch] = next;
+    }
+    if (changed) repaint();
+}
+
+void PadLevelMeter::paint (juce::Graphics& g)
+{
+    // the segments and their dB, like a classic LED meter: -20 . -12 . -9 . -3 . 0 +1 . +3
+    static constexpr float thresholds[] { -20.0f, -16.0f, -12.0f, -10.5f, -9.0f, -6.0f, -3.0f, -1.5f, 0.0f, 1.0f, 2.0f, 3.0f };
+    constexpr int numSeg = (int) std::size (thresholds);
+    auto colourFor = [] (int i) { return i < 6 ? juce::Colour (0xff1fbf3a) : i < 9 ? juce::Colour (0xffffd92e) : juce::Colour (0xffff2a1f); };
+
+    auto b = getLocalBounds().toFloat();
+    auto label = b.removeFromLeft (40.0f);
+    g.setColour (juce::Colour (0xff5be06e).withAlpha (0.9f));
+    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    g.drawText (output ? "OUT" : "IN", label.withWidth (28.0f), juce::Justification::centredLeft, false);
+    g.setFont (juce::FontOptions (8.0f, juce::Font::bold));
+    g.drawText ("L", label.withTrimmedLeft (30.0f).withHeight (b.getHeight() * 0.5f), juce::Justification::centredLeft, false);
+    g.drawText ("R", label.withTrimmedLeft (30.0f).withTrimmedTop (b.getHeight() * 0.5f), juce::Justification::centredLeft, false);
+
+    const float gap = 2.0f;
+    const float segW = (b.getWidth() - gap * (float) (numSeg - 1)) / (float) numSeg;
+    const float rowH = (b.getHeight() - 3.0f) * 0.5f;
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const float y = b.getY() + (float) ch * (rowH + 3.0f);
+        for (int i = 0; i < numSeg; ++i)
+        {
+            auto seg = juce::Rectangle<float> (b.getX() + (float) i * (segW + gap), y, segW, rowH);
+            const bool lit = level[(size_t) ch] >= thresholds[i];
+            const bool held = ! lit && hold[(size_t) ch] >= thresholds[i] && (i == numSeg - 1 || hold[(size_t) ch] < thresholds[i + 1]);
+            const auto c = colourFor (i);
+            if (lit || held)
+            {
+                // a little glow around lit segments
+                g.setColour (c.withAlpha (0.25f));
+                g.fillRect (seg.expanded (1.0f));
+                g.setGradientFill (juce::ColourGradient (c.brighter (0.35f), seg.getX(), seg.getY(), c, seg.getX(), seg.getBottom(), false));
+                g.fillRect (seg);
+            }
+            else
+            {
+                g.setColour (c.withAlpha (0.16f));
+                g.fillRect (seg);
+            }
+        }
+    }
 }
 } // namespace rz

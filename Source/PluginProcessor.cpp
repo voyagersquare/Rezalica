@@ -647,6 +647,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     });
 
     // ---- render, splitting the block at each event ----
+    engine.clearPadPeaks();
     int cursor = 0;
     for (int i = 0; i < numEvents; ++i)
     {
@@ -704,6 +705,19 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     engine.render (busBuffers, cursor, numSamples - cursor);
     engine.updatePlayPositions();
     renderInstruments (numSamples);
+    // INPUT meters: each pad as it plays; pads without a LEVELER / effects sound the same at their OUTPUT
+    for (int pd = 0; pd < rz::numPads; ++pd)
+    {
+        const float l = engine.padPeakL[(size_t) pd], r = engine.padPeakR[(size_t) pd];
+        if (l <= 0.0f && r <= 0.0f) continue;
+        storeMax (padMeter[(size_t) pd][0], l);
+        storeMax (padMeter[(size_t) pd][1], r);
+        if (! padHasFx[(size_t) pd])
+        {
+            storeMax (padMeter[(size_t) pd][2], l);
+            storeMax (padMeter[(size_t) pd][3], r);
+        }
+    }
 
     // DECK: its own buffer, then its effects, then MASTER (below, with the plug-in delay compensation)
     if (deckBuffer.getNumSamples() < numSamples)
@@ -761,6 +775,8 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         else
             levelerGr[(size_t) pd] = 0.0f;
         processEffectChain (chain, pb, numSamples);
+        storeMax (padMeter[(size_t) pd][2], pb.getMagnitude (0, 0, numSamples));   // OUTPUT: after the LEVELER and the effects
+        storeMax (padMeter[(size_t) pd][3], pb.getMagnitude (1, 0, numSamples));
         chain.compensation.process (pb.getArrayOfWritePointers(), 2, numSamples, padLatency - chain.latency);
         chain.peak = juce::jmax (chain.peak.load() * 0.85f, pb.getMagnitude (0, 0, numSamples));
         auto& target = busBuffers[(size_t) engine.busForPad (pd)];
@@ -3158,6 +3174,8 @@ void RezalicaProcessor::renderInstruments (int numSamples)
         const int outs = sub.getNumChannels();
         target.addFrom (0, 0, sub, 0, 0, n, gl);
         target.addFrom (1, 0, sub, juce::jmin (1, outs - 1), 0, n, gr);
+        engine.padPeakL[(size_t) pd] = juce::jmax (engine.padPeakL[(size_t) pd], sub.getMagnitude (0, 0, n) * gl);
+        engine.padPeakR[(size_t) pd] = juce::jmax (engine.padPeakR[(size_t) pd], sub.getMagnitude (juce::jmin (1, outs - 1), 0, n) * gr);
     }
 }
 

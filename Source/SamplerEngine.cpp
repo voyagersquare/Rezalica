@@ -100,6 +100,7 @@ void Voice::render (juce::AudioBuffer<float>& out, int startSample, int numSampl
 
     float* oL = out.getWritePointer (0, startSample);
     float* oR = out.getWritePointer (1, startSample);
+    peakL = peakR = 0.0f;
 
     if (lastBankGain < 0.0f) lastBankGain = bankGain;
     const float bankStep = (bankGain - lastBankGain) / (float) juce::jmax (1, numSamples);
@@ -152,8 +153,11 @@ void Voice::render (juce::AudioBuffer<float>& out, int startSample, int numSampl
         }
 
         const float e = env * edge * bank;
-        oL[i] += l * gl * e;
-        oR[i] += r * gr * e;
+        const float ol = l * gl * e, orr = r * gr * e;
+        oL[i] += ol;
+        oR[i] += orr;
+        peakL = juce::jmax (peakL, std::abs (ol));
+        peakR = juce::jmax (peakR, std::abs (orr));
 
         pos += reverse ? -inc : inc;
     }
@@ -342,6 +346,10 @@ void SamplerEngine::render (std::array<juce::AudioBuffer<float>, numBuses>& buse
                 v.fastStop(); // muting a bank also silences what is playing in it
             auto* own = padTarget[(size_t) v.getPad()];   // a pad with its own effects: into its buffer
             v.render (own != nullptr ? *own : buses[(size_t) busForPad (v.getPad())], startSample, numSamples, bankGain[(size_t) bank].load());
+            auto& pl = padPeakL[(size_t) v.getPad()];
+            auto& pr = padPeakR[(size_t) v.getPad()];
+            pl = juce::jmax (pl, v.peakL);
+            pr = juce::jmax (pr, v.peakR);
         }
     previewVoice.render (buses[0], startSample, numSamples); // browser preview / lazy chop: straight to MASTER
 }

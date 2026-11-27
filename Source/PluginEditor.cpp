@@ -2168,7 +2168,7 @@ void RezalicaEditor::resized()
 {
     layoutComponents();
     // the pad's name: top left inside the sample view
-    padTitle.setBounds (juce::Rectangle<int> (20, 8, juce::jmax (100, waveform.getWidth() / 2 - 30), 24));
+    padTitle.setBounds (juce::Rectangle<int> (20, 8, juce::jmax (100, juce::roundToInt (waveform.getWidth() * 0.31f) - 10), 24));
     renderFaceplate(); // after the layout: the shadows under the keys and panels are baked into it
 }
 

@@ -2855,6 +2855,39 @@ int main (int argc, char** argv)
         t2->setStateInformation (st.getData(), (int) st.getSize());
         check (t2->getEngine().getPad (3).leveler.on.load() && std::abs (t2->getEngine().getPad (3).leveler.input.load() - 15.0f) < 1.0e-4f
                && ! t2->getEngine().getPad (2).leveler.on.load(), "the pad's LEVELER is saved with the project");
+
+        // IN / OUT meters: a pad without processing shows the same at both; with the LEVELER driven hard, OUT is lower
+        {
+            auto clickFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rezalica_meter.wav");
+            {
+                juce::AudioBuffer<float> tone (2, 48000);
+                for (int i = 0; i < tone.getNumSamples(); ++i) { const float s = 0.8f * std::sin ((float) i * 0.06f); tone.setSample (0, i, s); tone.setSample (1, i, s); }
+                juce::WavAudioFormat wavf;
+                std::unique_ptr<juce::AudioFormatWriter> wr (wavf.createWriterFor (new juce::FileOutputStream (clickFile), 48000.0, 2, 24, {}, 0));
+                wr->writeFromAudioSampleBuffer (tone, 0, tone.getNumSamples());
+            }
+            t.loadFileToPad (7, clickFile);
+            auto play = [&]
+            {
+                t.triggerPadFromUi (7, 1.0f, true);
+                for (int k = 0; k < 20; ++k) { juce::AudioBuffer<float> buf (2, 512); juce::MidiBuffer mm; buf.clear(); t.processBlock (buf, mm); }
+                t.takePadPeak (7, false, 0); t.takePadPeak (7, true, 0);   // (the steady level, after the attack)
+                for (int k = 0; k < 20; ++k) { juce::AudioBuffer<float> buf (2, 512); juce::MidiBuffer mm; buf.clear(); t.processBlock (buf, mm); }
+                const float in = t.takePadPeak (7, false, 0), out = t.takePadPeak (7, true, 0);
+                t.triggerPadFromUi (7, 0.0f, false);
+                for (int k = 0; k < 20; ++k) { juce::AudioBuffer<float> buf (2, 512); juce::MidiBuffer mm; buf.clear(); t.processBlock (buf, mm); }
+                return std::pair<float, float> { in, out };
+            };
+            const auto dry = play();
+            t.setLevelerOn (7, true);
+            t.getEngine().getPad (7).leveler.input = 20.0f;
+            t.getEngine().getPad (7).leveler.output = 10.0f;
+            const auto wet = play();
+            std::cout << "       meters: dry IN " << dry.first << " OUT " << dry.second << ";  LEVELER IN " << wet.first << " OUT " << wet.second << "\n";
+            check (dry.first > 0.3f && std::abs (dry.first - dry.second) < 1.0e-4f, "IN and OUT meters: the same without processing");
+            check (std::abs (wet.first - dry.first) < 0.05f && wet.second < wet.first * 0.8f, "OUT shows the pad after its LEVELER");
+            clickFile.deleteFile();
+        }
     }
 
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");

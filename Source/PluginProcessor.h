@@ -256,6 +256,13 @@ public:
     /** LEVELER (per pad): switch it on / off (message thread: prepares the pad's chain). */
     void setLevelerOn (int pad, bool on);
     /** The gain reduction of the pad's LEVELER right now (dB), for its meter. */
+    /** The pad's level meters (IN = as it plays, before the LEVELER / effects; OUT = after them): the loudest
+        peak since the last call (linear), channel 0 = L, 1 = R. Message thread; reading resets it. */
+    float takePadPeak (int pad, bool output, int channel)
+    {
+        pad = juce::jlimit (0, rz::numPads - 1, pad);
+        return padMeter[(size_t) pad][(size_t) ((output ? 2 : 0) + (channel & 1))].exchange (0.0f);
+    }
     float getLevelerReduction (int pad) const { return levelerGr[(size_t) juce::jlimit (0, rz::numPads - 1, pad)].load(); }
     bool padHasEffects (int pad) const
     {
@@ -436,6 +443,12 @@ private:
     std::array<bool, rz::numPads> padHasFx {};                      // audio thread
     std::array<rz::LevelerDsp, rz::numPads> levelers;               // audio thread
     std::array<std::atomic<float>, rz::numPads> levelerGr {};
+    std::array<std::array<std::atomic<float>, 4>, rz::numPads> padMeter {};   // IN L, IN R, OUT L, OUT R (max since read)
+    static void storeMax (std::atomic<float>& a, float v)
+    {
+        float old = a.load();
+        while (v > old && ! a.compare_exchange_weak (old, v)) {}
+    }
     void ensurePadChain (int pad);                                  // message thread: the pad's own buffer / delay line
 
     struct PadInstrument

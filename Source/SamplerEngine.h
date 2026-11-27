@@ -298,6 +298,7 @@ public:
     void fastStop();
     /** Adds the voice into 'out' (its mixer bus). */
     void render (juce::AudioBuffer<float>& out, int startSample, int numSamples, float bankGain = 1.0f);
+    float peakL = 0.0f, peakR = 0.0f;   // the loudest sample of the last render (for the pad's INPUT meter)
 
     bool isActive() const noexcept     { return active; }
     bool isReleasing() const noexcept  { return stage == Stage::release; }
@@ -383,6 +384,9 @@ public:
     std::atomic<int> playedCounter { 0 };
     std::atomic<int> lastSequencedPad { -1 };   // last pad hit by the step sequencer / piano roll
     std::atomic<int> sequencedCounter { 0 };
+    /** Audio thread: the loudest sample each pad played this block (before its LEVELER / effects). */
+    std::array<float, numPads> padPeakL {}, padPeakR {};
+    void clearPadPeaks() { padPeakL.fill (0.0f); padPeakR.fill (0.0f); }
 
 private:
     bool isPadPlaying (int pad) const;

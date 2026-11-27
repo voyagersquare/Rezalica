@@ -4,6 +4,30 @@
 
 namespace rz
 {
+/** A pad level meter in the top strip of the sample screen: two rows (L, R) of LED segments,
+    green up to -9 dB, yellow to 0 dB, red above. IN = the pad as it plays (before its LEVELER / effects),
+    OUT = after them. Falls back smoothly; the loudest segment of the last second stays lit. */
+class PadLevelMeter : public juce::Component,
+                      public juce::SettableTooltipClient,
+                      private juce::Timer
+{
+public:
+    PadLevelMeter (RezalicaProcessor& p, bool isOutput) : processor (p), output (isOutput)
+    {
+        setInterceptsMouseClicks (false, false);
+        startTimerHz (30);
+    }
+    void paint (juce::Graphics&) override;
+
+private:
+    void timerCallback() override;
+    RezalicaProcessor& processor;
+    const bool output;
+    std::array<float, 2> level { -100.0f, -100.0f }, hold { -100.0f, -100.0f };
+    std::array<int, 2> holdTicks {};
+    int lastPad = -1;
+};
+
 /** Shows the selected pad's sample, its chop markers and the selected slice.
     - drag the orange triangles to trim the selected pad
     - Shift+click or double-click adds a chop marker (switches to Manual), drag moves it, right-click deletes
@@ -77,7 +101,6 @@ private:
     void zoomAround (float x, double factor);
     void scrollBarMoved (juce::ScrollBar*, double newRangeStart) override;
     double minViewLength() const;
-    double zoomToSlider (double length) const;
     int sliceMarkerNear (float x) const;
     void showMenu (float x);
 
@@ -95,7 +118,7 @@ private:
     bool warpPendingCreate = false, warpMoved = false, warpAwaiting = false;
     float warpPendingX = 0.0f;
 
-    juce::Slider zoomSlider;     // horizontal zoom, 0 = whole sample, 1 = maximum
+    PadLevelMeter inMeter { processor, false }, outMeter { processor, true };   // (the mouse wheel zooms)
     juce::ScrollBar scrollBar { false };
     double viewStart = 0.0, viewLength = 1.0; // visible part of the sample (normalised)
 };
