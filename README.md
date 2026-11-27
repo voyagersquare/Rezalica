@@ -182,6 +182,10 @@ i metronom ostaju u ritmu. Efekti se spremaju s projektom.
   **OUTPUT** (0–20): razina nakon njega (10 = 0 dB). Dvoklik vraća početnu vrijednost.
 - **MODE**: SINGLE = jedno vrijeme otpuštanja; DOUBLE / TRIPLE dodaju sporije stupnjeve – kratki udarci se brzo vrate,
   a dugi glasni dijelovi se izravnavaju polako (programski ovisno otpuštanje). **RECOVERY TIME**: SLOW … FAST.
+- **Donji red (dodaci kojih original nema):** **ATTACK** (AUTO ili fiksno 0,3 / 1 / 3 / 10 / 30 / 100 ms),
+  **RATIO** (AUTO = raste s glasnoćom 2:1 … 8:1, ili fiksno 2:1 / 4:1 / 8:1 / 20:1 za limitiranje),
+  **CHARACTER** (TUBE = *vari-mu* stil, detektor na ulazu, topli 2. harmonik; DIODE = model diodnog kompresora sa sheme:
+  detektor na izlazu (*feedback*), vrlo meko koljeno, neparni harmonici) i **MIX** (DRY … WET – paralelna kompresija).
 - Meka koljena, omjer raste s glasnoćom (kao *vari-mu* cijevni kompresor), malo cijevne boje. Bez kašnjenja.
   Na padu radi prije njegovih EFFECTS slotova; vrijedi i za VST instrument na padu, i u BOUNCE / izvozu. Sprema se s projektom.
 
