@@ -61,6 +61,8 @@ private:
     void syncFromPad();
     PadLeveler& lev();
     juce::Rectangle<float> faceplate() const;
+    void renderBackground (juce::Graphics&);
+    juce::Image background;
 
     RezalicaProcessor& processor;
     PanelKnob inputKnob { PanelKnob::big, 0.0f, 20.0f, 6.0f }, outputKnob { PanelKnob::big, 0.0f, 20.0f, 10.0f };

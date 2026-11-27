@@ -5,7 +5,51 @@ namespace rz
 {
 namespace
 {
-const juce::Colour panelGrey (0xff6d7175), panelLight (0xff7c8085), panelDark (0xff55595d), printWhite (0xffeeeeea);
+// the same cream-white as Rezalica's pads and screen frame, printed in Rezalica's dark ink
+const juce::Colour panelGrey (0xffe2ded1), panelLight (0xfff1eee4), panelDark (0xffc9c4b5), printWhite (0xffeeeeea),
+                   printInk (0xff1b1b1d);
+
+/** Brushed finish like Rezalica's faceplate: a soft sheen plus fine horizontal hairlines. */
+void brushed (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour top, juce::Colour bottom, int seed)
+{
+    g.setGradientFill (juce::ColourGradient (top, r.getX(), r.getY(), bottom, r.getX(), r.getBottom(), false));
+    g.fillRect (r);
+    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.22f), r.getX() + r.getWidth() * 0.3f, r.getY(),
+                                             juce::Colours::transparentWhite, r.getX() + r.getWidth() * 0.75f, r.getBottom(), false));
+    g.fillRect (r);
+    juce::Random rnd (seed);
+    for (float y = r.getY(); y < r.getBottom(); y += 1.0f)
+    {
+        const float a = rnd.nextFloat() * 0.05f;
+        g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (a));
+        const float x0 = r.getX() + rnd.nextFloat() * r.getWidth() * 0.33f;
+        g.fillRect (juce::Rectangle<float> (x0, y, r.getWidth() * (0.5f + rnd.nextFloat() * 0.5f), 1.0f).getIntersection (r));
+    }
+    // the room light from the upper left: the lower right falls off a little
+    g.setGradientFill (juce::ColourGradient (juce::Colours::transparentBlack, r.getX() + r.getWidth() * 0.15f, r.getY(),
+                                             juce::Colours::black.withAlpha (0.14f), r.getRight(), r.getBottom(), false));
+    g.fillRect (r);
+}
+
+/** A polished metal ring (bezel) lit from the upper left. */
+void metalRing (juce::Graphics& g, juce::Rectangle<float> outer, float thickness, float corner)
+{
+    juce::Path ring;
+    ring.addRoundedRectangle (outer, corner);
+    ring.addRoundedRectangle (outer.reduced (thickness), juce::jmax (0.0f, corner - thickness));
+    ring.setUsingNonZeroWinding (false);
+    juce::ColourGradient cg (juce::Colour (0xfffbfbf8), outer.getX(), outer.getY(), juce::Colour (0xff505050), outer.getRight(), outer.getBottom(), false);
+    cg.addColour (0.22, juce::Colour (0xffcfcfcc));
+    cg.addColour (0.45, juce::Colour (0xff8d8d8a));
+    cg.addColour (0.62, juce::Colour (0xffe6e6e2));
+    cg.addColour (0.8, juce::Colour (0xff6d6d6a));
+    g.setGradientFill (cg);
+    g.fillPath (ring);
+    g.setColour (juce::Colours::white.withAlpha (0.75f));
+    g.drawRoundedRectangle (outer.reduced (0.5f), corner, 1.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.55f));
+    g.drawRoundedRectangle (outer.reduced (thickness - 0.5f), juce::jmax (0.0f, corner - thickness), 1.0f);
+}
 
 /** Positions on the faceplate are given as fractions of the unit's width / height (0..1). */
 struct Map
@@ -100,6 +144,32 @@ void LevelerPanel::PanelKnob::paint (juce::Graphics& g)
         g.fillEllipse (juce::Rectangle<float> (cr * 2.0f, cr * 2.0f).withCentre (c));
         g.setColour (juce::Colours::black.withAlpha (0.5f));
         g.drawEllipse (juce::Rectangle<float> (cr * 2.0f, cr * 2.0f).withCentre (c), 1.0f);
+        // metal reflections: a bright arc on the upper-left rim, a faint one lower right
+        {
+            juce::Path rim;
+            rim.addCentredArc (c.x, c.y, r * 0.985f, r * 0.985f, 0.0f, -2.2f, -0.2f, true);
+            g.setColour (juce::Colours::white.withAlpha (0.45f));
+            g.strokePath (rim, juce::PathStrokeType (juce::jmax (1.2f, r * 0.04f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            juce::Path rim2;
+            rim2.addCentredArc (c.x, c.y, r * 0.985f, r * 0.985f, 0.0f, 1.2f, 2.4f, true);
+            g.setColour (juce::Colours::white.withAlpha (0.15f));
+            g.strokePath (rim2, juce::PathStrokeType (juce::jmax (1.0f, r * 0.03f)));
+            // spun-metal streaks across the chrome cap
+            g.saveState();
+            juce::Path cap;
+            cap.addEllipse (juce::Rectangle<float> (cr * 2.0f, cr * 2.0f).withCentre (c));
+            g.reduceClipRegion (cap);
+            for (int i = 0; i < 4; ++i)
+            {
+                const float t = -0.9f + (float) i * 0.5f;
+                g.setColour (juce::Colours::white.withAlpha (i == 1 ? 0.55f : 0.25f));
+                g.drawLine (c.x - std::cos (t) * cr, c.y - std::sin (t) * cr, c.x + std::cos (t) * cr, c.y + std::sin (t) * cr, cr * (i == 1 ? 0.16f : 0.07f));
+            }
+            g.restoreState();
+            // the cap's bright rim
+            g.setGradientFill (juce::ColourGradient (juce::Colours::white, c.x - cr, c.y - cr, juce::Colour (0xff202020), c.x + cr, c.y + cr, false));
+            g.drawEllipse (juce::Rectangle<float> (cr * 2.0f, cr * 2.0f).withCentre (c).reduced (0.6f), juce::jmax (1.0f, cr * 0.06f));
+        }
         // pointer line on the skirt
         g.setColour (printWhite);
         g.drawLine (c.x + std::sin (a) * r * 0.70f, c.y - std::cos (a) * r * 0.70f, c.x + std::sin (a) * r * 0.97f, c.y - std::cos (a) * r * 0.97f, juce::jmax (2.0f, r * 0.07f));
@@ -119,6 +189,10 @@ void LevelerPanel::PanelKnob::paint (juce::Graphics& g)
         g.fillPath (bar);
         g.setColour (printWhite);
         g.drawLine (c.x + std::sin (a) * r * 0.35f, c.y - std::cos (a) * r * 0.35f, c.x + std::sin (a) * r * 0.92f, c.y - std::cos (a) * r * 0.92f, juce::jmax (1.5f, r * 0.12f));
+        juce::Path rim;
+        rim.addCentredArc (c.x, c.y, r * 0.78f, r * 0.78f, 0.0f, -2.2f, -0.2f, true);
+        g.setColour (juce::Colours::white.withAlpha (0.6f));
+        g.strokePath (rim, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         g.setColour (juce::Colours::white.withAlpha (0.25f));
         g.drawEllipse (juce::Rectangle<float> (r * 1.6f, r * 1.6f).withCentre (c).reduced (1.0f), 1.0f);
     }
@@ -156,21 +230,27 @@ void LevelerPanel::Meter::paint (juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat();
     const float w = b.getWidth(), h = b.getHeight();
-    // black square bezel with the stepped (art deco) lower part
-    g.setColour (juce::Colours::black.withAlpha (0.5f));
-    g.fillRoundedRectangle (b.translated (2.0f, 3.0f), w * 0.06f);
+    // drop shadow, then a polished metal bezel around a black recessed housing
+    b = b.reduced (3.0f, 3.0f).withTrimmedBottom (2.0f);
+    for (int i = 4; i >= 1; --i)
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.10f));
+        g.fillRoundedRectangle (b.translated ((float) i * 0.8f, (float) i * 1.4f), w * 0.07f);
+    }
     g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2a2a2a), 0, 0, juce::Colour (0xff050505), 0, h, false));
-    g.fillRoundedRectangle (b, w * 0.06f);
-    g.setColour (juce::Colours::white.withAlpha (0.12f));
-    g.drawRoundedRectangle (b.reduced (1.0f), w * 0.06f, 1.0f);
+    g.fillRoundedRectangle (b, w * 0.07f);
+    metalRing (g, b, juce::jmax (3.0f, w * 0.045f), w * 0.07f);
     auto face = juce::Rectangle<float> (b.getX() + w * 0.09f, b.getY() + h * 0.08f, w * 0.82f, h * 0.6f);
     // the stepped deco below the face
     for (int i = 0; i < 3; ++i)
     {
         auto step = juce::Rectangle<float> (face.getX() + w * 0.06f * (float) i, face.getBottom() + h * 0.02f + h * 0.07f * (float) i,
                                             face.getWidth() - w * 0.12f * (float) i, h * 0.06f);
-        g.setColour (juce::Colour (0xff1a1a1a).brighter (0.15f * (float) (3 - i)));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffd8d8d4).darker (0.25f * (float) i), step.getX(), step.getY(),
+                                                 juce::Colour (0xff4a4a48), step.getX(), step.getBottom(), false));
         g.fillRect (step);
+        g.setColour (juce::Colours::white.withAlpha (0.6f));
+        g.drawLine (step.getX(), step.getY() + 0.5f, step.getRight(), step.getY() + 0.5f, 1.0f);
     }
     // adjust screw at the bottom
     {
@@ -182,6 +262,9 @@ void LevelerPanel::Meter::paint (juce::Graphics& g)
         g.drawEllipse (juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (c), 1.0f);
     }
 
+    // the face sits deeper than the bezel: a dark shadow along its top and left edges
+    g.setColour (juce::Colours::black);
+    g.fillRect (face.expanded (2.0f));
     // cream face
     g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff7f3e6), face.getCentreX(), face.getY(), juce::Colour (0xffd8d2bf), face.getCentreX(), face.getBottom(), false));
     g.fillRect (face);
@@ -223,12 +306,69 @@ void LevelerPanel::Meter::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff111111));
     g.drawLine (pivot.x + std::sin (a) * radius * 0.55f, pivot.y - std::cos (a) * radius * 0.55f,
                 pivot.x + std::sin (a) * radius * 0.98f, pivot.y - std::cos (a) * radius * 0.98f, 1.6f);
+    // the needle's shadow on the face, and the pivot cap
     g.restoreState();
-    // glass
-    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.22f), face.getX(), face.getY(), juce::Colours::transparentWhite, face.getCentreX(), face.getCentreY(), false));
-    g.fillRect (face.withHeight (face.getHeight() * 0.5f));
-    g.setColour (juce::Colours::black.withAlpha (0.6f));
-    g.drawRect (face, 1.0f);
+    {
+        // inner shadow: the glass and bezel shade the top and left of the face
+        g.saveState();
+        g.reduceClipRegion (face.toNearestInt());
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.45f), face.getX(), face.getY(),
+                                                 juce::Colours::transparentBlack, face.getX(), face.getY() + face.getHeight() * 0.16f, false));
+        g.fillRect (face);
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.3f), face.getX(), face.getY(),
+                                                 juce::Colours::transparentBlack, face.getX() + face.getWidth() * 0.1f, face.getY(), false));
+        g.fillRect (face);
+
+        // the glass: slightly domed - a broad soft glare on the upper part, a bright curved streak,
+        // and a thin highlight along the lower edge where the light comes through
+        juce::Path dome;
+        dome.startNewSubPath (face.getX(), face.getY());
+        dome.lineTo (face.getRight(), face.getY());
+        dome.lineTo (face.getRight(), face.getY() + face.getHeight() * 0.28f);
+        dome.quadraticTo (face.getCentreX(), face.getY() + face.getHeight() * 0.5f, face.getX(), face.getY() + face.getHeight() * 0.36f);
+        dome.closeSubPath();
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.6f), face.getX(), face.getY(),
+                                                 juce::Colours::white.withAlpha (0.08f), face.getX(), face.getY() + face.getHeight() * 0.45f, false));
+        g.fillPath (dome);
+        // a bright curved reflection near the upper-left corner, as on a convex glass
+        {
+            juce::Path glint;
+            glint.addCentredArc (face.getX() + face.getWidth() * 0.32f, face.getY() + face.getHeight() * 0.42f,
+                                 face.getWidth() * 0.26f, face.getHeight() * 0.33f, 0.0f, -1.45f, -0.35f, true);
+            g.setColour (juce::Colours::white.withAlpha (0.85f));
+            g.strokePath (glint, juce::PathStrokeType (juce::jmax (1.5f, face.getHeight() * 0.03f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.setColour (juce::Colours::white.withAlpha (0.9f));
+            g.fillEllipse (juce::Rectangle<float> (face.getHeight() * 0.05f, face.getHeight() * 0.05f)
+                               .withCentre ({ face.getX() + face.getWidth() * 0.08f, face.getY() + face.getHeight() * 0.1f }));
+        }
+        juce::Path streak;
+        streak.startNewSubPath (face.getX() + face.getWidth() * 0.62f, face.getY());
+        streak.lineTo (face.getX() + face.getWidth() * 0.76f, face.getY());
+        streak.lineTo (face.getX() + face.getWidth() * 0.44f, face.getBottom());
+        streak.lineTo (face.getX() + face.getWidth() * 0.36f, face.getBottom());
+        streak.closeSubPath();
+        g.setColour (juce::Colours::white.withAlpha (0.24f));
+        g.fillPath (streak);
+        juce::Path streak2;
+        streak2.startNewSubPath (face.getX() + face.getWidth() * 0.8f, face.getY());
+        streak2.lineTo (face.getX() + face.getWidth() * 0.84f, face.getY());
+        streak2.lineTo (face.getX() + face.getWidth() * 0.54f, face.getBottom());
+        streak2.lineTo (face.getX() + face.getWidth() * 0.5f, face.getBottom());
+        streak2.closeSubPath();
+        g.setColour (juce::Colours::white.withAlpha (0.2f));
+        g.fillPath (streak2);
+        g.setGradientFill (juce::ColourGradient (juce::Colours::transparentWhite, face.getX(), face.getBottom() - face.getHeight() * 0.12f,
+                                                 juce::Colours::white.withAlpha (0.28f), face.getX(), face.getBottom(), false));
+        g.fillRect (face.withTop (face.getBottom() - face.getHeight() * 0.12f));
+        g.restoreState();
+        // the glass edge catches the light: bright top-left, dark bottom-right
+        g.setColour (juce::Colours::white.withAlpha (0.55f));
+        g.drawLine (face.getX(), face.getY() + 0.5f, face.getRight(), face.getY() + 0.5f, 1.0f);
+        g.drawLine (face.getX() + 0.5f, face.getY(), face.getX() + 0.5f, face.getBottom(), 1.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.6f));
+        g.drawLine (face.getX(), face.getBottom() - 0.5f, face.getRight(), face.getBottom() - 0.5f, 1.0f);
+        g.drawLine (face.getRight() - 0.5f, face.getY(), face.getRight() - 0.5f, face.getBottom(), 1.0f);
+    }
 }
 
 //==============================================================================
@@ -294,6 +434,7 @@ juce::Rectangle<float> LevelerPanel::faceplate() const
 
 void LevelerPanel::resized()
 {
+    background = {};
     const Map m { faceplate() };
     auto at = [&] (juce::Component& c, float x, float y, float sizePx)
     {
@@ -308,20 +449,18 @@ void LevelerPanel::resized()
     meter.setBounds (juce::Rectangle<float> (m.u (138.0f), m.u (150.0f)).withCentre (m.p (0.5f, 0.42f)).toNearestInt());
 }
 
-void LevelerPanel::paint (juce::Graphics& g)
+void LevelerPanel::renderBackground (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff0b0f10));
     const auto f = faceplate();
     const Map m { f };
-    const bool on = lev().on.load();
 
     // rack ears (behind) with their mounting slots
     const float earW = f.getWidth() * 0.09f;
     for (int side = 0; side < 2; ++side)
     {
         auto ear = side == 0 ? f.withWidth (earW) : f.withLeft (f.getRight() - earW);
-        g.setGradientFill (juce::ColourGradient (panelLight, ear.getX(), ear.getY(), panelDark, ear.getRight(), ear.getBottom(), false));
-        g.fillRect (ear);
+        brushed (g, ear, panelGrey, panelDark, 77 + side);
         g.setColour (juce::Colours::black.withAlpha (0.35f));
         g.drawRect (ear, 1.0f);
         for (float y : { 0.12f, 0.88f })
@@ -336,19 +475,8 @@ void LevelerPanel::paint (juce::Graphics& g)
     auto front = f.reduced (earW * 0.55f, f.getHeight() * 0.0f).withTrimmedTop (f.getHeight() * 0.0f);
     g.setColour (juce::Colours::black.withAlpha (0.45f));
     g.fillRect (front.translated (0.0f, m.u (4.0f)));
-    g.setGradientFill (juce::ColourGradient (panelLight, front.getX(), front.getY(), panelGrey, front.getX(), front.getBottom(), false));
-    g.fillRect (front);
-    // fine hammertone grain
-    {
-        juce::Random rnd (1234);
-        for (int i = 0; i < 900; ++i)
-        {
-            const float x = front.getX() + rnd.nextFloat() * front.getWidth(), y = front.getY() + rnd.nextFloat() * front.getHeight();
-            g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (0.035f));
-            g.fillRect (x, y, 1.5f, 1.5f);
-        }
-    }
-    g.setColour (juce::Colours::white.withAlpha (0.18f));
+    brushed (g, front, panelLight, panelGrey.darker (0.04f), 1234);
+    g.setColour (juce::Colours::white.withAlpha (0.6f));
     g.drawLine (front.getX(), front.getY() + 1.0f, front.getRight(), front.getY() + 1.0f, 1.0f);
     g.setColour (juce::Colours::black.withAlpha (0.4f));
     g.drawRect (front, 1.0f);
@@ -370,7 +498,7 @@ void LevelerPanel::paint (juce::Graphics& g)
     }
 
     // scales of the big knobs: dots and 0 4 8 12 16 20
-    g.setColour (printWhite);
+    g.setColour (printInk);
     for (auto* k : { &inputKnob, &outputKnob })
     {
         const auto c = k->getBounds().toFloat().getCentre();
@@ -421,6 +549,25 @@ void LevelerPanel::paint (juce::Graphics& g)
         centredText (g, "pad edition", m.p (0.355f, 0.885f), m.u (200.0f), m.u (24.0f));
     }
 
+}
+
+void LevelerPanel::paint (juce::Graphics& g)
+{
+    // the unit itself (brushed panel, scales, labels) is drawn once per size; the lamp and the plate change
+    const float scale = juce::jlimit (1.0f, 3.0f, (float) g.getInternalContext().getPhysicalPixelScaleFactor());
+    if (background.isNull() || background.getWidth() != juce::roundToInt ((float) getWidth() * scale)
+        || background.getHeight() != juce::roundToInt ((float) getHeight() * scale))
+    {
+        background = juce::Image (juce::Image::RGB, juce::jmax (1, juce::roundToInt ((float) getWidth() * scale)),
+                                  juce::jmax (1, juce::roundToInt ((float) getHeight() * scale)), true);
+        juce::Graphics bg (background);
+        bg.addTransform (juce::AffineTransform::scale (scale));
+        renderBackground (bg);
+    }
+    g.drawImage (background, getLocalBounds().toFloat());
+    const auto f = faceplate();
+    const Map m { f };
+    const bool on = lev().on.load();
     // POWER lamp (lit while the pad's LEVELER is on) and the ON / OFF labels
     {
         g.setFont (boldFont (m.u (15.0f)));
@@ -440,7 +587,7 @@ void LevelerPanel::paint (juce::Graphics& g)
         // the faceted jewel
         g.setColour (juce::Colours::white.withAlpha (on ? 0.55f : 0.18f));
         g.fillRoundedRectangle (juce::Rectangle<float> (r * 0.9f, r * 0.35f).withCentre (c.translated (-r * 0.05f, -r * 0.05f)), r * 0.1f);
-        g.setColour (printWhite);
+        g.setColour (printInk);
         g.setFont (boldFont (m.u (12.0f)));
         centredText (g, "ON", m.p (0.637f, 0.44f), m.u (50.0f), m.u (14.0f));
         centredText (g, "OFF", m.p (0.637f, 0.725f), m.u (50.0f), m.u (14.0f));

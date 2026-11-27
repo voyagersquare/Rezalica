@@ -168,7 +168,7 @@ i metronom ostaju u ritmu. Efekti se spremaju s projektom.
 
 ## LEVELER (kompresor na svakom padu)
 
-- Gumb **LEVELER** u gornjoj traci otvara prozor u stilu klasičnog rack *leveling* pojačala (sivi panel, VU-metar „dB COMPRESSION“).
+- Gumb **LEVELER** u gornjoj traci otvara prozor u stilu klasičnog rack *leveling* pojačala (krem-bijeli brušeni panel u bojama Rezalice, metalni VU-metar „dB COMPRESSION“ s 3D staklom).
   Prikazuje LEVELER **odabranog pada** – svaki pad ima svoj, s vlastitim postavkama; crvena pločica pokazuje koji je pad.
 - **ON / OFF** prekidač (crvena POWER lampica svijetli kad je uključen). Uključen pad dobiva oznaku FX.
 - **INPUT** (0–20): koliko jako pad ulazi u kompresor – više = više kompresije (6 = bez promjene razine).
