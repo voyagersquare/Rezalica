@@ -54,7 +54,7 @@ jobs:
           if (-not (Test-Path $iscc)) {
             choco install innosetup -y --no-progress
           }
-          & $iscc /DAppVersion=0.3.0 installer\Rezalica.iss
+          & $iscc /DAppVersion=0.3.1 installer\Rezalica.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload installer
