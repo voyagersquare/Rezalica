@@ -10,6 +10,7 @@
 #include "BankControls.h"
 #include "SceneWindow.h"
 #include "DeckPanel.h"
+#include "LevelerPanel.h"
 #include "MidiControl.h"
 #include "ToolWindows.h"
 #include "AppSettings.h"
@@ -65,7 +66,7 @@ private:
     // header
     juce::TextButton loadChopButton { "LOAD SAMPLE" }, lazyButton { "LAZY CHOP" }, seqButton { "STEP SEQ" }, pianoRollButton { "PIANO ROLL" }, stopButton { "STOP ALL" },
                      undoButton { "UNDO" }, redoButton { "REDO" },
-                     fileButton { "FILE" }, sceneButton { "SCENE" }, deckButton { "DECK" },  // FILE / SCENE / PLAY / STOP: standalone app only
+                     fileButton { "FILE" }, sceneButton { "SCENE" }, deckButton { "DECK" }, levelerButton { "LEVELER" },  // FILE / SCENE / PLAY / STOP: standalone app only
                      playButton { "PLAY" }, stopPlayButton { "STOP" },
                      samplingButton { "SAMPLING" }, browserButton { "BROWSER" }, masterFxButton { "MASTER FX" }; // standalone tool row
     rz::MetronomeControls metronome;
@@ -204,12 +205,13 @@ private:
 
     std::unique_ptr<rz::SequencerWindow> sequencerWindow;
     // standalone: the step sequencer / piano roll open inside the main window, below the sample view and pads
-    enum DockView { dockNone = 0, dockSequencer = 1, dockPianoRoll = 2, dockSong = 3, dockDeck = 4 };
+    enum DockView { dockNone = 0, dockSequencer = 1, dockPianoRoll = 2, dockSong = 3, dockDeck = 4, dockLeveler = 5 };
     int dockView = dockNone;
     std::unique_ptr<rz::SequencerPanel> dockedSequencer;
     std::unique_ptr<rz::PianoRollPanel> dockedPianoRoll;
     std::unique_ptr<rz::ScenePanel> dockedSong;
     std::unique_ptr<rz::DeckPanel> dockedDeck;
+    std::unique_ptr<rz::LevelerPanel> dockedLeveler;
     juce::Rectangle<int> dockArea;
     std::vector<juce::Component*> hiddenByDock;
     void showDock (int view);

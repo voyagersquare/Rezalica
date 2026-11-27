@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Rezalica VERSION 0.2.9 LANGUAGES C CXX)
+project(Rezalica VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,6 +55,7 @@ target_sources(Rezalica PRIVATE
     Source/Mp3Writer.cpp
     Source/ExportDialog.cpp
     Source/DeckPanel.cpp
+    Source/LevelerPanel.cpp
     Source/MidiControl.cpp)
 
 target_compile_definitions(Rezalica PUBLIC

@@ -166,6 +166,18 @@ i metronom ostaju u ritmu. Efekti se spremaju s projektom.
 - Kad je **odabran pad s instrumentom**, MIDI klavijatura automatski svira taj instrument (kao "armed" kanal u DAW-u).
   Ako Piano Roll (MELODIC) svira prazan pad, prebaci se na pad s instrumentom.
 
+## LEVELER (kompresor na svakom padu)
+
+- Gumb **LEVELER** u gornjoj traci otvara prozor u stilu klasičnog rack *leveling* pojačala (sivi panel, VU-metar „dB COMPRESSION“).
+  Prikazuje LEVELER **odabranog pada** – svaki pad ima svoj, s vlastitim postavkama; crvena pločica pokazuje koji je pad.
+- **ON / OFF** prekidač (crvena POWER lampica svijetli kad je uključen). Uključen pad dobiva oznaku FX.
+- **INPUT** (0–20): koliko jako pad ulazi u kompresor – više = više kompresije (6 = bez promjene razine).
+  **OUTPUT** (0–20): razina nakon njega (10 = 0 dB). Dvoklik vraća početnu vrijednost.
+- **MODE**: SINGLE = jedno vrijeme otpuštanja; DOUBLE / TRIPLE dodaju sporije stupnjeve – kratki udarci se brzo vrate,
+  a dugi glasni dijelovi se izravnavaju polako (programski ovisno otpuštanje). **RECOVERY TIME**: SLOW … FAST.
+- Meka koljena, omjer raste s glasnoćom (kao *vari-mu* cijevni kompresor), malo cijevne boje. Bez kašnjenja.
+  Na padu radi prije njegovih EFFECTS slotova; vrijedi i za VST instrument na padu, i u BOUNCE / izvozu. Sprema se s projektom.
+
 ## Choke grupe za više padova
 
 Odaberi više padova (Shift + klik, npr. A1, A2, A3), desni klik na bilo koji od njih → **Choke group (3 selected pads)** →
@@ -331,7 +343,7 @@ Gumb **DECK** (uz SONG) otvara gramofon u donjem dijelu prozora.
 
 1. Na GitHubu otvori **Actions**, pa zadnji uspješni **Build**.
 2. Pod **Artifacts** preuzmi `Rezalica-Setup-Windows` i raspakiraj ga.
-3. Pokreni `Rezalica-Setup-0.2.9.exe`. Instalacija stavlja program u `Program Files\Rezalica`,
+3. Pokreni `Rezalica-Setup-0.3.0.exe`. Instalacija stavlja program u `Program Files\Rezalica`,
    dodaje ga u Start izbornik i (ako je kvačica uključena) ikonu na radnu površinu.
 4. Deinstalacija: *Postavke > Aplikacije* ili *Upravljačka ploča > Programi*.
 

@@ -227,10 +227,13 @@ void RezalicaProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         auto& bus = buses[(size_t) i];
         bool used = i < rz::padChainBase;
         for (auto& slot : bus.slots) used = used || slot.owned != nullptr;
+        if (i >= rz::padChainBase && i < rz::padChainBase + rz::numPads)
+            used = used || engine.getPad (i - rz::padChainBase).leveler.on.load();
         if (used) bus.compensation.prepare (maxCompensation);
     }
     for (auto& d : busPreDelay) d.prepare (maxCompensation);
     for (auto& b : padBuffers) b.setSize (2, juce::jmax (1, samplesPerBlock));
+    for (auto& l : levelers) l.prepare (sampleRate);
     pendingSeqOff.fill (-1.0);
 }
 
@@ -630,7 +633,7 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         const juce::SpinLock::ScopedTryLockType tl (chain.lock);
         if (tl.isLocked())
         {
-            bool any = false;
+            bool any = engine.getPad (pd).leveler.on.load();
             for (auto& slot : chain.slots) any = any || (slot.live != nullptr && ! slot.bypass.load());
             padHasFx[(size_t) pd] = any && chain.compensation.line.getNumSamples() > 4;
         }
@@ -753,6 +756,10 @@ void RezalicaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         if (! padHasFx[(size_t) pd]) continue;
         auto& chain = buses[(size_t) (rz::padChainBase + pd)];
         auto& pb = padBuffers[(size_t) pd];
+        if (const auto& lv = engine.getPad (pd).leveler; lv.on.load())
+            levelerGr[(size_t) pd] = levelers[(size_t) pd].process (pb, numSamples, lv);  // LEVELER first, then the EFFECTS slots
+        else
+            levelerGr[(size_t) pd] = 0.0f;
         processEffectChain (chain, pb, numSamples);
         chain.compensation.process (pb.getArrayOfWritePointers(), 2, numSamples, padLatency - chain.latency);
         chain.peak = juce::jmax (chain.peak.load() * 0.85f, pb.getMagnitude (0, 0, numSamples));
@@ -2566,6 +2573,7 @@ juce::ValueTree RezalicaProcessor::padToValueTree (int pad) const
     t.setProperty ("choke", ps.chokeGroup.load(), nullptr);
     t.setProperty ("bus", ps.outputBus.load(), nullptr);
     t.appendChild (ps.effects.toValueTree(), nullptr);
+    t.appendChild (ps.leveler.toValueTree(), nullptr);
     return t;
 }
 
@@ -2586,6 +2594,8 @@ void RezalicaProcessor::padFromValueTree (int pad, const juce::ValueTree& t)
     ps.chokeGroup = (int) t.getProperty ("choke", 0);
     ps.outputBus = juce::jlimit (-1, rz::numBuses - 1, (int) t.getProperty ("bus", -1));
     ps.effects.fromValueTree (t.getChildWithName ("FX"));
+    ps.leveler.fromValueTree (t.getChildWithName ("LEVELER"));
+    if (ps.leveler.on.load()) ensurePadChain (pad);
 }
 
 RezalicaProcessor::UndoState RezalicaProcessor::captureUndoState (const juce::String& name) const
@@ -3009,6 +3019,23 @@ juce::String RezalicaProcessor::getInstrumentName (int pad) const
     return {};
 }
 
+void RezalicaProcessor::ensurePadChain (int pad)
+{
+    auto& bus = buses[(size_t) (rz::padChainBase + juce::jlimit (0, rz::numPads - 1, pad))];
+    if (bus.compensation.line.getNumSamples() >= 4) return;
+    rz::LatencyDelay fresh;
+    fresh.prepare (maxCompensation);  // (allocated here, swapped in while the audio thread does not use it)
+    const juce::SpinLock::ScopedLockType sl (bus.lock);
+    std::swap (bus.compensation, fresh);
+}
+
+void RezalicaProcessor::setLevelerOn (int pad, bool on)
+{
+    pad = juce::jlimit (0, rz::numPads - 1, pad);
+    if (on) ensurePadChain (pad);
+    engine.getPad (pad).leveler.on = on;
+}
+
 bool RezalicaProcessor::aimMelodicAt (int pad)
 {
     if (pad < 0 || pad >= rz::numPads) return false;
@@ -3382,6 +3409,7 @@ void RezalicaProcessor::getStateInformation (juce::MemoryBlock& destData)
         p.setProperty ("choke", ps.chokeGroup.load(), nullptr);
         p.setProperty ("bus", ps.outputBus.load(), nullptr);
         p.appendChild (ps.effects.toValueTree(), nullptr);
+        p.appendChild (ps.leveler.toValueTree(), nullptr);
         if (auto ws = engine.getPadSample (i); ws != nullptr && ws->isWarped())
         {
             auto w = ws->warp.toValueTree();
@@ -3516,6 +3544,8 @@ void RezalicaProcessor::setStateInformation (const void* data, int sizeInBytes)
         ps.outputBus = juce::jlimit (-1, rz::numBuses - 1, (int) p.getProperty ("bus", -1));
         olderProject = olderProject || ! p.hasProperty ("choke");
         ps.effects.fromValueTree (p.getChildWithName ("FX"));
+        ps.leveler.fromValueTree (p.getChildWithName ("LEVELER"));
+        if (ps.leveler.on.load()) ensurePadChain (i);
         ps.mute = (bool) p.getProperty ("mute", false);
 
         const juce::String path = p.getProperty ("file").toString();

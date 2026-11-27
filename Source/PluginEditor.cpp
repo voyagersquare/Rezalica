@@ -91,7 +91,7 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
 
     // standalone app: project files and audio device settings (in a DAW the DAW does this)
     isStandalone = processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
-    for (auto* b : { &fileButton, &sceneButton, &deckButton, &samplingButton, &browserButton, &masterFxButton })
+    for (auto* b : { &fileButton, &sceneButton, &deckButton, &levelerButton, &samplingButton, &browserButton, &masterFxButton })
     {
         b->setWantsKeyboardFocus (false);
         addChildComponent (*b);
@@ -246,6 +246,9 @@ RezalicaEditor::RezalicaEditor (RezalicaProcessor& p)
     styleToggle (deckButton, juce::Colour (0xff9fd3ff));
     deckButton.setTooltip ("DECK: a turntable for scratching samples (drag one from the BROWSER onto the record)");
     deckButton.onClick = [this] { showDock (dockDeck); };
+    styleToggle (levelerButton, juce::Colour (0xffff8a6a));
+    levelerButton.setTooltip ("LEVELER: a leveling amplifier (compressor) on every pad, ON / OFF per pad - it shows the selected pad's");
+    levelerButton.onClick = [this] { showDock (dockLeveler); };
     undoButton.onClick = [this] { if (processor.undo()) selectPad (processor.selectedPad.load()); };
     redoButton.onClick = [this] { if (processor.redo()) selectPad (processor.selectedPad.load()); };
     styleToggle (pianoRollButton, rz::colours::accent2);
@@ -664,6 +667,7 @@ RezalicaEditor::~RezalicaEditor()
     dockedPianoRoll = nullptr;
     dockedSong = nullptr;
     dockedDeck = nullptr;
+    dockedLeveler = nullptr;
     samplingWindow = nullptr;
     browserPanel = nullptr;
     masterFxWindow = nullptr;
@@ -882,7 +886,7 @@ void RezalicaEditor::timerCallback()
     // the FX mark on the pads that have effects of their own
     if (++fxMarkTick % 10 == 0)
         for (auto& p : pads)
-            p->setHasFx (processor.padHasEffects (p->getIndex()));
+            p->setHasFx (processor.padHasEffects (p->getIndex()) || processor.getEngine().getPad (p->getIndex()).leveler.on.load());
     // the MIDI key blinks when MIDI comes in
     if (const int a = processor.midiActivity.load(); a != lastMidiActivity) { lastMidiActivity = a; midiBlink = 3; }
     if (midiBlink > 0 && --midiBlink == 0) midiButton.removeColour (juce::TextButton::buttonColourId);
@@ -969,6 +973,7 @@ void RezalicaEditor::timerCallback()
         pianoRollButton.setToggleState (dockView == dockPianoRoll, juce::dontSendNotification);
         sceneButton.setToggleState (dockView == dockSong, juce::dontSendNotification);
         deckButton.setToggleState (dockView == dockDeck, juce::dontSendNotification);
+        levelerButton.setToggleState (dockView == dockLeveler, juce::dontSendNotification);
     }
     else if (sequencerWindow != nullptr)
         seqButton.setToggleState (sequencerWindow->isVisible(), juce::dontSendNotification);
@@ -1696,6 +1701,7 @@ juce::Component* RezalicaEditor::dockedPanel() const
     if (dockView == dockPianoRoll) return dockedPianoRoll.get();
     if (dockView == dockSong) return dockedSong.get();
     if (dockView == dockDeck) return dockedDeck.get();
+    if (dockView == dockLeveler) return dockedLeveler.get();
     return nullptr;
 }
 
@@ -1791,10 +1797,16 @@ void RezalicaEditor::showDock (int view)
         if (dockedDeck == nullptr) { dockedDeck = std::make_unique<rz::DeckPanel> (processor); addChildComponent (*dockedDeck); }
         dockedDeck->setVisible (true);
     }
+    else if (view == dockLeveler)
+    {
+        if (dockedLeveler == nullptr) { dockedLeveler = std::make_unique<rz::LevelerPanel> (processor); addChildComponent (*dockedLeveler); }
+        dockedLeveler->setVisible (true);
+    }
     seqButton.setToggleState (view == dockSequencer, juce::dontSendNotification);
     pianoRollButton.setToggleState (view == dockPianoRoll, juce::dontSendNotification);
     sceneButton.setToggleState (view == dockSong, juce::dontSendNotification);
     deckButton.setToggleState (view == dockDeck, juce::dontSendNotification);
+    levelerButton.setToggleState (view == dockLeveler, juce::dontSendNotification);
     resized();
     repaint();
     if (view == dockPianoRoll) dockedPianoRoll->focusEditor();
@@ -2210,7 +2222,8 @@ void RezalicaEditor::layoutComponents()
             putRight (pianoRollButton, 74);
             putRight (seqButton, 62);
             putRight (sceneButton, 48);
-            putRight (deckButton, 48, 12);
+            putRight (deckButton, 48);
+            putRight (levelerButton, 64, 12);
             putRight (metronome, 92, 12);               // count-in
             putRight (redoButton, 44);
             putRight (undoButton, 44);

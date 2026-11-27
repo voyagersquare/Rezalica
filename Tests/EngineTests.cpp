@@ -2810,6 +2810,53 @@ int main (int argc, char** argv)
         file.deleteFile(); proj.deleteFile(); proj.getSiblingFile (proj.getFileName() + ".bak").deleteFile();
     }
 
+    {
+        std::cout << "LEVELER (per pad)\n";
+        rz::PadLeveler p;
+        rz::LevelerDsp d;
+        d.prepare (48000.0);
+        auto run = [&] (float amp, int blocks)
+        {
+            juce::AudioBuffer<float> b (2, 512);
+            float gr = 0.0f, peak = 0.0f;
+            for (int k = 0; k < blocks; ++k)
+            {
+                for (int i = 0; i < 512; ++i) { const float s = amp * std::sin ((float) (k * 512 + i) * 0.05f); b.setSample (0, i, s); b.setSample (1, i, s); }
+                gr = d.process (b, 512, p);
+                peak = b.getMagnitude (0, 0, 512);
+            }
+            return std::pair<float, float> { gr, peak };
+        };
+        p.on = true;
+        const auto quiet = run (0.01f, 50);
+        d.reset();
+        const auto loud = run (0.9f, 200);
+        std::cout << "       quiet: GR " << quiet.first << " dB peak " << quiet.second << ";  loud: GR " << loud.first << " dB peak " << loud.second << "\n";
+        check (quiet.first < 0.1f && std::abs (quiet.second - 0.01f) < 0.002f, "a quiet signal passes unchanged");
+        check (loud.first > 6.0f && loud.second < 0.9f * 0.6f, "a loud one is leveled (several dB of compression)");
+        p.input = 20.0f;
+        d.reset();
+        const auto driven = run (0.3f, 200);
+        p.input = 0.0f;
+        d.reset();
+        const auto soft = run (0.3f, 200);
+        check (driven.first > soft.first + 6.0f, "more INPUT = more compression");
+        check (rz::LevelerDsp::gainReductionDb (-40.0f) == 0.0f && rz::LevelerDsp::gainReductionDb (0.0f) > 8.0f, "soft knee curve");
+
+        // on a pad: switched on through the processor, saved with the pad
+        auto tp = std::make_unique<RezalicaProcessor> (false);
+        auto& t = *tp;
+        t.prepareToPlay (48000.0, 512);
+        t.setLevelerOn (3, true);
+        t.getEngine().getPad (3).leveler.input = 15.0f;
+        juce::MemoryBlock st;
+        t.getStateInformation (st);
+        auto t2 = std::make_unique<RezalicaProcessor> (false);
+        t2->setStateInformation (st.getData(), (int) st.getSize());
+        check (t2->getEngine().getPad (3).leveler.on.load() && std::abs (t2->getEngine().getPad (3).leveler.input.load() - 15.0f) < 1.0e-4f
+               && ! t2->getEngine().getPad (2).leveler.on.load(), "the pad's LEVELER is saved with the project");
+    }
+
     std::cout << (failures == 0 ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return failures == 0 ? 0 : 1;
 }

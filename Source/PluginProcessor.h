@@ -10,6 +10,7 @@
 #include "FxChain.h"
 #include "MasterFx.h"
 #include "Recorder.h"
+#include "Leveler.h"
 #include "LoopbackCapture.h"
 #include "Mixer.h"
 #include "Turntable.h"
@@ -252,6 +253,10 @@ public:
     /** 0 = MASTER, 1..4 = BUS A..D, rz::deckChain = the DECK's effects. */
     rz::MixerBus& getBus (int bus) noexcept { return buses[(size_t) juce::jlimit (0, rz::numEffectChains - 1, bus)]; }
     /** Message thread: does this pad have effects of its own? */
+    /** LEVELER (per pad): switch it on / off (message thread: prepares the pad's chain). */
+    void setLevelerOn (int pad, bool on);
+    /** The gain reduction of the pad's LEVELER right now (dB), for its meter. */
+    float getLevelerReduction (int pad) const { return levelerGr[(size_t) juce::jlimit (0, rz::numPads - 1, pad)].load(); }
     bool padHasEffects (int pad) const
     {
         for (auto& slot : buses[(size_t) (rz::padChainBase + juce::jlimit (0, rz::numPads - 1, pad))].slots)
@@ -429,6 +434,9 @@ private:
     juce::AudioBuffer<float> deckBuffer;                 // the DECK this block, through its effects
     std::array<juce::AudioBuffer<float>, rz::numPads> padBuffers;   // pads with their own effects play here first
     std::array<bool, rz::numPads> padHasFx {};                      // audio thread
+    std::array<rz::LevelerDsp, rz::numPads> levelers;               // audio thread
+    std::array<std::atomic<float>, rz::numPads> levelerGr {};
+    void ensurePadChain (int pad);                                  // message thread: the pad's own buffer / delay line
 
     struct PadInstrument
     {

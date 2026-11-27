@@ -228,6 +228,37 @@ struct PadFx
     void reset() { fromValueTree (juce::ValueTree ("FX")); }
 };
 
+/** Per-pad LEVELER: a leveling amplifier (compressor) in the style of the classic program-dependent
+    tube levelers. INPUT drives it into compression, OUTPUT sets the level after it. */
+struct PadLeveler
+{
+    std::atomic<bool> on { false };
+    std::atomic<float> input { 6.0f };      // 0 .. 20 (6 = unity gain into the compressor)
+    std::atomic<float> output { 10.0f };    // 0 .. 20 (10 = 0 dB)
+    std::atomic<int> mode { 0 };            // 0 = SINGLE, 1 = DOUBLE, 2 = TRIPLE (release stages)
+    std::atomic<float> recovery { 0.5f };   // 0 = SLOW .. 1 = FAST
+
+    juce::ValueTree toValueTree() const
+    {
+        juce::ValueTree t ("LEVELER");
+        t.setProperty ("on", on.load(), nullptr);
+        t.setProperty ("input", input.load(), nullptr);
+        t.setProperty ("output", output.load(), nullptr);
+        t.setProperty ("mode", mode.load(), nullptr);
+        t.setProperty ("recovery", recovery.load(), nullptr);
+        return t;
+    }
+    void fromValueTree (const juce::ValueTree& t)
+    {
+        on = (bool) t.getProperty ("on", false);
+        input = juce::jlimit (0.0f, 20.0f, (float) t.getProperty ("input", 6.0f));
+        output = juce::jlimit (0.0f, 20.0f, (float) t.getProperty ("output", 10.0f));
+        mode = juce::jlimit (0, 2, (int) t.getProperty ("mode", 0));
+        recovery = juce::jlimit (0.0f, 1.0f, (float) t.getProperty ("recovery", 0.5f));
+    }
+    void reset() { fromValueTree (juce::ValueTree ("LEVELER")); }
+};
+
 /** Per-pad settings. Written by the UI, read by the audio thread. */
 struct PadSettings
 {
@@ -245,12 +276,14 @@ struct PadSettings
     std::atomic<int> chokeGroup { 0 };     // 1..8: a hit stops the other pads of the same group (0 = none)
     std::atomic<int> outputBus { -1 };     // mixer bus: -1 = like its bank, 0 = MASTER, 1..4 = BUS A..D
     PadFx effects;                         // this pad's own effect chain settings
+    PadLeveler leveler;                    // this pad's LEVELER (compressor)
 
     void resetPlayback()
     {
         gainDb = 0.0f; pan = 0.0f; pitch = 0.0f; attackMs = 1.0f; releaseMs = 30.0f;
         loop = false; reverse = false; gate = false; mute = false; chokeGroup = 0; outputBus = -1;
         effects.reset();
+        leveler.reset();
     }
 };
 

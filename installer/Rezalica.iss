@@ -2,7 +2,7 @@
 ; Built by CI:  iscc /DAppVersion=0.1.0 /DSourceDir=<folder with Rezalica.exe> installer\Rezalica.iss
 
 #ifndef AppVersion
-  #define AppVersion "0.2.9"
+  #define AppVersion "0.3.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\build\Rezalica_artefacts\Release\Standalone"
